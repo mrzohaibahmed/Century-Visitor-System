@@ -1,0 +1,51 @@
+# Century Gate VMS - HTTPS reverse proxy (Caddy), Windows service "CGVMS-Proxy".
+#
+#   Gate PC browser --HTTPS--> Caddy :443 --+-- /api/*  --> FastAPI  127.0.0.1:8000
+#                                           +-- else    --> Next.js  127.0.0.1:3000
+#
+# Values come from the service's environment (deploy\windows\services\cgvms-proxy.xml):
+#   CGVMS_SITE        the name gate PCs use, e.g. vms.century.local (must match the certificate)
+#   CGVMS_TLS_MODE    "company"  = certificate from the company CA (CGVMS_TLS_CERT / CGVMS_TLS_KEY)
+#                     "internal" = Caddy's own CA; its root must be trusted on every gate PC (README)
+#   CGVMS_CADDY_DATA  Caddy's private data folder (internal CA keys, certificates)
+# Check the file with:   caddy validate --config Caddyfile   (with the same environment)
+{
+	# No admin endpoint at all: configuration changes need a service restart.
+	admin off
+	storage file_system {$CGVMS_CADDY_DATA}
+	http_port {$CGVMS_HTTP_PORT:80}
+	https_port {$CGVMS_HTTPS_PORT:443}
+	# Never put the internal CA into this server's trust store automatically.
+	skip_install_trust
+}
+
+# Plain HTTP only redirects to HTTPS (to the configured name, never to a name the client sent).
+http://{$CGVMS_SITE} {
+	header -Server
+	redir https://{$CGVMS_SITE}{uri} 308
+}
+
+{$CGVMS_SITE} {
+	import tls-{$CGVMS_TLS_MODE}.caddy
+
+	header {
+		# Browsers remember to use HTTPS only (one year). The HTTP port only redirects.
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# Photos are at most a few MB; nothing larger is accepted.
+	request_body {
+		max_size 8MB
+	}
+
+	# No access log here on purpose: request URLs can contain ID numbers in query strings.
+	# The API writes its own access log (path only, no query string).
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:{$CGVMS_API_PORT:8000}
+	}
+	handle {
+		reverse_proxy 127.0.0.1:{$CGVMS_WEB_PORT:3000}
+	}
+}

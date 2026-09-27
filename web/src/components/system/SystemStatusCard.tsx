@@ -11,6 +11,7 @@ const CHECK_NAMES: Record<string, string> = {
   database: "Database connection",
   schema_version: "Database schema",
   transactions: "Transactions (replica set)",
+  photo_storage: "Photo storage",
 };
 
 const CHECK_TEXT: Record<CheckState, { tone: "ok" | "warn" | "danger" | "neutral"; text: string }> = {

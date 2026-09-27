@@ -26,6 +26,8 @@ from app.db.migrate import apply_schema
 from app.main import create_app
 
 TEST_MONGO_URI = os.environ.get("CG_TEST_MONGO_URI", "mongodb://127.0.0.1:27018/?replicaSet=cgvms-dev")
+PRODUCTION_LIKE_URI = ("mongodb://cgvms_app:not-a-real-password@localhost:27018/century_gate_vms"
+                       "?replicaSet=cgvms&tls=true&tlsCAFile=ca.pem&authSource=century_gate_vms")
 
 # Production argon2 costs ~150 ms per hash; tests use tiny parameters.
 # tests/test_auth.py checks the production parameters separately.
@@ -64,6 +66,9 @@ def make_settings(**overrides) -> Settings:
         "mongo_timeout_ms": 3000,
         "log_level": "INFO",
     }
+    if overrides.get("environment") == "production" and "mongo_uri" not in overrides:
+        # Production insists on an authenticated TLS connection; these settings are never connected.
+        values["mongo_uri"] = PRODUCTION_LIKE_URI
     values.update(overrides)
     return Settings(_env_file=None, **values)
 

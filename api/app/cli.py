@@ -4,6 +4,8 @@ Operator commands (run on the server, never exposed over HTTP):
     python -m app.cli migrate    create/update collections, validators and indexes
     python -m app.cli check      same checks as GET /api/v1/health/ready
     python -m app.cli create-admin --username admin [--display-name "..."] [--password-stdin]
+    python -m app.cli verify-data     read-only: photo files present and unchanged, links intact (exit 1 if not)
+    python -m app.cli restore-check   on a RESTORED COPY only: verify-data + access rules (refuses production)
 
 create-admin is the only way to create the first administrator: there is no
 web "first-run" page, because such a page would be reachable by anyone on the
@@ -17,7 +19,10 @@ import getpass
 import json
 import sys
 
-from app.core.config import get_settings
+from pydantic import ValidationError
+from pymongo.errors import OperationFailure
+
+from app.core.config import configuration_problems, get_settings
 from app.core.logging import configure_logging
 from app.db.client import Database
 from app.db.migrate import LegacyDatabaseError, apply_schema, current_schema_version
@@ -31,6 +36,12 @@ async def _migrate() -> int:
         report = await apply_schema(database.db)
     except LegacyDatabaseError as e:
         print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+    except OperationFailure as e:
+        if e.code != 13:                                   # 13 = Unauthorized
+            raise
+        print("ERROR: this database account may not change the schema. In production run migrations with the "
+              r"cgvms_migrate account (deploy\windows\migrate.ps1), not the application's account.", file=sys.stderr)
         return 2
     finally:
         await database.close()
@@ -54,6 +65,29 @@ async def _check() -> int:
                       "expected_schema_version": SCHEMA_VERSION, "replica_set": bool(hello.get("setName")),
                       "ready": ok}, indent=2))
     return 0 if ok else 1
+
+
+async def _verify_data() -> int:
+    from app.ops import verify_data
+    settings = get_settings()
+    database = Database(settings)
+    try:
+        report = await verify_data(database.db, settings)
+    finally:
+        await database.close()
+    print(json.dumps(report, indent=2))
+    return 0 if report["ok"] else 1
+
+
+async def _restore_check() -> int:
+    from app.ops import restore_check
+    try:
+        report = await restore_check(get_settings())
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps(report, indent=2, default=str))
+    return 0 if report["ok"] else 1
 
 
 def _read_password(from_stdin: bool, username: str) -> str | None:
@@ -94,15 +128,21 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate", help="create/update collections, validators and indexes")
     sub.add_parser("check", help="readiness checks")
+    sub.add_parser("verify-data", help="read-only integrity check of the database and the photo folder")
+    sub.add_parser("restore-check", help="checks a restored copy (never production)")
     admin = sub.add_parser("create-admin", help="create an administrator account")
     admin.add_argument("--username", required=True)
     admin.add_argument("--display-name", default="Administrator")
     admin.add_argument("--password-stdin", action="store_true", help="read the password from standard input")
     args = parser.parse_args()
-    configure_logging(get_settings().log_level)
+    try:
+        configure_logging(get_settings().log_level)
+    except ValidationError as e:
+        print(f"ERROR: configuration is not valid: {configuration_problems(e)}", file=sys.stderr)
+        return 2
 
     if args.command == "create-admin":
-        from pydantic import TypeAdapter, ValidationError
+        from pydantic import TypeAdapter
 
         from app.schemas.users import DisplayName, Username
         try:
@@ -116,7 +156,8 @@ def main() -> int:
         if password is None:
             return 2
         return asyncio.run(_create_admin(args.username.strip(), args.display_name.strip(), password))
-    return asyncio.run({"migrate": _migrate, "check": _check}[args.command]())
+    commands = {"migrate": _migrate, "check": _check, "verify-data": _verify_data, "restore-check": _restore_check}
+    return asyncio.run(commands[args.command]())
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.core.security import burn_verify_time
 from app.db.client import Database
+from app.services.photos import check_photo_dir
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Fails the start-up (the service stops with this message in its log) rather than running without photos.
+        check_photo_dir(settings, create=settings.environment != "production")
         app.state.database = Database(settings)
         log.info("API starting (version %s, environment %s, database %s)",
                  APP_VERSION, settings.environment, settings.mongo_db)

@@ -3,6 +3,15 @@
 .env.*
 !.env.example
 
+# Production secrets and key material (deploy/): never commit, even by accident
+secrets/
+*.pem
+*.key
+*.keyfile
+*.pfx
+mongodump.yaml
+*.uri.txt
+
 # Local development database, logs, scratch
 .dev/
 *.log

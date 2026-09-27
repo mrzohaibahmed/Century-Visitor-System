@@ -4,8 +4,8 @@ Health checks (public; used by the reverse proxy, monitoring and the UI status d
 - /health/live  : the API process is up.
 - /health/ready : the API can serve requests: database reachable, schema
                   migrated to the expected version, transactions available
-                  (replica set). Answers 503 otherwise. Never reveals hosts,
-                  URIs or error text.
+                  (replica set), photo folder available. Answers 503
+                  otherwise. Never reveals hosts, URIs, paths or error text.
 """
 import asyncio
 import logging
@@ -15,11 +15,12 @@ from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 from pymongo.errors import PyMongoError
 
-from app.api.deps import get_database, public
-from app.core.config import APP_VERSION
+from app.api.deps import get_database, get_settings, public
+from app.core.config import APP_VERSION, Settings
 from app.db.client import Database
 from app.db.migrate import current_schema_version
 from app.db.schema import SCHEMA_VERSION
+from app.services.photos import photo_storage_available
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class ReadyChecks(BaseModel):
     database: CheckState
     schema_version: CheckState
     transactions: CheckState
+    photo_storage: CheckState
 
 
 class ReadyResponse(BaseModel):
@@ -51,8 +53,10 @@ async def live() -> LiveResponse:
 
 
 @router.get("/ready", response_model=ReadyResponse, responses={503: {"model": ReadyResponse}})
-async def ready(response: Response, database: Database = Depends(get_database)) -> ReadyResponse:
-    checks = {"database": "unavailable", "schema_version": "unknown", "transactions": "unknown"}
+async def ready(response: Response, database: Database = Depends(get_database),
+                settings: Settings = Depends(get_settings)) -> ReadyResponse:
+    checks = {"database": "unavailable", "schema_version": "unknown", "transactions": "unknown",
+              "photo_storage": "ok" if photo_storage_available(settings) else "unavailable"}
     try:
         async with asyncio.timeout(READY_TIMEOUT_SECONDS):
             await database.db.command("ping")

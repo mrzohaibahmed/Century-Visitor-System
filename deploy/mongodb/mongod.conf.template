@@ -1,0 +1,32 @@
+# Century Gate VMS - production MongoDB (a SEPARATE instance from the legacy desktop
+# MongoDB service on port 27017, which is never touched).
+# Copy to C:\CenturyGateVMS\mongodb\mongod.conf and adjust the paths if you use other folders.
+# Installed as the Windows service "CGVMS-MongoDB" by deploy\windows\install-services.ps1.
+
+storage:
+  dbPath: C:\CenturyGateVMS\mongodb\data
+
+systemLog:
+  destination: file
+  path: C:\CenturyGateVMS\mongodb\log\mongod.log
+  logAppend: true
+  logRotate: rename            # the nightly backup job rotates the log and removes old files
+
+net:
+  port: 27018
+  # Loopback only: the API runs on this server. Nothing else, and no gate PC, can reach the database.
+  bindIp: 127.0.0.1
+  tls:
+    mode: requireTLS           # no unencrypted connections at all
+    certificateKeyFile: C:\CenturyGateVMS\tls\mongodb\server.pem
+    CAFile: C:\CenturyGateVMS\tls\mongodb\ca.pem        # MongoDB 8 requires the chain of trust
+    # Clients do not present certificates; they log in with a password (SCRAM).
+    allowConnectionsWithoutCertificates: true
+    disabledProtocols: TLS1_0,TLS1_1
+
+security:
+  authorization: enabled       # every connection must log in
+  keyFile: C:\CenturyGateVMS\tls\mongodb\mongodb.keyfile   # required with authorization + replica set
+
+replication:
+  replSetName: cgvms           # single-node replica set: needed for transactions (check-in)

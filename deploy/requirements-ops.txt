@@ -1,0 +1,4 @@
+# Operator tools for deployment (deploy/mongodb/cgvms_mongo.py). Not needed by the running API.
+# Install into the API environment on the server:
+#   api\.venv\Scripts\python -m pip install -r deploy\requirements-ops.txt
+cryptography==50.0.1        # private CA and TLS certificates for MongoDB

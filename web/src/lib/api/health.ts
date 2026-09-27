@@ -9,6 +9,7 @@ export type ReadyResponse = {
     database: CheckState;
     schema_version: CheckState;
     transactions: CheckState;
+    photo_storage: CheckState;
   };
 };
 

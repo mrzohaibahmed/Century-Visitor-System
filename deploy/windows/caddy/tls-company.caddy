@@ -1,0 +1,4 @@
+# Certificate issued by the company's certificate authority (recommended).
+# CGVMS_TLS_CERT: the certificate (PEM, with intermediates); CGVMS_TLS_KEY: its private key (PEM).
+# Renewal: replace both files, then restart the service CGVMS-Proxy.
+tls {$CGVMS_TLS_CERT} {$CGVMS_TLS_KEY}

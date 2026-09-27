@@ -18,8 +18,9 @@ _REDACTIONS = [
     (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)[^\s/@]+@"), r"\1***@"),
     # password=..., "token": "...", secret: ...
     (re.compile(r"(?i)(\w*(?:password|passwd|pwd|secret|token))(['\"]?\s*[:=]\s*['\"]?)[^\s'\",}]+"), r"\1\2***"),
-    # CNIC: 13 digits, optionally formatted 12345-1234567-1
-    (re.compile(r"(?<!\d)\d{5}-?\d{7}-?\d(?!\d)"), "[CNIC]"),
+    # CNIC: 13 digits, optionally formatted 12345-1234567-1, standing on its own. Not when glued to
+    # letters/digits: a random hex request ID can contain 13 digits in a row and must stay intact.
+    (re.compile(r"(?<![0-9A-Za-z])\d{5}-?\d{7}-?\d(?![0-9A-Za-z])"), "[CNIC]"),
 ]
 
 

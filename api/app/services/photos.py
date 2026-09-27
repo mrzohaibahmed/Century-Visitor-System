@@ -15,6 +15,11 @@ Who may see which photo:
 
 Retention: nothing is deleted automatically yet. captured_at is indexed so a
 retention clean-up can be added in production hardening.
+
+The folder itself must exist (production refuses to start otherwise, see
+check_photo_dir). It is never re-created silently: if the photo drive or share
+disappears, uploads fail with a clear message and /health/ready reports it,
+instead of photos quietly going into a new, empty folder that is not backed up.
 """
 import asyncio
 import hashlib
@@ -41,6 +46,38 @@ from app.services.auth import AuthContext, RequestMeta, session_gate
 log = logging.getLogger(__name__)
 
 NOT_FOUND = AppError(404, "not_found", "Photo not found.")
+STORAGE_UNAVAILABLE = AppError(
+    503, "photo_storage_unavailable",
+    "Photos cannot be saved right now. Continue without a photo and inform the administrator.")
+
+
+class PhotoStorageError(RuntimeError):
+    """The photo folder is missing or unusable (the message never contains the path)."""
+
+
+def check_photo_dir(settings: Settings, *, create: bool) -> None:
+    """Startup check. Production (create=False): the folder must already exist and be writable.
+    Development and tests (create=True): it is created on first use."""
+    root = settings.photo_dir
+    if not root.exists():
+        if not create:
+            raise PhotoStorageError("The photo folder (CG_PHOTO_DIR) does not exist. Create it, give the API "
+                                    "service account modify rights, and start the service again.")
+        root.mkdir(parents=True, exist_ok=True)
+    if not root.is_dir():
+        raise PhotoStorageError("CG_PHOTO_DIR is not a folder.")
+    probe = root / f".write-test-{secrets.token_hex(4)}"
+    try:
+        probe.write_bytes(b"ok")
+        probe.unlink()
+    except OSError:
+        raise PhotoStorageError("The API service account cannot write to the photo folder (CG_PHOTO_DIR).") from None
+
+
+def photo_storage_available(settings: Settings) -> bool:
+    """Cheap runtime check for /health/ready (no writes)."""
+    root = settings.photo_dir
+    return root.is_dir() and os.access(root, os.W_OK)
 
 
 def _oid(value: str | ObjectId) -> ObjectId:
@@ -58,7 +95,7 @@ def _path(settings: Settings, storage_key: str) -> Path:
 
 
 def _write_file(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(exist_ok=True)           # only the sub-folder: the photo folder itself must exist
     tmp = path.with_suffix(".tmp")
     with open(tmp, "wb") as f:
         f.write(data)
@@ -89,7 +126,11 @@ async def capture(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta:
         "captured_by": ctx.user["_id"], "captured_at": now, "gate_id": gate["_id"] if gate else None,
     }
     path = _path(settings, doc["storage_key"])
-    await asyncio.to_thread(_write_file, path, photo.data)
+    try:
+        await asyncio.to_thread(_write_file, path, photo.data)
+    except OSError as e:
+        log.error("Photo could not be stored (%s); is the photo folder available?", type(e).__name__)
+        raise STORAGE_UNAVAILABLE from None
 
     async def work(s: AsyncClientSession):
         doc["_id"] = (await db.photos.insert_one(doc, session=s)).inserted_id

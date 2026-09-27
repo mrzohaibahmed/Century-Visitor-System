@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pymongo.errors import ConfigurationError, InvalidURI
+from pymongo.uri_parser import parse_uri
 
 API_DIR = Path(__file__).resolve().parents[2]
 
@@ -18,6 +20,9 @@ API_DIR = Path(__file__).resolve().parents[2]
 LEGACY_DATABASE_NAMES = frozenset({"century_gate_system"})
 
 APP_VERSION = "0.1.0"
+
+# Connection options that switch off certificate or host-name checks: refused in production.
+_INSECURE_TLS_OPTIONS = ("tlsInsecure", "tlsAllowInvalidCertificates", "tlsAllowInvalidHostnames")
 
 
 class Settings(BaseSettings):
@@ -104,6 +109,33 @@ class Settings(BaseSettings):
             raise ValueError("CG_PHOTO_DIR must be set in production (a private folder that is backed up).")
         return self
 
+    @model_validator(mode="after")
+    def _secure_database_connection_in_production(self):
+        """Production refuses a database connection without a login, without TLS, or with
+        certificate checks switched off (the messages never contain the URI or password)."""
+        if self.environment != "production":
+            return self
+        try:
+            # validate=False: option values stay text and the CA file is not opened here
+            # (a missing file is reported when connecting).
+            parsed = parse_uri(self.mongo_uri.get_secret_value(), validate=False)
+        except (InvalidURI, ConfigurationError, ValueError):
+            raise ValueError("CG_MONGO_URI is not a valid MongoDB connection string.") from None
+        options = parsed["options"]
+
+        def enabled(name: str) -> bool:
+            return str(options.get(name, "")).strip().lower() == "true"
+
+        if not parsed.get("username") or not parsed.get("password"):
+            raise ValueError("CG_MONGO_URI must include the application's database user and password in production.")
+        if not (enabled("tls") or enabled("ssl")):
+            raise ValueError("CG_MONGO_URI must use TLS in production (tls=true with tlsCAFile).")
+        for insecure in _INSECURE_TLS_OPTIONS:
+            if enabled(insecure):
+                raise ValueError(f"CG_MONGO_URI must not use {insecure} in production: "
+                                 "the database certificate has to be validated.")
+        return self
+
     @property
     def docs_enabled(self) -> bool:
         return self.api_docs if self.api_docs is not None else self.environment == "development"
@@ -112,3 +144,8 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def configuration_problems(error: ValidationError) -> str:
+    """The reasons settings were refused, WITHOUT the submitted values (they may hold the database password)."""
+    return "; ".join(str(e.get("msg", "invalid")).removeprefix("Value error, ") for e in error.errors())

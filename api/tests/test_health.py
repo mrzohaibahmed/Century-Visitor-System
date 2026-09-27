@@ -18,7 +18,8 @@ async def test_ready_reports_unmigrated_database(client):
     r = await client.get("/api/v1/health/ready")
     assert r.status_code == 503
     assert r.json() == {"status": "not_ready",
-                        "checks": {"database": "ok", "schema_version": "missing", "transactions": "ok"}}
+                        "checks": {"database": "ok", "schema_version": "missing", "transactions": "ok",
+                                   "photo_storage": "ok"}}
 
 
 async def test_ready_after_migration(client, app):
@@ -26,7 +27,8 @@ async def test_ready_after_migration(client, app):
     r = await client.get("/api/v1/health/ready")
     assert r.status_code == 200
     assert r.json() == {"status": "ready",
-                        "checks": {"database": "ok", "schema_version": "ok", "transactions": "ok"}}
+                        "checks": {"database": "ok", "schema_version": "ok", "transactions": "ok",
+                                   "photo_storage": "ok"}}
 
 
 async def test_ready_reports_outdated_schema(client, app):
