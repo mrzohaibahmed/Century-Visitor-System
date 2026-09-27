@@ -19,7 +19,8 @@ log = logging.getLogger(__name__)
 
 _STATUS_CODES = {
     400: "bad_request", 401: "unauthenticated", 403: "forbidden", 404: "not_found",
-    405: "method_not_allowed", 409: "conflict", 413: "payload_too_large", 422: "validation_error",
+    405: "method_not_allowed", 409: "conflict", 413: "payload_too_large", 415: "unsupported_media_type",
+    422: "validation_error",
     429: "rate_limited", 503: "service_unavailable",
 }
 

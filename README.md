@@ -113,6 +113,68 @@ Secrets live only in the server environment, never in the frontend or the reposi
 - The database guarantees one active visit per visitor, gap-free visit numbers per year and
   idempotent check-out, even with several gates working at once.
 
+## Watchlist, photos, passes & badges (Phase 4)
+
+- **Watchlist (administrators, menu *Watchlist*):** add, edit, expire now, disable, search by ID number (any
+  format) or name, filter by status. The server normalises ID numbers, so a ban matches however the number is
+  typed at the gate. Entries are never deleted; disabling needs a reason. The ID number of an entry cannot be
+  changed (disable it and add a correct one). Adding someone who is inside right now is flagged at once.
+  Every change is audited (`WATCHLIST_ADDED/UPDATED/EXPIRED/DISABLED`) with a masked ID number.
+- **Photo (check-in step 3):** start camera → take photo → retake or use it → upload. The previous photo can be
+  kept. A gate without a working camera can continue without a photo. The camera is switched off as soon as the
+  picture is taken or the step is left.
+- **Pass and badge:** after check-in a pass is issued and the badge is shown for printing. *Check out → Badge*
+  reprints it (the old badge's QR stops working at once).
+- **Check-out by QR:** *Scan badge with camera*, or scan with a USB scanner into the check-out box. The guard sees
+  the visitor, photo and belongings and confirms; scanning alone never checks anyone out.
+
+### Photo storage (decision)
+
+Photos are files in a **private folder on the API server** (`CG_PHOTO_DIR`, required in production; development
+default `.dev/photos`). They are never served directly and never under `web/`. Each upload is decoded, checked
+(JPEG/PNG/WebP, 160×120 to 4096×4096, at most 12 M pixels, at most `CG_PHOTO_MAX_BYTES`, default 2 MB) and
+**re-encoded** as a fresh JPEG of at most 1024 px. That removes EXIF/GPS metadata and anything hidden in the
+file. Files get random 128-bit names (never the CNIC). The `photos` collection holds the name and metadata.
+The API never returns the name, path or folder: images are only reachable through `GET /api/v1/photos/{id}`,
+which checks the session on every request and is never cached. Administrators may see any photo. Guards may see
+only a visitor's current photo or the photo of a visit still inside (the photos needed at the gate); anything
+else is refused and audited. **Backups must include `CG_PHOTO_DIR` together with the database.** Nothing is
+deleted automatically yet: retention is decided in production hardening (`photos.captured_at` is indexed for it).
+
+### Pass security
+
+The QR holds only `CGP1:` + 64 random hex digits (256 bits): no name, ID number, phone or visit number. The
+database stores only the SHA-256 of the token, so a copy of the database cannot print working badges. The server
+looks the token up on every scan; nothing in it can be edited to point at another visit, and no signature is
+needed because the QR carries no claims. A pass stops working when the visitor is checked out (a replayed scan
+only shows "already checked out"), when a badge is reprinted (`pass_replaced`), when revoked (`pass_revoked`)
+or after `CG_PASS_VALID_HOURS` (default 24, `pass_expired`). Check-in never accepts a pass. Rejected scans are
+audited (`PASS_REJECTED`). Scans are sent in the request body, never in a URL (proxy logs).
+
+### Badge printing
+
+The badge is a browser print layout: a CR80 card, **54 × 86 mm portrait**, printed through the normal print
+dialog (only the badge is printed). It shows the organisation (`CG_ORGANIZATION_NAME`), visitor name, visit
+number, host, department, check-in time and gate, the QR and its validity. It never shows the ID number or
+phone. For other label stock, change the sizes in `web/src/app/globals.css` (section "Visitor badge").
+
+### Manual acceptance test (real hardware, not automated)
+
+The automated tests use Edge's fake webcam and check the print layout as a PDF. On each real gate PC, over
+**HTTPS**, check the following. Browsers only allow the camera on HTTPS or on `localhost`, so plain `http://`
+to the server gives no camera.
+
+1. **Webcam:** check in a visitor, start the camera, allow it, take/retake/use a photo; the face is recognisable.
+   Deny the permission once and check the message. Unplug the webcam and check "No camera was found". With the
+   camera open in another program (e.g. Teams), check "being used by another program". After the photo step the
+   webcam light goes off.
+2. **Badge printer:** in the print dialog choose the badge printer, paper size 54 × 86 mm (or the configured
+   stock), margins none, scale 100 %, "Headers and footers" off. Print; the card is filled, nothing is cut off,
+   and the text is readable. Set these once per gate PC (the browser remembers them).
+3. **QR scanning:** scan a printed badge (a) with the webcam via *Scan badge with camera* and (b) with the USB
+   scanner into the check-out box; both show the confirmation with photo; confirm. Scan the same badge again:
+   "already checked out". Reprint a badge and scan the old one: "replaced". Scan a crumpled or laminated badge.
+
 ## Status
 
-Phase 3 (visitors & visits) of the implementation roadmap is complete. Next: Phase 4.
+Phase 4 (watchlist management, photos, QR passes, badges, scan-to-check-out) is complete. Next: see the roadmap.

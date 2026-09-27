@@ -66,6 +66,8 @@ export function fieldErrors(error: unknown): Record<string, string> {
 export type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
+  /** Binary upload (e.g. a photo): sent as-is with the blob's own content type. */
+  rawBody?: Blob;
   signal?: AbortSignal;
   /** Statuses whose JSON body is returned instead of thrown (e.g. 503 from /health/ready). */
   acceptStatuses?: number[];
@@ -93,8 +95,11 @@ export function readCookie(name: string): string | null {
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
-  let body: string | undefined;
-  if (options.body !== undefined) {
+  let body: string | Blob | undefined;
+  if (options.rawBody !== undefined) {
+    headers["Content-Type"] = options.rawBody.type || "application/octet-stream";
+    body = options.rawBody;
+  } else if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(options.body);
   }

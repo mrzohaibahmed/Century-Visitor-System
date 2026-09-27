@@ -62,6 +62,7 @@ test("a new visitor is registered and checked in", async ({ page }) => {
   await page.getByLabel("Reason for visit").selectOption("INTERVIEW");
   await page.getByLabel("Belongings (optional)").fill("laptop, bag");
   await page.getByRole("button", { name: "Review" }).click();
+  await page.getByRole("button", { name: "Continue without a photo" }).click();       // photo step (Phase 4)
 
   await expect(page.getByText("Human Resources")).toBeVisible();          // department taken from the host
   await page.getByRole("button", { name: "Confirm check-in" }).click();

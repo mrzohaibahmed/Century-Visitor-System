@@ -7,4 +7,5 @@ pydantic-settings==2.15.0
 pymongo==4.18.2
 argon2-cffi==25.1.0
 argon2-cffi-bindings==26.1.0
+pillow==12.3.0          # visitor photos: validation and re-encoding (Phase 4)
 tzdata==2026.4          # IANA time zones on Windows (Asia/Karachi)

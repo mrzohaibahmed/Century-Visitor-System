@@ -40,6 +40,9 @@ class CheckInRequest(StrictModel):
     reason_note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] | None = None
     vehicle_registration: str | None = None
     belongings: list[Belonging] = Field(default_factory=list, max_length=10)
+    # The visitor's current photo, captured just before (POST /visitors/{id}/photo). Optional:
+    # a gate without a working camera can still check visitors in.
+    photo_id: IdStr | None = None
 
     @field_validator("unlisted_host_name")
     @classmethod
@@ -103,6 +106,7 @@ class VisitOut(BaseModel):
     checked_in_by: PersonRef
     checked_out_by: PersonRef | None
     checkout_method: str | None
+    photo_id: str | None = None
 
     @classmethod
     def from_doc(cls, d: dict) -> "VisitOut":
@@ -125,6 +129,7 @@ class VisitOut(BaseModel):
             checked_in_by=ref("checked_in_by", "checked_in_by_name"),
             checked_out_by=PersonRef(id=str(out), name=snap.get("checked_out_by_name")) if out else None,
             checkout_method=d.get("checkout_method"),
+            photo_id=str(d["photo_id"]) if d.get("photo_id") else None,
         )
 
 

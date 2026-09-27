@@ -30,6 +30,9 @@ export default defineConfig({
     // localhost, not 127.0.0.1: the Next.js dev server only serves its scripts to localhost by default.
     baseURL: "http://localhost:3001",
     channel: "msedge",
+    // Edge's built-in fake webcam (a moving test pattern) for photo capture; no permission prompt.
+    launchOptions: { args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] },
+    permissions: ["camera"],
     trace: "retain-on-failure",
   },
   webServer: [

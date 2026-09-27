@@ -45,6 +45,17 @@ class AuditAction(StrEnum):
     VISIT_CHECKED_IN = "VISIT_CHECKED_IN"
     VISIT_CHECKED_OUT = "VISIT_CHECKED_OUT"
     WATCHLIST_MATCH = "WATCHLIST_MATCH"
+    # Watchlist management (Phase 4)
+    WATCHLIST_ADDED = "WATCHLIST_ADDED"
+    WATCHLIST_UPDATED = "WATCHLIST_UPDATED"
+    WATCHLIST_DISABLED = "WATCHLIST_DISABLED"
+    WATCHLIST_EXPIRED = "WATCHLIST_EXPIRED"
+    # Photos, passes, badges (Phase 4). A QR check-out is VISIT_CHECKED_OUT with method "QR".
+    PHOTO_CAPTURED = "PHOTO_CAPTURED"
+    PASS_ISSUED = "PASS_ISSUED"                # noqa: S105 - visitor pass, not a password
+    PASS_REVOKED = "PASS_REVOKED"              # noqa: S105 - visitor pass, not a password
+    PASS_REJECTED = "PASS_REJECTED"            # noqa: S105 - a scanned pass was invalid, replaced or expired
+    BADGE_PRINT_REQUESTED = "BADGE_PRINT_REQUESTED"
 
 
 def actor_from_user(user: dict | None) -> dict:

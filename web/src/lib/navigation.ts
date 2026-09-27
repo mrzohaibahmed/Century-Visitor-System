@@ -19,6 +19,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/check-out", label: "Check out", roles: EVERYONE },
   { href: "/visitors", label: "Visitors", roles: EVERYONE },
   { href: "/visits", label: "Visit history", roles: EVERYONE },
+  { href: "/watchlist", label: "Watchlist", roles: ["ADMIN"] },
   { href: "/directory/hosts", label: "Hosts", roles: ["ADMIN"] },
   { href: "/directory/departments", label: "Departments", roles: ["ADMIN"] },
   { href: "/directory/gates", label: "Gates", roles: ["ADMIN"] },

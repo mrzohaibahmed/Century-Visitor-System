@@ -42,3 +42,15 @@ def test_api_docs_only_in_development_by_default(environment, expected):
 
 def test_api_docs_can_be_forced():
     assert make_settings(environment="production", api_docs=True).docs_enabled is True
+
+
+def test_production_requires_an_explicit_photo_folder():
+    with pytest.raises(ValidationError, match="CG_PHOTO_DIR"):
+        Settings(_env_file=None, environment="production")
+    assert make_settings(environment="production").photo_dir          # set explicitly (as the tests do)
+
+
+def test_phase_4_defaults():
+    s = Settings(_env_file=None)
+    assert s.photo_max_bytes == 2 * 1024 * 1024 and s.pass_valid_hours == 24
+    assert s.photo_dir.name == "photos" and "web" not in s.photo_dir.parts

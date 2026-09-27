@@ -8,7 +8,10 @@ CG_TEST_MONGO_URI. Every test gets its own throw-away database
 (cgvms_test_<random>), dropped afterwards.
 """
 import os
+import shutil
+import tempfile
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -56,6 +59,8 @@ def make_settings(**overrides) -> Settings:
         "environment": "test",
         "mongo_uri": TEST_MONGO_URI,
         "mongo_db": f"cgvms_test_{uuid.uuid4().hex[:10]}",
+        # Photos go to a throw-away folder per test, never to the development folder.
+        "photo_dir": Path(tempfile.gettempdir()) / "cgvms_test_photos" / uuid.uuid4().hex[:10],
         "mongo_timeout_ms": 3000,
         "log_level": "INFO",
     }
@@ -68,6 +73,7 @@ def settings():
     s = make_settings()
     yield s
     MongoClient(TEST_MONGO_URI).drop_database(s.mongo_db)
+    shutil.rmtree(s.photo_dir, ignore_errors=True)
 
 
 @pytest.fixture

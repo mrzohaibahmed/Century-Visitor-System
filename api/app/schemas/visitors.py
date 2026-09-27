@@ -68,6 +68,7 @@ class VisitorOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     active_visit: ActiveVisitRef | None = None
+    photo_id: str | None = None           # the current photo (GET /photos/{id}); never the image itself
 
     @classmethod
     def from_doc(cls, d: dict, active: dict | None = None) -> "VisitorOut":
@@ -79,6 +80,7 @@ class VisitorOut(BaseModel):
             active_visit=ActiveVisitRef(id=str(active["_id"]), visit_number=active["visit_number"],
                                         check_in_at=active["check_in_at"],
                                         gate_name=active.get("snapshot", {}).get("gate_name")) if active else None,
+            photo_id=str(d["current_photo_id"]) if d.get("current_photo_id") else None,
         )
 
 

@@ -11,6 +11,7 @@ import { Modal } from "@/components/ui/Modal";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TextField } from "@/components/ui/TextField";
 import { IdentityInput } from "@/components/visits/IdentityInput";
+import { VisitorPhoto } from "@/components/visits/VisitorPhoto";
 import { VisitTable } from "@/components/visits/VisitTable";
 import { usePagedList } from "@/hooks/usePagedList";
 import { errorMessage, fieldErrors } from "@/lib/api/client";
@@ -72,16 +73,19 @@ export function VisitorDetail({ id }: { id: string }) {
       )}
 
       <Card title="Details">
-        <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-          <div><dt className="text-ink-muted">ID</dt>
-            <dd className="font-medium">{visitor.identity ? `${IDENTITY_LABELS[visitor.identity.type]} ${visitor.identity.number}` : "—"}</dd></div>
-          <div><dt className="text-ink-muted">Phone</dt><dd className="font-medium">{visitor.phone ?? "—"}</dd></div>
-          <div><dt className="text-ink-muted">Registered</dt><dd className="font-medium">{formatDateTime(visitor.created_at)}</dd></div>
-          <div><dt className="text-ink-muted">Status</dt>
-            <dd>{active
-              ? <StatusBadge tone="ok">Inside since {formatTime(active.check_in_at)} ({active.visit_number})</StatusBadge>
-              : <StatusBadge tone="neutral">Not inside</StatusBadge>}</dd></div>
-        </dl>
+        <div className="flex gap-6">
+          <VisitorPhoto photoId={visitor.photo_id} name={visitor.full_name} className="size-32" />
+          <dl className="grid flex-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+            <div><dt className="text-ink-muted">ID</dt>
+              <dd className="font-medium">{visitor.identity ? `${IDENTITY_LABELS[visitor.identity.type]} ${visitor.identity.number}` : "—"}</dd></div>
+            <div><dt className="text-ink-muted">Phone</dt><dd className="font-medium">{visitor.phone ?? "—"}</dd></div>
+            <div><dt className="text-ink-muted">Registered</dt><dd className="font-medium">{formatDateTime(visitor.created_at)}</dd></div>
+            <div><dt className="text-ink-muted">Status</dt>
+              <dd>{active
+                ? <StatusBadge tone="ok">Inside since {formatTime(active.check_in_at)} ({active.visit_number})</StatusBadge>
+                : <StatusBadge tone="neutral">Not inside</StatusBadge>}</dd></div>
+          </dl>
+        </div>
       </Card>
 
       <section className="space-y-3">

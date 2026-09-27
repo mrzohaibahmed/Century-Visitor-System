@@ -6,8 +6,10 @@ Validators check the essentials (required fields, types, enums) as a last line
 of defence; full validation happens in the API's Pydantic models. Each index
 names the query or constraint it exists for.
 
-Not created yet (later phases): notifications (Phase 6) and the photo store
-(Phase 4, pending the storage decision).
+Not created yet (later phases): notifications (Phase 6).
+
+Photos (Phase 4): the image files live in a private folder on the API server
+(CG_PHOTO_DIR, random file names); the `photos` collection holds their metadata.
 
 Bump SCHEMA_VERSION whenever this file changes; /health/ready reports a
 database that has not been migrated to it.
@@ -16,7 +18,8 @@ from dataclasses import dataclass, field
 
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
-SCHEMA_VERSION = 2   # v2 (Phase 3): visit history filter indexes; reason/check-out enums
+SCHEMA_VERSION = 3   # v3 (Phase 4): photos, pass lifecycle, watchlist management
+# v2 (Phase 3): visit history filter indexes; reason/check-out enums
 
 # Case-insensitive uniqueness (e.g. "Admin" and "admin" are the same user).
 # Queries must pass the same collation to use these indexes.
@@ -37,6 +40,7 @@ TEXT = {"bsonType": "string", "minLength": 1}
 OPTIONAL_TEXT = {"bsonType": ["string", "null"]}
 BOOL = {"bsonType": "bool"}
 SHA256_HEX = {"bsonType": "string", "pattern": "^[0-9a-f]{64}$"}
+PHOTO_TYPES = ["image/jpeg"]           # every upload is re-encoded to JPEG
 
 
 def _schema(required: list[str], properties: dict) -> dict:
@@ -123,7 +127,14 @@ COLLECTIONS: list[CollectionSpec] = [
             "checked_out_by": OPTIONAL_OBJECT_ID,
             "snapshot": {"bsonType": "object", "required": ["visitor_name"], "properties": {
                 "visitor_name": TEXT}},
-            "pass": {"bsonType": ["object", "null"], "properties": {"token_hash": SHA256_HEX}},
+            "photo_id": OPTIONAL_OBJECT_ID,
+            # The QR pass: only hashes of the random tokens are stored (the token is printed on the badge).
+            "pass": {"bsonType": ["object", "null"], "required": ["token_hash", "issued_at", "expires_at"],
+                     "properties": {
+                         "token_hash": SHA256_HEX, "issued_at": DATE, "expires_at": DATE,
+                         "issued_by": OBJECT_ID,
+                         "revoked_at": OPTIONAL_DATE, "revoked_by": OPTIONAL_OBJECT_ID,
+                         "revoked_token_hashes": {"bsonType": "array", "items": SHA256_HEX}}},
             "created_at": DATE, "updated_at": DATE,
         }),
         [
@@ -142,6 +153,8 @@ COLLECTIONS: list[CollectionSpec] = [
             # v2: visit history filtered by host / department, newest first.
             IndexModel([("host_id", ASCENDING), ("check_in_at", DESCENDING)], name="host_history"),
             IndexModel([("department_id", ASCENDING), ("check_in_at", DESCENDING)], name="department_history"),
+            # v3: a scanned pass that was replaced ("this badge is no longer valid").
+            IndexModel([("pass.revoked_token_hashes", ASCENDING)], name="pass_revoked_tokens"),
         ],
     ),
     CollectionSpec(
@@ -150,15 +163,43 @@ COLLECTIONS: list[CollectionSpec] = [
             "identifier": TEXT,                   # "<TYPE>:<normalised number>"
             "identity": {"bsonType": "object", "required": ["type", "number"], "properties": {
                 "type": {"enum": IDENTITY_TYPES}, "number": TEXT}},
+            "name": OPTIONAL_TEXT, "name_search": OPTIONAL_TEXT,
             "reason": TEXT,
-            "is_active": BOOL,
+            "is_active": BOOL,                    # false = disabled (lifted); entries are never deleted
             "expires_at": OPTIONAL_DATE,
             "created_by": OBJECT_ID, "created_at": DATE,
+            "updated_by": OPTIONAL_OBJECT_ID, "updated_at": OPTIONAL_DATE,
+            "disabled_by": OPTIONAL_OBJECT_ID, "disabled_at": OPTIONAL_DATE, "disabled_reason": OPTIONAL_TEXT,
         }),
         [
             # Screening lookup; one active ban per identity (inactive history kept).
             IndexModel([("identifier", ASCENDING)], name="active_identifier_unique", unique=True,
                        partialFilterExpression={"is_active": True}),
+            # v3: management screen: newest first; search by ID number (all statuses) or name.
+            IndexModel([("created_at", DESCENDING), ("_id", DESCENDING)], name="newest_first"),
+            IndexModel([("identifier", ASCENDING), ("created_at", DESCENDING)], name="identifier_history"),
+            IndexModel([("name_search", ASCENDING)], name="name_prefix"),
+        ],
+    ),
+    CollectionSpec(
+        "photos",
+        _schema(["storage_key", "visitor_id", "content_type", "size_bytes", "width", "height", "sha256",
+                 "captured_by", "captured_at"], {
+            "storage_key": {"bsonType": "string", "pattern": "^[0-9a-f]{32}$"},   # random file name, never exposed
+            "visitor_id": OBJECT_ID,
+            "visit_id": OPTIONAL_OBJECT_ID,
+            "content_type": {"enum": PHOTO_TYPES},
+            "size_bytes": {"bsonType": ["int", "long"], "minimum": 1},
+            "width": {"bsonType": ["int", "long"], "minimum": 1},
+            "height": {"bsonType": ["int", "long"], "minimum": 1},
+            "sha256": SHA256_HEX,
+            "captured_by": OBJECT_ID, "captured_at": DATE,
+            "gate_id": OPTIONAL_OBJECT_ID,
+        }),
+        [
+            IndexModel([("storage_key", ASCENDING)], name="storage_key_unique", unique=True),
+            IndexModel([("visitor_id", ASCENDING), ("captured_at", DESCENDING)], name="visitor_photos"),
+            IndexModel([("captured_at", ASCENDING)], name="captured_at"),       # retention clean-up (later phase)
         ],
     ),
     CollectionSpec(

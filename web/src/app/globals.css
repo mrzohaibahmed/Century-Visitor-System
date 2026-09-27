@@ -43,3 +43,65 @@ body {
   outline: 3px solid var(--color-brand-600);
   outline-offset: 2px;
 }
+
+/*
+ * Visitor badge (components/badge/VisitorBadge.tsx). BADGE SIZE: CR80 card,
+ * 54 × 86 mm portrait. For other label stock change the two sizes below
+ * (--badge-w / --badge-h and @page badge) and test on the real printer.
+ */
+.badge-card {
+  --badge-w: 54mm;
+  --badge-h: 86mm;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: var(--badge-w);
+  height: var(--badge-h);
+  padding: 3mm 3mm 2mm;
+  overflow: hidden;
+  background: #fff;
+  color: #000;
+  font-family: var(--font-sans);
+  text-align: center;
+  line-height: 1.15;
+}
+.badge-screen .badge-card {
+  border: 1px solid var(--color-border);
+  border-radius: 3mm;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
+}
+.badge-org { font-size: 7pt; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.badge-band {
+  width: 100%;
+  margin: 1.5mm 0;
+  padding: 0.8mm 0;
+  background: #000;
+  color: #fff;
+  font-size: 11pt;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+}
+.badge-name { font-size: 12pt; font-weight: 700; overflow-wrap: anywhere; max-height: 10mm; overflow: hidden; }
+.badge-number { margin-top: 0.8mm; font-family: var(--font-mono); font-size: 9pt; font-weight: 700; }
+.badge-facts { width: 100%; margin-top: 1.5mm; font-size: 6.5pt; text-align: left; }
+.badge-facts div { display: flex; gap: 1.5mm; }
+.badge-facts dt { flex: 0 0 9mm; color: #444; }
+.badge-facts dd { flex: 1; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.badge-qr { width: 30mm; height: 30mm; margin-top: auto; image-rendering: pixelated; }
+.badge-foot { margin-top: 1mm; font-size: 5.5pt; color: #333; }
+
+/* The print copy lives in .badge-print-root directly under <body>; it is the only thing printed. */
+.badge-print-root { display: none; }
+
+@page badge {
+  size: 54mm 86mm;
+  margin: 0;
+}
+
+@media print {
+  body:has(> .badge-print-root) > *:not(.badge-print-root) { display: none !important; }
+  body:has(> .badge-print-root) { background: #fff; }
+  .badge-print-root { display: block; page: badge; }
+  .badge-print-root .badge-card { break-inside: avoid; }
+}

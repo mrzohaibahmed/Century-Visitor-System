@@ -19,6 +19,9 @@ class Permission(StrEnum):
     VISIT_CHECK_OUT = "visit:check_out"
     VISIT_READ = "visit:read"
     PASS_ISSUE = "pass:issue"                  # noqa: S105 - visitor pass, not a password
+    PHOTO_CAPTURE = "photo:capture"            # take a visitor's photo at check-in
+    PHOTO_VIEW = "photo:view"                  # guards: only photos needed at the gate (see services/photos.py)
+    PHOTO_VIEW_ALL = "photo:view_all"          # any photo, including earlier ones (administrators)
     VISITOR_READ = "visitor:read"
     VISITOR_CREATE = "visitor:create"
     VISITOR_EDIT = "visitor:edit"
@@ -35,7 +38,7 @@ class Permission(StrEnum):
 _GUARD = frozenset({
     Permission.DASHBOARD_VIEW, Permission.VISIT_CHECK_IN, Permission.VISIT_CHECK_OUT, Permission.VISIT_READ,
     Permission.PASS_ISSUE, Permission.VISITOR_READ, Permission.VISITOR_CREATE, Permission.DIRECTORY_READ,
-    Permission.ACCOUNT_SELF,
+    Permission.PHOTO_CAPTURE, Permission.PHOTO_VIEW, Permission.ACCOUNT_SELF,
 })
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {

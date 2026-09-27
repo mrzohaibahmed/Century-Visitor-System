@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 API_DIR = Path(__file__).resolve().parents[2]
@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     # (the reverse proxy in production; Next.js on this machine in development).
     trusted_proxies: list[str] = ["127.0.0.1", "::1"]
 
+    # --- Visitor photos (Phase 4) -------------------------------------------------
+    # Private folder on the API server; never served directly, never inside web/.
+    # Files have random names; the database holds only that name. Back this folder up
+    # together with the database. Production must set it explicitly.
+    photo_dir: Path = API_DIR.parent / ".dev" / "photos"
+    photo_max_bytes: int = Field(default=2 * 1024 * 1024, ge=10_000, le=10 * 1024 * 1024)
+
+    # --- Visitor passes / badges (Phase 4) ----------------------------------------
+    # A pass (QR on the badge) stops working at check-out, when replaced, or after this long.
+    pass_valid_hours: int = Field(default=24, ge=1, le=24 * 7)
+    organization_name: str = Field(default="Century Gate", min_length=1, max_length=60)
+
     @field_validator("mongo_db")
     @classmethod
     def _not_the_legacy_database(cls, value: str) -> str:
@@ -85,6 +97,12 @@ class Settings(BaseSettings):
         if not value and info.data.get("environment") == "production":
             raise ValueError("cookie_secure must be true in production.")
         return value
+
+    @model_validator(mode="after")
+    def _explicit_photo_dir_in_production(self):
+        if self.environment == "production" and "photo_dir" not in self.model_fields_set:
+            raise ValueError("CG_PHOTO_DIR must be set in production (a private folder that is backed up).")
+        return self
 
     @property
     def docs_enabled(self) -> bool:

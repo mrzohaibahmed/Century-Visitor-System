@@ -26,6 +26,7 @@ from app.db.transactions import run_in_transaction
 from app.schemas.visits import VISIT_NUMBER, CheckInRequest
 from app.services import audit
 from app.services import directory as directory_svc
+from app.services import photos as photos_svc
 from app.services import visitors as visitors_svc
 from app.services.audit import AuditAction, actor_from_user
 from app.services.auth import AuthContext, RequestMeta, session_gate
@@ -41,6 +42,9 @@ def _oid(value: str) -> ObjectId:
     if not ObjectId.is_valid(value):
         raise NOT_FOUND
     return ObjectId(value)
+
+
+object_id = _oid
 
 
 def _operator_name(user: dict) -> str:
@@ -85,6 +89,7 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
     if not department_id:
         raise AppError(422, "department_required", "Choose the department being visited.")
     department = await directory_svc.get_active(db, directory_svc.DEPARTMENT, department_id)
+    photo_id = await photos_svc.for_check_in(db, visitor, body.photo_id) if body.photo_id else None
 
     now = datetime.now(UTC)
     year = local_year(now, settings.timezone)
@@ -95,6 +100,7 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
         "vehicle_registration": body.vehicle_registration, "belongings": body.belongings,
         "status": "CHECKED_IN", "check_in_at": now, "check_out_at": None,
         "checked_in_by": ctx.user["_id"], "checked_out_by": None, "checkout_method": None, "pass": None,
+        "photo_id": photo_id,
         "snapshot": {"visitor_name": visitor["full_name"], "host_name": host_name,
                      "department_name": department["name"], "gate_name": gate["name"],
                      "checked_in_by_name": _operator_name(ctx.user)},
@@ -107,10 +113,15 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
             return_document=ReturnDocument.AFTER, session=s)
         visit["visit_number"] = f"V-{year}-{counter['seq']:06d}"
         visit["_id"] = (await db.visits.insert_one(visit, session=s)).inserted_id
+        if photo_id:
+            # The visit where the photo was taken (a later visit may reuse the visitor's current photo).
+            await db.photos.update_one({"_id": photo_id, "visit_id": None}, {"$set": {"visit_id": visit["_id"]}},
+                                       session=s)
         await audit.record(db, AuditAction.VISIT_CHECKED_IN, actor=actor, ip=meta.ip, resource_type="visit",
                            resource_id=visit["_id"],
                            metadata={"visit_number": visit["visit_number"], "visitor_id": visitor["_id"],
-                                     "gate_id": gate["_id"], "host_unlisted": host_id is None}, session=s)
+                                     "gate_id": gate["_id"], "host_unlisted": host_id is None,
+                                     "photo_id": photo_id}, session=s)
 
     try:
         await run_in_transaction(db, work)

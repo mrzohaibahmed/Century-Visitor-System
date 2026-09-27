@@ -21,6 +21,8 @@ export type Visitor = {
   created_at: string;
   updated_at: string;
   active_visit: ActiveVisitRef | null;
+  /** Current photo; the image is fetched from photoUrl(). */
+  photo_id: string | null;
 };
 
 export type Screening = { status: "CLEAR" | "BLOCKED"; reason: string | null };

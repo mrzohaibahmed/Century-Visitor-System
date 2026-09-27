@@ -117,6 +117,9 @@ def _identity_candidates(q: str) -> list[tuple[str, str]]:
     return found
 
 
+identity_candidates = _identity_candidates      # (type, normalised number) pairs a free-text query could be
+
+
 async def search(db: AsyncDatabase, q: str, cursor: str | None = None) -> tuple[list[dict], str | None]:
     """By ID number or phone (exact), otherwise by name prefix (paginated)."""
     q = q.strip()

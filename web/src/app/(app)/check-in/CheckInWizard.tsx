@@ -1,16 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { BadgePreview } from "@/components/badge/VisitorBadge";
+import { CameraCapture } from "@/components/camera/CameraCapture";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { SelectField } from "@/components/ui/SelectField";
 import { TextField } from "@/components/ui/TextField";
 import { IdentityInput } from "@/components/visits/IdentityInput";
+import { VisitorPhoto } from "@/components/visits/VisitorPhoto";
 import { ApiError, errorMessage, fieldErrors } from "@/lib/api/client";
 import { type Department, listDepartments } from "@/lib/api/directory";
+import { type IssuedPass, issuePass } from "@/lib/api/passes";
+import { uploadVisitorPhoto } from "@/lib/api/photos";
 import {
   createVisitor,
   getVisitor,
@@ -32,21 +37,24 @@ type Step =
   | { kind: "blocked"; name: string; reason: string }
   | { kind: "inside"; visitor: Visitor }
   | { kind: "details"; visitor: Visitor }
-  | { kind: "review"; visitor: Visitor }
+  | { kind: "photo"; visitor: Visitor }
+  | { kind: "review"; visitor: Visitor; photoId: string | null }
   | { kind: "done"; visit: Visit };
 
-const STEP_TITLES = ["Identify visitor", "Visit details", "Confirm"];
+const STEP_TITLES = ["Identify visitor", "Visit details", "Photo", "Confirm"];
 
 function stepIndex(step: Step): number {
   if (step.kind === "details") return 1;
-  if (step.kind === "review" || step.kind === "done") return 2;
+  if (step.kind === "photo") return 2;
+  if (step.kind === "review" || step.kind === "done") return 3;
   return 0;
 }
 
 /**
  * Check-in: identify by ID → register if new → screening / already-inside
- * checks → visit details → review → confirm. The API re-checks everything
- * (watchlist, one active visit, host/department) at confirmation.
+ * checks → visit details → photo → review → confirm → pass and badge. The API
+ * re-checks everything (watchlist, one active visit, host/department, photo)
+ * at confirmation.
  */
 export function CheckInWizard() {
   const [step, setStep] = useState<Step>({ kind: "identify" });
@@ -98,10 +106,15 @@ export function CheckInWizard() {
       )}
       {step.kind === "details" && (
         <DetailsStep visitor={step.visitor} draft={draft} onChange={setDraft} onCancel={restart}
-                     onNext={() => setStep({ kind: "review", visitor: step.visitor })} />
+                     onNext={() => setStep({ kind: "photo", visitor: step.visitor })} />
+      )}
+      {step.kind === "photo" && (
+        <PhotoStep visitor={step.visitor} onBack={() => setStep({ kind: "details", visitor: step.visitor })}
+                   onNext={(photoId) => setStep({ kind: "review", visitor: step.visitor, photoId })} />
       )}
       {step.kind === "review" && (
-        <ReviewStep visitor={step.visitor} draft={draft} onBack={() => setStep({ kind: "details", visitor: step.visitor })}
+        <ReviewStep visitor={step.visitor} draft={draft} photoId={step.photoId}
+                    onBack={() => setStep({ kind: "photo", visitor: step.visitor })}
                     onDenied={(reason) => setStep({ kind: "blocked", name: step.visitor.full_name, reason })}
                     onDone={(visit) => setStep({ kind: "done", visit })} />
       )}
@@ -359,9 +372,10 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
 }
 
 // ---------------------------------------------------------------- step 3: review and confirm
-function ReviewStep({ visitor, draft, onBack, onDenied, onDone }: {
+function ReviewStep({ visitor, draft, photoId, onBack, onDenied, onDone }: {
   visitor: Visitor;
   draft: VisitDraft;
+  photoId: string | null;
   onBack: () => void;
   onDenied: (reason: string) => void;
   onDone: (visit: Visit) => void;
@@ -382,7 +396,7 @@ function ReviewStep({ visitor, draft, onBack, onDenied, onDone }: {
     setProblems([]);
     setSaving(true);
     try {
-      onDone(await checkIn(toCheckIn(visitor.id, draft)));
+      onDone(await checkIn({ ...toCheckIn(visitor.id, draft), photo_id: photoId }));
     } catch (e) {
       if (e instanceof ApiError && e.code === "entry_denied") return onDenied(e.message);
       setError(errorMessage(e));
@@ -415,14 +429,17 @@ function ReviewStep({ visitor, draft, onBack, onDenied, onDone }: {
             {problems.length > 0 && <ul className="mt-1 list-disc pl-5">{problems.map((p) => <li key={p}>{p}</li>)}</ul>}
           </Alert>
         )}
-        <dl className="divide-y divide-border rounded-lg border border-border text-sm">
-          {rows.map(([label, value]) => (
-            <div key={label} className="grid grid-cols-[9rem_1fr] gap-3 px-4 py-2">
-              <dt className="text-ink-muted">{label}</dt>
-              <dd className="font-medium text-ink">{value}</dd>
-            </div>
-          ))}
-        </dl>
+        <div className="flex gap-4">
+          <dl className="flex-1 divide-y divide-border rounded-lg border border-border text-sm">
+            {rows.map(([label, value]) => (
+              <div key={label} className="grid grid-cols-[9rem_1fr] gap-3 px-4 py-2">
+                <dt className="text-ink-muted">{label}</dt>
+                <dd className="font-medium text-ink">{value}</dd>
+              </div>
+            ))}
+          </dl>
+          <VisitorPhoto photoId={photoId} name={visitor.full_name} />
+        </div>
         <div className="flex justify-between gap-2">
           <Button variant="secondary" onClick={onBack} disabled={saving}>Back</Button>
           <Button onClick={() => void confirm()} loading={saving}>Confirm check-in</Button>
@@ -433,6 +450,15 @@ function ReviewStep({ visitor, draft, onBack, onDenied, onDone }: {
 }
 
 function DoneStep({ visit, onNext }: { visit: Visit; onNext: () => void }) {
+  return (
+    <div className="space-y-4">
+      <CheckedInCard visit={visit} onNext={onNext} />
+      <PassCard visit={visit} />
+    </div>
+  );
+}
+
+function CheckedInCard({ visit, onNext }: { visit: Visit; onNext: () => void }) {
   return (
     <Card title="Checked in">
       <div className="space-y-4 text-center" data-testid="check-in-done">
@@ -452,9 +478,88 @@ function DoneStep({ visit, onNext }: { visit: Visit; onNext: () => void }) {
           <Link href="/check-out" className="inline-flex min-h-10 items-center rounded-lg border border-border px-4 text-sm font-semibold text-ink hover:bg-canvas">
             Visitors inside
           </Link>
-          <Button onClick={onNext} autoFocus>Check in next visitor</Button>
+          <Button onClick={onNext}>Check in next visitor</Button>
         </div>
       </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------- photo
+export function PhotoStep({ visitor, onBack, onNext }: {
+  visitor: Visitor;
+  onBack: () => void;
+  onNext: (photoId: string | null) => void;
+}) {
+  const [retaking, setRetaking] = useState(!visitor.photo_id);
+
+  async function upload(photo: Blob) {
+    onNext((await uploadVisitorPhoto(visitor.id, photo)).id);
+  }
+
+  return (
+    <Card title="Visitor photo" description="Take a photo of the visitor's face, looking at the camera.">
+      <div className="space-y-4">
+        <VisitorSummary visitor={visitor} />
+        {visitor.photo_id && !retaking ? (
+          <div className="space-y-3 text-center">
+            <div className="flex justify-center">
+              <VisitorPhoto photoId={visitor.photo_id} name={visitor.full_name} className="size-48" />
+            </div>
+            <p className="text-sm text-ink-muted">Photo from an earlier visit. Check that it is the same person.</p>
+            <div className="flex justify-center gap-2">
+              <Button variant="secondary" onClick={() => setRetaking(true)}>Take a new photo</Button>
+              <Button onClick={() => onNext(visitor.photo_id)}>Keep this photo</Button>
+            </div>
+          </div>
+        ) : (
+          <CameraCapture onConfirm={upload} />
+        )}
+        <div className="flex justify-between gap-2 border-t border-border pt-4">
+          <Button variant="secondary" onClick={onBack}>Back</Button>
+          <Button variant="ghost" onClick={() => onNext(null)}>Continue without a photo</Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------- pass and badge
+function PassCard({ visit }: { visit: Visit }) {
+  const [issued, setIssued] = useState<IssuedPass | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [issuing, setIssuing] = useState(false);
+  const requested = useRef(false);
+
+  const issue = useCallback(async () => {
+    setError(null);
+    setIssuing(true);
+    try {
+      setIssued(await issuePass(visit.id));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setIssuing(false);
+    }
+  }, [visit.id]);
+
+  useEffect(() => {
+    // Once per visit (React's development double-run would otherwise issue, and cancel, a first pass).
+    if (requested.current) return;
+    requested.current = true;
+    void issue();
+  }, [issue]);
+
+  return (
+    <Card title="Visitor badge" description="Print the badge and give it to the visitor. The QR code is used at check-out.">
+      {error && (
+        <div className="space-y-3">
+          <Alert tone="danger">The pass could not be issued: {error}</Alert>
+          <Button onClick={() => void issue()} loading={issuing}>Try again</Button>
+        </div>
+      )}
+      {!error && !issued && <p className="text-sm text-ink-muted">Preparing the badge…</p>}
+      {issued && <BadgePreview issued={issued} visitId={visit.id} />}
     </Card>
   );
 }

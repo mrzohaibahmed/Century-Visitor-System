@@ -99,3 +99,21 @@ async def test_multi_document_transactions_are_available(migrated):
             await db.counters.insert_one({"_id": "tx-test", "seq": 1}, session=session)
             await session.abort_transaction()
     assert await db.counters.find_one({"_id": "tx-test"}) is None
+
+
+async def test_photo_records_need_a_random_storage_key(migrated):
+    photo = {"visitor_id": ObjectId(), "content_type": "image/jpeg", "size_bytes": 10, "width": 640, "height": 480,
+             "sha256": "0" * 64, "captured_by": ObjectId(), "captured_at": NOW}
+    with pytest.raises(WriteError):                  # a CNIC or a path is not a storage key
+        await migrated.db.photos.insert_one({**photo, "storage_key": "35201-1234567-1"})
+    with pytest.raises(WriteError):
+        await migrated.db.photos.insert_one({**photo, "storage_key": "../../etc/passwd" + "0" * 16})
+    await migrated.db.photos.insert_one({**photo, "storage_key": "a" * 32})
+
+
+async def test_a_visit_pass_stores_only_a_token_hash(migrated):
+    with pytest.raises(WriteError):
+        await migrated.db.visits.insert_one({**visit(ObjectId()), "pass": {"token_hash": "RAW-TOKEN", "issued_at": NOW,
+                                                                            "expires_at": NOW}})
+    await migrated.db.visits.insert_one({**visit(ObjectId()), "pass": {"token_hash": "f" * 64, "issued_at": NOW,
+                                                                        "expires_at": NOW}})

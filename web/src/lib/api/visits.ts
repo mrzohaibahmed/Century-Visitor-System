@@ -43,6 +43,7 @@ export type Visit = {
   checked_in_by: Ref;
   checked_out_by: Ref | null;
   checkout_method: string | null;
+  photo_id: string | null;
 };
 
 export type CheckIn = {
@@ -54,6 +55,7 @@ export type CheckIn = {
   reason_note?: string | null;
   vehicle_registration?: string | null;
   belongings?: string[];
+  photo_id?: string | null;
 };
 
 export type CheckOutResult = { visit: Visit; already_checked_out: boolean };

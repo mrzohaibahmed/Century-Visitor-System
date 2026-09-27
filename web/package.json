@@ -12,7 +12,9 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "jsqr": "1.4.0",
     "next": "16.3.6",
+    "qrcode": "1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -22,12 +24,15 @@
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^24.19.0",
+    "@types/pngjs": "6.0.5",
+    "@types/qrcode": "1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.1.1",
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
     "jsdom": "^30.1.1",
+    "pngjs": "7.0.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^5.0.2"
