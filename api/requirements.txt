@@ -1,0 +1,10 @@
+# Century Gate VMS API — runtime dependencies (pinned; change deliberately, test, commit)
+fastapi==0.141.1
+starlette==1.7.0
+uvicorn[standard]==0.54.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+pymongo==4.18.2
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
+tzdata==2026.4          # IANA time zones on Windows (Asia/Karachi)

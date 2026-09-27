@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens. Gate stations are used for long shifts: high contrast, large
+ * targets, calm colours; red/amber/green are reserved for status.
+ */
+@theme {
+  --font-sans: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+
+  --color-brand-50: #eef4fb;
+  --color-brand-100: #d6e4f5;
+  --color-brand-600: #1f5fa8;
+  --color-brand-700: #184d8a;
+  --color-brand-900: #0f1b2d;
+
+  --color-surface: #ffffff;
+  --color-canvas: #f3f5f8;
+  --color-border: #dde3ea;
+  --color-ink: #111827;
+  --color-ink-muted: #5b6573;
+
+  --color-ok: #1e7b43;
+  --color-ok-bg: #e7f5ec;
+  --color-warn: #9a5b00;
+  --color-warn-bg: #fdf3e2;
+  --color-danger: #b42318;
+  --color-danger-bg: #fdecea;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-brand-600);
+  outline-offset: 2px;
+}

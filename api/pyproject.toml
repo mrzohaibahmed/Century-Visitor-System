@@ -1,0 +1,29 @@
+[project]
+name = "century-gate-vms-api"
+version = "0.1.0"
+description = "Century Gate Visitor Management System - backend API"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+xfail_strict = true
+markers = [
+    "anyio: async test run by the anyio plugin",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC"]
+ignore = ["S101"]          # assert is fine in tests
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Cookie",
+                          "app.api.deps.require"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S"]
