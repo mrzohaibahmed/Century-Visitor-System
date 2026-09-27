@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, apiRequest } from "./client";
+import { ApiError, apiRequest, setSessionExpiredHandler } from "./client";
 
 function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
@@ -17,6 +17,7 @@ function mockFetch(response: Response | Error) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setSessionExpiredHandler(null);
   document.cookie = "cg_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 });
 
@@ -78,5 +79,29 @@ describe("apiRequest", () => {
     expect((post[1].headers as Record<string, string>)["Content-Type"]).toBe("application/json");
     expect(post[1].body).toBe('{"a":1}');
     expect((get[1].headers as Record<string, string>)["X-CSRF-Token"]).toBeUndefined();
+  });
+
+  it("reports an ended session (401) to the registered handler", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    mockFetch(jsonResponse(401, { error: { code: "session_expired", message: "Your session has expired.", request_id: "r" } }));
+    await expect(apiRequest("/users")).rejects.toMatchObject({ status: 401, code: "session_expired" });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat a failed login as an ended session", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    mockFetch(jsonResponse(401, { error: { code: "invalid_credentials", message: "Invalid username or password.", request_id: "r" } }));
+    await expect(apiRequest("/auth/login", { method: "POST", body: {}, skipSessionExpiry: true })).rejects.toBeInstanceOf(ApiError);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not report other errors as an ended session", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    mockFetch(jsonResponse(403, { error: { code: "forbidden", message: "No.", request_id: "r" } }));
+    await expect(apiRequest("/users")).rejects.toBeInstanceOf(ApiError);
+    expect(handler).not.toHaveBeenCalled();
   });
 });

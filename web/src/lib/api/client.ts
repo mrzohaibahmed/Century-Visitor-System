@@ -50,7 +50,17 @@ export type RequestOptions = {
   signal?: AbortSignal;
   /** Statuses whose JSON body is returned instead of thrown (e.g. 503 from /health/ready). */
   acceptStatuses?: number[];
+  /** Do not treat a 401 as "session ended" (the login request itself). */
+  skipSessionExpiry?: boolean;
 };
+
+type SessionExpiredHandler = (error: ApiError) => void;
+let onSessionExpired: SessionExpiredHandler | null = null;
+
+/** The session layer registers what happens when the server says the session is gone (401). */
+export function setSessionExpiredHandler(handler: SessionExpiredHandler | null): void {
+  onSessionExpired = handler;
+}
 
 export function readCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -98,11 +108,13 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   const envelope = (payload as { error?: { code?: string; message?: string; request_id?: string;
     details?: ApiErrorDetail[] } } | null)?.error;
-  throw new ApiError(
+  const error = new ApiError(
     response.status,
     envelope?.code ?? "http_error",
     envelope?.message ?? FALLBACK_MESSAGES[response.status] ?? "Something went wrong. Please try again.",
     envelope?.request_id ?? response.headers.get("x-request-id"),
     envelope?.details ?? [],
   );
+  if (response.status === 401 && !options.skipSessionExpiry) onSessionExpired?.(error);
+  throw error;
 }

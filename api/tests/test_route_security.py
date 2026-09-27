@@ -49,14 +49,15 @@ def test_every_route_declares_public_or_a_permission(settings):
     assert missing == [], f"Routes without exactly one access rule: {missing}"
 
 
-def test_only_health_checks_are_public_so_far(settings):
+def test_public_routes_are_exactly_the_allow_list(settings):
+    """Adding a public endpoint must be a deliberate change to this list."""
     public_paths = sorted(path for _, path, dependant in api_routes(create_app(settings))
                           if public in _dependency_calls(dependant))
-    assert public_paths == ["/api/v1/health/live", "/api/v1/health/ready"]
+    assert public_paths == ["/api/v1/auth/login", "/api/v1/health/live", "/api/v1/health/ready"]
 
 
 @pytest.mark.anyio
-async def test_protected_routes_fail_closed_until_sessions_exist(settings, client_for):
+async def test_protected_routes_reject_requests_without_a_session(settings, client_for):
     app = create_app(settings)
 
     @app.get("/api/v1/_test/admin-only", dependencies=[Depends(require(Permission.USERS_MANAGE))])

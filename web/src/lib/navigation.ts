@@ -1,9 +1,9 @@
 /**
  * Sidebar entries. Only pages that exist are listed; each later phase adds its
- * pages here. `roles` is used to HIDE entries a role cannot use; the backend
- * enforces the actual permissions (Phase 2).
+ * pages here. `roles` only HIDES entries a role cannot use; the API enforces
+ * the actual permissions on every request.
  */
-export type Role = "ADMIN" | "GUARD";
+import type { Role } from "@/lib/api/auth";
 
 export type NavItem = {
   href: string;
@@ -13,4 +13,9 @@ export type NavItem = {
 
 export const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", roles: ["ADMIN", "GUARD"] },
+  { href: "/users", label: "Users", roles: ["ADMIN"] },
 ];
+
+export function navItemsFor(role: Role): NavItem[] {
+  return NAV_ITEMS.filter((item) => item.roles.includes(role));
+}
