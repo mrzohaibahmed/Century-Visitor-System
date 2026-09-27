@@ -8,9 +8,9 @@ service on port 27017, which holds the legacy desktop database.
 
 Run with the API virtual environment (it provides pymongo):
 
-    api\\.venv\\Scripts\\python scripts\\dev_mongo.py start
-    api\\.venv\\Scripts\\python scripts\\dev_mongo.py status
-    api\\.venv\\Scripts\\python scripts\\dev_mongo.py stop
+    backend\\.venv\\Scripts\\python scripts\\dev_mongo.py start
+    backend\\.venv\\Scripts\\python scripts\\dev_mongo.py status
+    backend\\.venv\\Scripts\\python scripts\\dev_mongo.py stop
 
 Set CG_MONGOD to the full path of mongod.exe if it is not found automatically.
 """

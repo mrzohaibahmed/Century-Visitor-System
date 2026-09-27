@@ -3,8 +3,8 @@
 Web-based Visitor Management System replacing the Century Gate desktop application.
 
 ```
-Browser ──HTTPS──> Reverse proxy ──/──────> Next.js (web/)
-                                 └─/api/──> FastAPI (api/) ──> MongoDB (private)
+Browser ──HTTPS──> Reverse proxy ──/──────> Next.js (frontend/)
+                                 └─/api/──> FastAPI (backend/) ──> MongoDB (private)
 ```
 
 - The browser never connects to MongoDB; only the API holds database credentials.
@@ -17,8 +17,8 @@ Browser ──HTTPS──> Reverse proxy ──/──────> Next.js (web
 
 | Path | What |
 | --- | --- |
-| `api/` | FastAPI backend (Python 3.12, Pydantic v2, PyMongo async) |
-| `web/` | Next.js 16 frontend (App Router, React 19, TypeScript, Tailwind CSS 4) |
+| `backend/` | FastAPI backend (Python 3.12, Pydantic v2, PyMongo async) |
+| `frontend/` | Next.js 16 frontend (App Router, React 19, TypeScript, Tailwind CSS 4) |
 | `scripts/dev_mongo.py` | Starts an isolated local MongoDB replica set for development |
 | `deploy/` | Production deployment on Windows: services, HTTPS proxy, MongoDB, backups, monitoring (see "Production operations") |
 | `.dev/` | Local development data and logs (git-ignored) |
@@ -31,9 +31,9 @@ the MongoDB Windows service is not touched).
 ### 1. Development database
 
 ```powershell
-api\.venv\Scripts\python scripts\dev_mongo.py start     # 127.0.0.1:27018, replica set "cgvms-dev"
-api\.venv\Scripts\python scripts\dev_mongo.py status
-api\.venv\Scripts\python scripts\dev_mongo.py stop
+backend\.venv\Scripts\python scripts\dev_mongo.py start     # 127.0.0.1:27018, replica set "cgvms-dev"
+backend\.venv\Scripts\python scripts\dev_mongo.py status
+backend\.venv\Scripts\python scripts\dev_mongo.py stop
 ```
 
 This runs a **separate** `mongod` on port 27018 with its data in `.dev/mongo/`. The MongoDB Windows
@@ -43,7 +43,7 @@ A replica set is required because check-in writes a visit and its audit record i
 ### 2. API
 
 ```powershell
-cd api
+cd backend
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements-dev.txt
 copy .env.example .env
@@ -63,7 +63,7 @@ The first administrator can only be created with `create-admin` on the server. T
 ### 3. Web
 
 ```powershell
-cd web
+cd frontend
 npm install
 copy .env.example .env.local
 npm run dev                       # http://localhost:3000 (forwards /api/* to the API)
@@ -76,11 +76,11 @@ scripts to `localhost` by default.
 
 **End-to-end tests** start their own isolated stack (API on :8001 with database `cgvms_e2e`, web on
 :3001), reset that database and create an E2E administrator. They never touch the development database.
-They need the development MongoDB running, and no other `next dev` server running for `web/`.
+They need the development MongoDB running, and no other `next dev` server running for `frontend/`.
 
 ## Configuration
 
-All API settings are environment variables with the `CG_` prefix (see `api/.env.example`).
+All API settings are environment variables with the `CG_` prefix (see `backend/.env.example`).
 Secrets live only in the server environment, never in the frontend or the repository.
 
 ## Accounts & security (Phase 2)
@@ -132,7 +132,7 @@ Secrets live only in the server environment, never in the frontend or the reposi
 ### Photo storage (decision)
 
 Photos are files in a **private folder on the API server** (`CG_PHOTO_DIR`, required in production; development
-default `.dev/photos`). They are never served directly and never under `web/`. Each upload is decoded, checked
+default `.dev/photos`). They are never served directly and never under `frontend/`. Each upload is decoded, checked
 (JPEG/PNG/WebP, 160×120 to 4096×4096, at most 12 M pixels, at most `CG_PHOTO_MAX_BYTES`, default 2 MB) and
 **re-encoded** as a fresh JPEG of at most 1024 px. That removes EXIF/GPS metadata and anything hidden in the
 file. Files get random 128-bit names (never the CNIC). The `photos` collection holds the name and metadata.
@@ -157,7 +157,7 @@ audited (`PASS_REJECTED`). Scans are sent in the request body, never in a URL (p
 The badge is a browser print layout: a CR80 card, **54 × 86 mm portrait**, printed through the normal print
 dialog (only the badge is printed). It shows the organisation (`CG_ORGANIZATION_NAME`), visitor name, visit
 number, host, department, check-in time and gate, the QR and its validity. It never shows the ID number or
-phone. For other label stock, change the sizes in `web/src/app/globals.css` (section "Visitor badge").
+phone. For other label stock, change the sizes in `frontend/src/app/globals.css` (section "Visitor badge").
 
 ### Manual acceptance test (real hardware, not automated)
 
@@ -216,7 +216,7 @@ All four start automatically at boot and restart themselves after a crash (10 s,
 
 | Folder | Contents | Who may read it |
 | --- | --- | --- |
-| `C:\CenturyGateVMS\app` | This repository (a release), incl. `api\.env` | services (read); `api\.env`: CGVMS-API only |
+| `C:\CenturyGateVMS\app` | This repository (a release), incl. `backend\.env` | services (read); `backend\.env`: CGVMS-API only |
 | `...\config\cgvms.psd1` | Settings for the operations scripts (no passwords) | Administrators |
 | `...\secrets\` | Database connection files and the MongoDB admin password | Administrators, SYSTEM |
 | `...\tls\mongodb\` | Database certificate, CA, replica-set key file | CGVMS-MongoDB (the API: `ca.pem` only) |
@@ -234,18 +234,18 @@ ordinary user logged on to the server can neither read the data nor change the a
 
 1. **Software**: install everything listed under *Server requirements*.
 2. **Application**: copy the release to `C:\CenturyGateVMS\app` (e.g. `git clone` then `git checkout <tag>`).
-3. **API environment** (PowerShell in `C:\CenturyGateVMS\app\api`):
+3. **API environment** (PowerShell in `C:\CenturyGateVMS\app\backend`):
    ```powershell
    & 'C:\Program Files\Python312\python.exe' -m venv .venv
    .venv\Scripts\python -m pip install -r requirements.txt -r ..\deploy\requirements-ops.txt
    ```
-4. **Web build** (in `C:\CenturyGateVMS\app\web`): `npm ci` then `npm run build`. Never run `npm run dev` on the server.
+4. **Web build** (in `C:\CenturyGateVMS\app\frontend`): `npm ci` then `npm run build`. Never run `npm run dev` on the server.
 5. **Settings for the scripts**: copy `deploy\windows\cgvms.example.psd1` to `C:\CenturyGateVMS\config\cgvms.psd1`
    and set `SiteName`, `PhotoDir`, `MongoBin`, `HealthUrl` and `BackupDestination`.
 6. **Photo folder**: create it (e.g. `D:\CenturyGateVMS-Photos`). The API refuses to start if it is missing.
 7. **Database certificates and key file** (in `C:\CenturyGateVMS\app`):
    ```powershell
-   api\.venv\Scripts\python deploy\mongodb\cgvms_mongo.py prepare --tls-dir C:\CenturyGateVMS\tls\mongodb
+   backend\.venv\Scripts\python deploy\mongodb\cgvms_mongo.py prepare --tls-dir C:\CenturyGateVMS\tls\mongodb
    ```
    Then **move `C:\CenturyGateVMS\tls\mongodb\ca.key` off the server** (e.g. to a USB key in the safe). It is
    only needed to renew the database certificate.
@@ -255,16 +255,16 @@ ordinary user logged on to the server can neither read the data nor change the a
    ```powershell
    & 'C:\Program Files\MongoDB\Server\8.3\bin\mongod.exe' --config C:\CenturyGateVMS\mongodb\mongod.conf
    # in a SECOND window:
-   api\.venv\Scripts\python deploy\mongodb\cgvms_mongo.py init --tls-dir C:\CenturyGateVMS\tls\mongodb --secrets-dir C:\CenturyGateVMS\secrets
+   backend\.venv\Scripts\python deploy\mongodb\cgvms_mongo.py init --tls-dir C:\CenturyGateVMS\tls\mongodb --secrets-dir C:\CenturyGateVMS\secrets
    ```
    This creates the replica set and the accounts and writes their connection files into `secrets\`. Put the
    `cgvms_root` password (`secrets\mongodb-root.txt`) into the company password manager.
-10. **API settings**: copy `deploy\windows\api.env.template` to `C:\CenturyGateVMS\app\api\.env`. Paste the line
+10. **API settings**: copy `deploy\windows\api.env.template` to `C:\CenturyGateVMS\app\backend\.env`. Paste the line
     from `secrets\cgvms_app.uri.txt` into `CG_MONGO_URI`, and set `CG_PHOTO_DIR` and `CG_ORGANIZATION_NAME`.
 11. **Schema and first administrator** (MongoDB still running in the console):
     ```powershell
     powershell -ExecutionPolicy Bypass -File deploy\windows\migrate.ps1
-    cd api; .venv\Scripts\python -m app.cli create-admin --username admin
+    cd backend; .venv\Scripts\python -m app.cli create-admin --username admin
     ```
     Then stop the console MongoDB (Ctrl+C).
 12. **HTTPS certificate**: see *HTTPS* below. Copy `deploy\windows\services\CGVMS-Proxy.xml` to
@@ -277,7 +277,7 @@ ordinary user logged on to the server can neither read the data nor change the a
 
 ### Configuration reference
 
-`C:\CenturyGateVMS\app\api\.env` (template: `deploy\windows\api.env.template`) holds the only secret the
+`C:\CenturyGateVMS\app\backend\.env` (template: `deploy\windows\api.env.template`) holds the only secret the
 application uses at runtime (`CG_MONGO_URI`). The API **refuses to start in production** if:
 - `CG_MONGO_URI` has no user/password, no `tls=true`, or any of `tlsAllowInvalidCertificates`,
   `tlsAllowInvalidHostnames`, `tlsInsecure`;
@@ -296,7 +296,7 @@ exist. The proxy's settings are in `services\CGVMS-Proxy.xml` (`CGVMS_SITE`, `CG
 
 ```powershell
 Get-Service CGVMS-*                                   # status of all four
-Restart-Service CGVMS-API                             # after changing api\.env
+Restart-Service CGVMS-API                             # after changing backend\.env
 Restart-Service CGVMS-Proxy                           # after changing the certificate or Caddyfile
 Stop-Service CGVMS-Proxy, CGVMS-Web, CGVMS-API, CGVMS-MongoDB      # full stop (this order)
 Start-Service CGVMS-MongoDB, CGVMS-API, CGVMS-Web, CGVMS-Proxy     # full start (this order)
@@ -312,9 +312,9 @@ shows host names, paths or errors. The dashboard's *System status* card shows th
 ```powershell
 powershell -ExecutionPolicy Bypass -File deploy\windows\backup.ps1        # 1. fresh backup
 Stop-Service CGVMS-Proxy, CGVMS-Web, CGVMS-API                            # 2. stop (MongoDB keeps running)
-# 3. replace C:\CenturyGateVMS\app with the new release (keep api\.env!), then:
-cd C:\CenturyGateVMS\app\api; .venv\Scripts\python -m pip install -r requirements.txt
-cd ..\web; npm ci; npm run build
+# 3. replace C:\CenturyGateVMS\app with the new release (keep backend\.env!), then:
+cd C:\CenturyGateVMS\app\backend; .venv\Scripts\python -m pip install -r requirements.txt
+cd ..\frontend; npm ci; npm run build
 powershell -ExecutionPolicy Bypass -File ..\deploy\windows\migrate.ps1  # 4. schema (with the migration account)
 Start-Service CGVMS-API, CGVMS-Web, CGVMS-Proxy                           # 5. start and check
 powershell -ExecutionPolicy Bypass -File ..\deploy\windows\check-health.ps1
@@ -354,7 +354,7 @@ internal network.
 
 | Account | Rights | Used by | Connection file |
 | --- | --- | --- | --- |
-| `cgvms_app` | read/write on `century_gate_vms` only | the API (`api\.env`) | `secrets\cgvms_app.uri.txt` |
+| `cgvms_app` | read/write on `century_gate_vms` only | the API (`backend\.env`) | `secrets\cgvms_app.uri.txt` |
 | `cgvms_migrate` | + database admin on `century_gate_vms` only | `migrate.ps1` | `secrets\cgvms_migrate.uri.txt` |
 | `cgvms_backup` | `backup` + log rotation | `backup.ps1` | `secrets\mongodump.yaml` |
 | `cgvms_root` | administrator (break glass) | people, rarely | `secrets\mongodb-root.txt` → password manager |
@@ -424,7 +424,7 @@ touches the live database or photo folder:
    ```powershell
    & 'C:\Program Files\MongoDB\Server\8.3\bin\mongod.exe' --config C:\CenturyGateVMS\mongodb\mongod-restore.conf
    # second window:
-   api\.venv\Scripts\python deploy\mongodb\cgvms_mongo.py init-temp --tls-dir C:\CenturyGateVMS\tls\mongodb --port 27018 --replica-set cgvms
+   backend\.venv\Scripts\python deploy\mongodb\cgvms_mongo.py init-temp --tls-dir C:\CenturyGateVMS\tls\mongodb --port 27018 --replica-set cgvms
    C:\CenturyGateVMS\tools\mongodb-database-tools\bin\mongorestore.exe "--uri=mongodb://localhost:27018/?directConnection=true&tls=true&tlsCAFile=C:/CenturyGateVMS/tls/mongodb/ca.pem" --gzip "--archive=<BackupDestination>\database\<newest>\mongodb.archive.gz" --oplogReplay
    ```
    Stop that MongoDB (Ctrl+C) and delete `mongod-restore.conf`. The dump contains the database accounts, so the
@@ -432,8 +432,8 @@ touches the live database or photo folder:
    after restarting with login, the application account connected with its original password; anonymous
    access was refused.)
 3. Copy the photos back: `robocopy <BackupDestination>\photos D:\CenturyGateVMS-Photos *.jpg /E`.
-4. Continue with *Installation* steps 10 and 12–16 (`api\.env` from the saved connection files), then run
-   `cd C:\CenturyGateVMS\app\api; .venv\Scripts\python -m app.cli verify-data`: it must say `"ok": true`.
+4. Continue with *Installation* steps 10 and 12–16 (`backend\.env` from the saved connection files), then run
+   `cd C:\CenturyGateVMS\app\backend; .venv\Scripts\python -m app.cli verify-data`: it must say `"ok": true`.
 
 ### Monitoring
 
@@ -468,7 +468,7 @@ correlation):
 | Symptom | What to do |
 | --- | --- |
 | Gate PCs show "cannot reach the server" | `Get-Service CGVMS-*`. Start what is stopped (in the order above). Check the firewall allows 443. |
-| **API stopped** / keeps restarting | Read the end of `logs\api\CGVMS-API.err.log`: a configuration problem prints `ERROR: configuration is not valid: <reason>` (no secrets). Fix `api\.env`, `Restart-Service CGVMS-API`. |
+| **API stopped** / keeps restarting | Read the end of `logs\api\CGVMS-API.err.log`: a configuration problem prints `ERROR: configuration is not valid: <reason>` (no secrets). Fix `backend\.env`, `Restart-Service CGVMS-API`. |
 | **Web stopped** | `logs\web\`. Usually a missing build: `cd app\web; npm run build`, `Start-Service CGVMS-Web`. |
 | **MongoDB stopped** | `mongodb\log\mongod.log` (look for `"s":"F"` / `"s":"E"`). Common: disk full, a certificate or the key file unreadable, a newer MongoDB version. `Start-Service CGVMS-MongoDB`; the API reconnects by itself. |
 | **Certificate expired** (browser warning) | HTTPS: replace `tls\web\cert.pem`/`key.pem` (company CA) and `Restart-Service CGVMS-Proxy`. Database: see *MongoDB → Certificate renewal*. |
@@ -485,8 +485,8 @@ correlation):
 | MongoDB requires login | `authorization: enabled`; anonymous access refused (verified) |
 | MongoDB TLS validated | `requireTLS`; plain connections dropped; a client without the database CA is refused; the API refuses URIs that disable checks (tested) |
 | Least-privilege application account | `readWrite` on `century_gate_vms` only; no schema changes, no other databases, no accounts, no shutdown (verified) |
-| Backend secrets server-only | only in `api\.env` (readable by CGVMS-API only) and `secrets\`; nothing in service definitions, Next.js or the browser; no `NEXT_PUBLIC_*` |
-| Photo folder private | outside `web\`; not served by the proxy or Next.js (verified 404); API-authorised access only |
+| Backend secrets server-only | only in `backend\.env` (readable by CGVMS-API only) and `secrets\`; nothing in service definitions, Next.js or the browser; no `NEXT_PUBLIC_*` |
+| Photo folder private | outside `frontend\`; not served by the proxy or Next.js (verified 404); API-authorised access only |
 | No HTTP for gate PCs | port 80 only redirects to HTTPS (to the configured name); HSTS one year |
 | HTTPS validation | company or internal CA; never disabled |
 | Debug / reload off | `app.serve` refuses non-production settings and never reloads; API docs 404 in production (verified); `next start`, never `next dev` |

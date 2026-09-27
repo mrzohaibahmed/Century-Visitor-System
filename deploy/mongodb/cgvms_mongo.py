@@ -213,7 +213,7 @@ def init(tls_dir: Path, secrets_dir: Path, port: int) -> None:
                                                              encoding="utf-8")
         print(f"Created {username}.")
     print(f"\nConnection files are in {secrets_dir}. Put the contents of cgvms_app.uri.txt into CG_MONGO_URI "
-          "in api\\.env. Never copy these files anywhere else.")
+          "in backend\\.env. Never copy these files anywhere else.")
 
 
 # ---------------------------------------------------------------------------------------------- rotate-logs

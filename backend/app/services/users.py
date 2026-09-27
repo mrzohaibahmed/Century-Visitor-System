@@ -46,8 +46,12 @@ async def get_user(db: AsyncDatabase, user_id: str) -> dict:
 
 
 async def create_user(db: AsyncDatabase, *, actor: dict | None, meta: RequestMeta | None, username: str,
-                      display_name: str, role: Role, password: str, must_change_password: bool = True) -> dict:
-    _check_password(password, username)
+                      display_name: str, role: Role, password: str, must_change_password: bool = True,
+                      enforce_policy: bool = True, source: str = "cli") -> dict:
+    # enforce_policy=False only for the development first-run account (app.cli dev-first-admin): its
+    # temporary password has to be replaced at the first login, so the policy is never skipped otherwise.
+    if enforce_policy or not must_change_password:
+        _check_password(password, username)
     password_hash = await asyncio.to_thread(hash_password, password)
     now = datetime.now(UTC)
     doc = {
@@ -63,7 +67,7 @@ async def create_user(db: AsyncDatabase, *, actor: dict | None, meta: RequestMet
         await audit.record(db, AuditAction.USER_CREATED, actor=actor_from_user(actor), ip=meta.ip if meta else None,
                            resource_type="user", resource_id=doc["_id"],
                            changes={"username": username, "display_name": display_name, "role": str(role)},
-                           metadata=None if actor else {"source": "cli"}, session=s)
+                           metadata=None if actor else {"source": source}, session=s)
 
     try:
         await run_in_transaction(db, work)

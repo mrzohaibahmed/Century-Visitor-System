@@ -6,6 +6,8 @@ Operator commands (run on the server, never exposed over HTTP):
     python -m app.cli create-admin --username admin [--display-name "..."] [--password-stdin]
     python -m app.cli verify-data     read-only: photo files present and unchanged, links intact (exit 1 if not)
     python -m app.cli restore-check   on a RESTORED COPY only: verify-data + access rules (refuses production)
+    python -m app.cli dev-first-admin DEVELOPMENT only: admin / admin1234 when no account exists yet
+                                      (must be changed at the first login; start-dev.bat runs it)
 
 create-admin is the only way to create the first administrator: there is no
 web "first-run" page, because such a page would be reachable by anyone on the
@@ -90,6 +92,33 @@ async def _restore_check() -> int:
     return 0 if report["ok"] else 1
 
 
+DEV_ADMIN_USERNAME = "admin"
+DEV_ADMIN_PASSWORD = "admin1234"         # noqa: S105 - documented development default, changed at first login
+
+
+async def _dev_first_admin() -> int:
+    from app.core.permissions import Role
+    from app.services.users import create_user
+    settings = get_settings()
+    if settings.environment != "development":
+        print("ERROR: dev-first-admin only works with CG_ENVIRONMENT=development. "
+              "Use create-admin (with your own password) for any other database.", file=sys.stderr)
+        return 2
+    database = Database(settings)
+    try:
+        if await database.db.users.estimated_document_count():
+            print("Accounts already exist: nothing changed.")
+            return 0
+        await create_user(database.db, actor=None, meta=None, username=DEV_ADMIN_USERNAME,
+                          display_name="Administrator", role=Role.ADMIN, password=DEV_ADMIN_PASSWORD,
+                          must_change_password=True, enforce_policy=False, source="dev-first-admin")
+    finally:
+        await database.close()
+    print(f"First administrator created: {DEV_ADMIN_USERNAME} / {DEV_ADMIN_PASSWORD} "
+          "(a new password must be chosen at the first login).")
+    return 0
+
+
 def _read_password(from_stdin: bool, username: str) -> str | None:
     from app.core.security import password_policy_error
     if from_stdin:
@@ -130,6 +159,7 @@ def main() -> int:
     sub.add_parser("check", help="readiness checks")
     sub.add_parser("verify-data", help="read-only integrity check of the database and the photo folder")
     sub.add_parser("restore-check", help="checks a restored copy (never production)")
+    sub.add_parser("dev-first-admin", help="development only: admin / admin1234 if no account exists")
     admin = sub.add_parser("create-admin", help="create an administrator account")
     admin.add_argument("--username", required=True)
     admin.add_argument("--display-name", default="Administrator")
@@ -156,7 +186,8 @@ def main() -> int:
         if password is None:
             return 2
         return asyncio.run(_create_admin(args.username.strip(), args.display_name.strip(), password))
-    commands = {"migrate": _migrate, "check": _check, "verify-data": _verify_data, "restore-check": _restore_check}
+    commands = {"migrate": _migrate, "check": _check, "verify-data": _verify_data, "restore-check": _restore_check,
+                "dev-first-admin": _dev_first_admin}
     return asyncio.run(commands[args.command]())
 
 

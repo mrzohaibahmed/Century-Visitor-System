@@ -47,7 +47,7 @@ def pytest_sessionstart(session):
     except ConnectionFailure:
         pytest.exit(
             "Test MongoDB is not reachable. Start it with:\n"
-            "    api\\.venv\\Scripts\\python scripts\\dev_mongo.py start\n"
+            "    backend\\.venv\\Scripts\\python scripts\\dev_mongo.py start\n"
             "or set CG_TEST_MONGO_URI to a replica set.", returncode=3)
 
 
@@ -106,7 +106,7 @@ async def _client_for(app):
 
 class ApiClient(httpx.AsyncClient):
     """A browser stand-in: keeps cookies and echoes the CSRF cookie as X-CSRF-Token,
-    exactly like web/src/lib/api/client.ts."""
+    exactly like frontend/src/lib/api/client.ts."""
 
     async def request(self, method, url, *args, **kwargs):
         if method.upper() not in ("GET", "HEAD", "OPTIONS"):

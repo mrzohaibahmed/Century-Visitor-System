@@ -8,7 +8,7 @@
     # The name gate PCs type in the browser. Must match the HTTPS certificate.
     SiteName          = 'vms.century.local'
 
-    # Private photo folder (CG_PHOTO_DIR in api\.env must be the same path). Preferably a data drive.
+    # Private photo folder (CG_PHOTO_DIR in backend\.env must be the same path). Preferably a data drive.
     PhotoDir          = 'D:\CenturyGateVMS-Photos'
 
     # The application's MongoDB instance (NOT 27017: that is the legacy desktop database service).

@@ -7,7 +7,7 @@
       powershell -NoProfile -ExecutionPolicy Bypass -File install-services.ps1 -Uninstall      (keeps all data)
 
   Before running it, follow README "Production operations" (Python, Node.js, MongoDB, the tools,
-  certificates, cgvms_mongo.py prepare/init, api\.env, npm run build). It then:
+  certificates, cgvms_mongo.py prepare/init, backend\.env, npm run build). It then:
     1. checks that everything it needs is in place (and stops with a clear message if not);
     2. creates the folders under Root;
     3. registers four services, each running under its own virtual account (NT SERVICE\<name>),
@@ -16,7 +16,7 @@
          CGVMS-API      python -m app.serve (127.0.0.1:8000)          needs CGVMS-MongoDB
          CGVMS-Web      next start          (127.0.0.1:3000)          needs CGVMS-API
          CGVMS-Proxy    Caddy, HTTPS on 443 (80 only redirects)       the only one the network reaches
-    4. sets folder permissions: application code read-only for the services; api\.env, secrets,
+    4. sets folder permissions: application code read-only for the services; backend\.env, secrets,
        certificates and the photo folder readable only by the service that needs them (and
        Administrators/SYSTEM); nothing is writable by ordinary users;
     5. registers the event log source "CenturyGateVMS" and opens ports 443 and 80 in Windows Firewall;
@@ -77,19 +77,19 @@ if ($Uninstall) {
 }
 
 # ------------------------------------------------------------------------------------------ 1. checks
-$python = Join-Path $root 'app\api\.venv\Scripts\python.exe'
+$python = Join-Path $root 'app\backend\.venv\Scripts\python.exe'
 $node = 'C:\Program Files\nodejs\node.exe'
 $mongod = Join-Path $cfg.MongoBin 'mongod.exe'
 $required = [ordered]@{
     'API Python environment (README step 3)'      = $python
     'Node.js (installed for all users)'           = $node
-    'Next.js production build (npm run build)'    = (Join-Path $root 'app\web\.next\BUILD_ID')
+    'Next.js production build (npm run build)'    = (Join-Path $root 'app\frontend\.next\BUILD_ID')
     'MongoDB server'                              = $mongod
     'mongod.conf (from deploy\mongodb)'           = (Join-Path $root 'mongodb\mongod.conf')
     'MongoDB server certificate (prepare)'        = (Join-Path $root 'tls\mongodb\server.pem')
     'MongoDB CA certificate (prepare)'            = (Join-Path $root 'tls\mongodb\ca.pem')
     'MongoDB replica-set key file (prepare)'      = (Join-Path $root 'tls\mongodb\mongodb.keyfile')
-    'API settings api\.env (api.env.template)'    = (Join-Path $root 'app\api\.env')
+    'API settings backend\.env (api.env.template)'    = (Join-Path $root 'app\backend\.env')
     'Photo folder (PhotoDir)'                     = $cfg.PhotoDir
     'Caddy (tools\caddy.exe)'                     = (Join-Path $root 'tools\caddy.exe')
     'WinSW (tools\WinSW-x64.exe)'                 = (Join-Path $root 'tools\WinSW-x64.exe')
@@ -98,10 +98,10 @@ $required = [ordered]@{
 $missing = @($required.GetEnumerator() | Where-Object { -not (Test-Path -LiteralPath $_.Value) })
 foreach ($m in $missing) { Write-Host "MISSING: $($m.Key): $($m.Value)" }
 if ($missing.Count -and -not $DryRun) { throw "$($missing.Count) prerequisite(s) missing; see README 'Production operations'." }
-if (Test-Path -LiteralPath (Join-Path $root 'app\api\.env')) {
-    $envText = Get-Content -LiteralPath (Join-Path $root 'app\api\.env') -Raw
-    if ($envText -notmatch '(?m)^CG_ENVIRONMENT=production\s*$') { throw 'api\.env must contain CG_ENVIRONMENT=production.' }
-    if ($envText -match 'PASTE-FROM') { throw 'api\.env still contains the placeholder for CG_MONGO_URI.' }
+if (Test-Path -LiteralPath (Join-Path $root 'app\backend\.env')) {
+    $envText = Get-Content -LiteralPath (Join-Path $root 'app\backend\.env') -Raw
+    if ($envText -notmatch '(?m)^CG_ENVIRONMENT=production\s*$') { throw 'backend\.env must contain CG_ENVIRONMENT=production.' }
+    if ($envText -match 'PASTE-FROM') { throw 'backend\.env still contains the placeholder for CG_MONGO_URI.' }
 }
 $proxyXml = Join-Path $root 'services\CGVMS-Proxy.xml'
 if (Test-Path -LiteralPath $proxyXml) {
@@ -154,8 +154,8 @@ Acl $root -Reset -Grants @("${api}:(RX)", "${web}:(RX)", "${proxy}:(RX)", "${db}
 Acl (Join-Path $root 'app') -Grants @("${api}:(OI)(CI)RX", "${web}:(OI)(CI)RX", "${proxy}:(OI)(CI)RX")
 Acl (Join-Path $root 'services') -Grants @("${api}:(OI)(CI)RX", "${web}:(OI)(CI)RX", "${proxy}:(OI)(CI)RX")
 Acl (Join-Path $root 'tools') -Grants @("${proxy}:(OI)(CI)RX")
-Acl (Join-Path $root 'app\api\.env') -Reset -Grants @("${api}:(R)")
-Acl (Join-Path $root 'app\web\.next') -Grants @("${web}:(OI)(CI)M")                                 # Next.js runtime cache
+Acl (Join-Path $root 'app\backend\.env') -Reset -Grants @("${api}:(R)")
+Acl (Join-Path $root 'app\frontend\.next') -Grants @("${web}:(OI)(CI)M")                                 # Next.js runtime cache
 Acl (Join-Path $root 'logs\api') -Grants @("${api}:(OI)(CI)M")
 Acl (Join-Path $root 'logs\web') -Grants @("${web}:(OI)(CI)M")
 Acl (Join-Path $root 'logs\proxy') -Grants @("${proxy}:(OI)(CI)M")

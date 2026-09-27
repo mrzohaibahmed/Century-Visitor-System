@@ -1,5 +1,5 @@
 """
-Application settings, read from environment variables (prefix CG_) or api/.env.
+Application settings, read from environment variables (prefix CG_) or backend/.env.
 
 Secrets (the MongoDB URI) exist only here, on the server. They are never sent
 to the browser or to the Next.js frontend.
@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     trusted_proxies: list[str] = ["127.0.0.1", "::1"]
 
     # --- Visitor photos (Phase 4) -------------------------------------------------
-    # Private folder on the API server; never served directly, never inside web/.
+    # Private folder on the API server; never served directly, never inside frontend/.
     # Files have random names; the database holds only that name. Back this folder up
     # together with the database. Production must set it explicitly.
     photo_dir: Path = API_DIR.parent / ".dev" / "photos"

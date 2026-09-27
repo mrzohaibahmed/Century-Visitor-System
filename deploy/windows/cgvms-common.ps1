@@ -19,7 +19,7 @@ function Get-CgvmsConfig([string]$Path) {
 }
 
 function Get-CgvmsPython($cfg) {
-    $python = Join-Path $cfg.Root 'app\api\.venv\Scripts\python.exe'
+    $python = Join-Path $cfg.Root 'app\backend\.venv\Scripts\python.exe'
     if (-not (Test-Path -LiteralPath $python)) { throw "Python environment not found: $python" }
     return $python
 }

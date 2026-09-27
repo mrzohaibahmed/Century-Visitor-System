@@ -22,7 +22,7 @@ if (-not (Test-Path -LiteralPath $uriFile)) { throw "Not found: $uriFile (create
 $previous = $env:CG_MONGO_URI
 try {
     $env:CG_MONGO_URI = (Get-Content -LiteralPath $uriFile -Raw).Trim()
-    Push-Location (Join-Path $cfg.Root 'app\api')
+    Push-Location (Join-Path $cfg.Root 'app\backend')
     & $python -m app.cli migrate
     $code = $LASTEXITCODE
     $env:CG_MONGO_URI = $previous                  # the readiness check uses the application's own account
@@ -33,6 +33,6 @@ try {
     $env:CG_MONGO_URI = $previous
 }
 if ($code -ne 0) { Write-Host "Migration FAILED (exit code $code)."; exit $code }
-if ($checkCode -ne 0) { Write-Host 'Migration applied, but the readiness check (with api\.env) is not ready: see the output above.'; exit 1 }
+if ($checkCode -ne 0) { Write-Host 'Migration applied, but the readiness check (with backend\.env) is not ready: see the output above.'; exit 1 }
 Write-Host 'Migration done. Start (or restart) the service CGVMS-API.'
 exit 0

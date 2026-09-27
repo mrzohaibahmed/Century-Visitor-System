@@ -1,16 +1,16 @@
 <!--
   Century Gate VMS - API (FastAPI), run by WinSW 2.12 as the Windows service "CGVMS-API".
   install-services.ps1 copies WinSW-x64.exe next to this file as CGVMS-API.exe and registers it.
-  Layout (relative to this folder, %BASE% = C:\CenturyGateVMS\services): ..\app\api is the API.
-  Secrets are NOT here: the API reads them from ..\app\api\.env (readable only by this service).
+  Layout (relative to this folder, %BASE% = C:\CenturyGateVMS\services): ..\app\backend is the API.
+  Secrets are NOT here: the API reads them from ..\app\backend\.env (readable only by this service).
 -->
 <service>
   <id>CGVMS-API</id>
   <name>Century Gate VMS - API</name>
   <description>Century Gate visitor management: FastAPI backend on 127.0.0.1:8000 (reached only through CGVMS-Proxy).</description>
-  <executable>%BASE%\..\app\api\.venv\Scripts\python.exe</executable>
+  <executable>%BASE%\..\app\backend\.venv\Scripts\python.exe</executable>
   <arguments>-m app.serve --host 127.0.0.1 --port 8000</arguments>
-  <workingdirectory>%BASE%\..\app\api</workingdirectory>
+  <workingdirectory>%BASE%\..\app\backend</workingdirectory>
   <env name="PYTHONUNBUFFERED" value="1"/>
   <env name="PYTHONDONTWRITEBYTECODE" value="1"/>
   <depend>CGVMS-MongoDB</depend>

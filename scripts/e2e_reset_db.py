@@ -3,7 +3,7 @@ Prepares the end-to-end test database: drops it, migrates it and creates the
 first administrator (via the real CLI). Only ever touches databases whose name
 starts with "cgvms_e2e", never the development or legacy databases.
 
-Usage (from the api/ folder, with its virtual environment):
+Usage (from the backend/ folder, with its virtual environment):
     .venv\\Scripts\\python ..\\scripts\\e2e_reset_db.py
 Environment: CG_MONGO_URI, CG_MONGO_DB (must start with cgvms_e2e), E2E_ADMIN_PASSWORD.
 """

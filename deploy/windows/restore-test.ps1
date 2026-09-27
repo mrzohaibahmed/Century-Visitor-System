@@ -108,7 +108,7 @@ try {
     Set-ProcessEnv @{ CG_ENVIRONMENT = 'test'; CG_MONGO_URI = $uri; CG_MONGO_DB = 'century_gate_vms'; CG_PHOTO_DIR = $photoDir;
                       CG_LOG_LEVEL = 'WARNING' }
     $reportFile = Join-Path (Get-StatusDir $cfg) "restore-test-$stamp.json"
-    Push-Location (Join-Path $cfg.Root 'app\api')
+    Push-Location (Join-Path $cfg.Root 'app\backend')
     try {
         $ErrorActionPreference = 'Continue'
         $out = & $python -m app.cli restore-check 2>$null

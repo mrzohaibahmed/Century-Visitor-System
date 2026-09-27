@@ -7,7 +7,7 @@ import path from "node:path";
  * The development database and API (:8000, century_gate_vms) are never used.
  * Needs the development MongoDB replica set running (scripts/dev_mongo.py start).
  */
-const API_DIR = path.resolve(__dirname, "../api");
+const API_DIR = path.resolve(__dirname, "../backend");
 const PYTHON = path.join(API_DIR, ".venv", "Scripts", "python.exe");
 
 export const E2E_ADMIN_PASSWORD = "E2e-Gatekeeper-Pass-1";

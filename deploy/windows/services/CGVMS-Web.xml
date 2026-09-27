@@ -9,7 +9,7 @@
   <description>Century Gate visitor management: Next.js frontend on 127.0.0.1:3000 (reached only through CGVMS-Proxy).</description>
   <executable>C:\Program Files\nodejs\node.exe</executable>
   <arguments>node_modules\next\dist\bin\next start --hostname 127.0.0.1 --port 3000</arguments>
-  <workingdirectory>%BASE%\..\app\web</workingdirectory>
+  <workingdirectory>%BASE%\..\app\frontend</workingdirectory>
   <env name="NODE_ENV" value="production"/>
   <env name="API_INTERNAL_URL" value="http://127.0.0.1:8000"/>
   <env name="NEXT_TELEMETRY_DISABLED" value="1"/>
