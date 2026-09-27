@@ -33,12 +33,13 @@ class Permission(StrEnum):
     AUDIT_READ = "audit:read"
     SETTINGS_MANAGE = "settings:manage"
     ACCOUNT_SELF = "account:self"              # change own password, view own profile
+    NOTIFICATION_READ = "notification:read"    # one's OWN notifications (the recipient is the session's user)
 
 
 _GUARD = frozenset({
     Permission.DASHBOARD_VIEW, Permission.VISIT_CHECK_IN, Permission.VISIT_CHECK_OUT, Permission.VISIT_READ,
     Permission.PASS_ISSUE, Permission.VISITOR_READ, Permission.VISITOR_CREATE, Permission.DIRECTORY_READ,
-    Permission.PHOTO_CAPTURE, Permission.PHOTO_VIEW, Permission.ACCOUNT_SELF,
+    Permission.PHOTO_CAPTURE, Permission.PHOTO_VIEW, Permission.ACCOUNT_SELF, Permission.NOTIFICATION_READ,
 })
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {

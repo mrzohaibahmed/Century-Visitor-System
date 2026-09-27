@@ -11,6 +11,8 @@ export type Host = {
   department_id: string | null;
   department_name: string | null;
   is_active: boolean;
+  /** Optional "Linked app account": the app user who gets this host's arrival notifications. */
+  linked_user: { id: string; name: string } | null;
 };
 
 export type DirectoryKind = "gates" | "departments" | "hosts";

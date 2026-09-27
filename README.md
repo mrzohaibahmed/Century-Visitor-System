@@ -165,6 +165,51 @@ See **Production operations → Hardware acceptance tests** below. The automated
 and check the print layout as a PDF; real webcams, badge printers and QR scanners are tested by hand on each
 gate PC, over HTTPS.
 
+## Host arrival notifications (Phase 6A)
+
+When a visitor checks in for a **registered host** (a host from the directory):
+
+- **In-app:** if the host has a **Linked app account**, that app user gets a notification under the bell
+  in the top bar ("Ali Khan has arrived to visit Sara Ahmed", gate, department, time). Administrators set the
+  link on the **Hosts** page. It is an optional relationship between a host directory entry and an existing
+  Admin or Guard user; hosts themselves never log in. Every user sees only their own notifications (the
+  server takes the recipient from the session, never from the request). *Notifications* in the bell opens
+  the full list; items are marked read by clicking them or with *Mark all as read*.
+- **E-mail:** if the host has an e-mail address and the server has an SMTP server configured, the host
+  receives a short e-mail (visitor name, arrival time, gate, department, reason; never the ID number, phone,
+  visit number or any internal id).
+- A host without a linked account and without an e-mail address, and a host typed in by hand at the gate
+  (not in the directory), get nothing. Those visits stay flagged as "host not listed" for review.
+
+**Reliability.** The notification is written in the same database transaction as the check-in, so it
+exists exactly when the visit does and is never created for a failed check-in. The check-in never waits for
+e-mail: a background sender inside the API service sends it right afterwards. A mail server that is down,
+slow or refusing only affects the e-mail's delivery state, never the gate.
+
+| E-mail state | Meaning |
+| --- | --- |
+| `NONE` | nothing to send: the host has no address, or e-mail is switched off (no `CG_SMTP_HOST`) |
+| `PENDING` | waiting to be sent, or to be retried |
+| `SENDING` | being sent right now |
+| `SENT` | accepted by the mail server |
+| `FAILED` | refused permanently (e.g. unknown address, 550), after 5 attempts, or interrupted |
+
+Retries after a temporary problem: 1, 5, 15 and 60 minutes later (5 attempts in about 81 minutes), then
+`FAILED`. Only a short error code is kept (e.g. `SMTPRecipientsRefused 550`, `ConnectionRefusedError`).
+**No duplicates:** each visit has exactly one notification (a unique key `HOST_VISITOR_ARRIVAL:<visit id>`
+in the database), and each e-mail is claimed by one sender at a time. If the service stops in the middle of
+sending, that e-mail is marked `FAILED` ("interrupted") rather than sent a second time.
+
+**Configuration** (server environment, `backend\.env`): `CG_SMTP_HOST`, `CG_SMTP_PORT` (587),
+`CG_SMTP_SECURITY` (`starttls`, `ssl` or `none`), `CG_SMTP_USERNAME`, `CG_SMTP_PASSWORD`, `CG_SMTP_FROM`.
+Empty `CG_SMTP_HOST` switches e-mail off. The certificate of the mail server is always checked. The API
+refuses to start with a sender address missing, a username without a password, or (in production) a login
+over an unencrypted connection. The password is never logged or stored in the database. There are no SMTP
+settings in the web interface.
+
+**Retention:** notifications are kept, like visits; nothing is deleted automatically. A retention period is
+to be decided together with the other retention rules (proposal: 12 months).
+
 ## Production operations (Phase 7A)
 
 This part is for the administrator who installs and runs the system on the gate server. It assumes no
@@ -283,7 +328,7 @@ application uses at runtime (`CG_MONGO_URI`). The API **refuses to start in prod
   `tlsAllowInvalidHostnames`, `tlsInsecure`;
 - `CG_PHOTO_DIR` is not set, does not exist, is not a folder or is not writable;
 - `CG_COOKIE_SECURE` is false; or `CG_MONGO_DB` is the legacy database name.
-It prints only the reason, never the value. Other settings: `CG_ORGANIZATION_NAME` (badges), `CG_SESSION_IDLE_MINUTES`
+It prints only the reason, never the value. E-mail to hosts: see *Host arrival notifications*. Other settings: `CG_ORGANIZATION_NAME` (badges), `CG_SESSION_IDLE_MINUTES`
 (15), `CG_SESSION_MAX_HOURS` (12), `CG_PASS_VALID_HOURS` (24), `CG_LOG_LEVEL` (INFO), `CG_TIMEZONE`
 (Asia/Karachi), `CG_TRUSTED_PROXIES` (the local proxy). There is no separate "public origin" or CSRF
 setting: session cookies are host-only (`__Host-`), HTTPS-only and SameSite=Strict, and every change needs the
@@ -538,6 +583,7 @@ the pass security.
 
 ## Status
 
-Phase 4 (watchlist management, photos, QR passes, badges, scan-to-check-out) and Phase 7A (production
-infrastructure: HTTPS, MongoDB login + TLS, Windows services, backups with restore tests, monitoring) are
-complete. Next: real deployment and hardware testing (see *Hardware acceptance tests*), then Phase 5.
+Phase 4 (watchlist management, photos, QR passes, badges, scan-to-check-out), Phase 7A (production
+infrastructure: HTTPS, MongoDB login + TLS, Windows services, backups with restore tests, monitoring) and
+Phase 6A (host arrival notifications: in-app and e-mail) are complete. Next: real deployment and hardware
+testing (see *Hardware acceptance tests*), and a test of the e-mails with the company mail server.

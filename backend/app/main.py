@@ -6,6 +6,7 @@ All endpoints live under /api/v1; the reverse proxy (production) or the Next.js
 dev rewrite forwards the browser's same-origin /api/* requests here.
 """
 import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 
@@ -18,6 +19,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.core.security import burn_verify_time
 from app.db.client import Database
+from app.services.notifications import EmailWorker
 from app.services.photos import check_photo_dir
 
 log = logging.getLogger(__name__)
@@ -36,10 +38,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  APP_VERSION, settings.environment, settings.mongo_db)
         # Prepare the timing-equaliser hash now, so the first unknown-user login is not slower.
         warm_up = asyncio.create_task(asyncio.to_thread(burn_verify_time, "warm-up"))
+        # Host e-mails (Phase 6A): sent in the background, never during a request.
+        app.state.email_worker, sender = None, None
+        if settings.email_enabled and settings.email_worker:
+            app.state.email_worker = EmailWorker(app.state.database.db, settings)
+            sender = asyncio.create_task(app.state.email_worker.run())
         try:
             yield
         finally:
             warm_up.cancel()
+            if sender is not None:
+                sender.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await sender
             await app.state.database.close()
             log.info("API stopped")
 

@@ -84,7 +84,8 @@ hosts = APIRouter(prefix="/hosts", tags=["directory"])
 
 async def _hosts_out(database: Database, docs: list[dict]) -> list[HostOut]:
     names = await svc.department_names(database.db, {d["department_id"] for d in docs if d.get("department_id")})
-    return [HostOut.from_doc(d, names.get(d.get("department_id"))) for d in docs]
+    users = await svc.user_names(database.db, {d["linked_user_id"] for d in docs if d.get("linked_user_id")})
+    return [HostOut.from_doc(d, names.get(d.get("department_id")), users.get(d.get("linked_user_id"))) for d in docs]
 
 
 @hosts.get("", response_model=list[HostOut])

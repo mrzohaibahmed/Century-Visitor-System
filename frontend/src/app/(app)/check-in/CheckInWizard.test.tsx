@@ -44,7 +44,7 @@ const VISITOR: Visitor = {
 };
 const CLEAR: VisitorWithStatus = { visitor: VISITOR, screening: { status: "CLEAR", reason: null } };
 const HOST: Host = {
-  id: "h1", name: "Sara Ahmed", email: null, phone: null, department_id: "d1", department_name: "HR", is_active: true,
+  id: "h1", name: "Sara Ahmed", email: null, phone: null, department_id: "d1", department_name: "HR", is_active: true, linked_user: null,
 };
 const ref = (id: string, name: string) => ({ id, name });
 const VISIT: Visit = {

@@ -77,6 +77,19 @@ class Settings(BaseSettings):
     pass_valid_hours: int = Field(default=24, ge=1, le=24 * 7)
     organization_name: str = Field(default="Century Gate", min_length=1, max_length=60)
 
+    # --- E-mail to hosts (Phase 6A) ---------------------------------------------------
+    # Leave CG_SMTP_HOST empty to switch e-mail off (in-app notifications still work).
+    # The password lives only here (server environment), never in the database or logs.
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_security: Literal["starttls", "ssl", "none"] = "starttls"     # none: internal relay only
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_from: str | None = None                                        # e.g. "Century Gate VMS <vms@example.com>"
+    smtp_timeout_seconds: int = Field(default=20, ge=1, le=120)
+    # The background sender inside the API process (tests switch it off and drive it directly).
+    email_worker: bool = True
+
     @field_validator("mongo_db")
     @classmethod
     def _not_the_legacy_database(cls, value: str) -> str:
@@ -135,6 +148,22 @@ class Settings(BaseSettings):
                 raise ValueError(f"CG_MONGO_URI must not use {insecure} in production: "
                                  "the database certificate has to be validated.")
         return self
+
+    @model_validator(mode="after")
+    def _smtp_settings(self):
+        if not self.smtp_host:
+            return self
+        if not self.smtp_from:
+            raise ValueError("CG_SMTP_FROM (the sender address) is required when CG_SMTP_HOST is set.")
+        if bool(self.smtp_username) != bool(self.smtp_password and self.smtp_password.get_secret_value()):
+            raise ValueError("Set both CG_SMTP_USERNAME and CG_SMTP_PASSWORD, or neither.")
+        if self.environment == "production" and self.smtp_username and self.smtp_security == "none":
+            raise ValueError("CG_SMTP_SECURITY=none would send the SMTP password unencrypted; use starttls or ssl.")
+        return self
+
+    @property
+    def email_enabled(self) -> bool:
+        return bool(self.smtp_host)
 
     @property
     def docs_enabled(self) -> bool:

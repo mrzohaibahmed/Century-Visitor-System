@@ -6,7 +6,8 @@ Validators check the essentials (required fields, types, enums) as a last line
 of defence; full validation happens in the API's Pydantic models. Each index
 names the query or constraint it exists for.
 
-Not created yet (later phases): notifications (Phase 6).
+Notifications (Phase 6A): host-arrival notifications; the collection is also the queue
+of emails still to send (see services/notifications.py).
 
 Photos (Phase 4): the image files live in a private folder on the API server
 (CG_PHOTO_DIR, random file names); the `photos` collection holds their metadata.
@@ -18,7 +19,8 @@ from dataclasses import dataclass, field
 
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
-SCHEMA_VERSION = 3   # v3 (Phase 4): photos, pass lifecycle, watchlist management
+SCHEMA_VERSION = 4   # v4 (Phase 6A): notifications; hosts.linked_user_id
+# v3 (Phase 4): photos, pass lifecycle, watchlist management
 # v2 (Phase 3): visit history filter indexes; reason/check-out enums
 
 # Case-insensitive uniqueness (e.g. "Admin" and "admin" are the same user).
@@ -41,6 +43,9 @@ OPTIONAL_TEXT = {"bsonType": ["string", "null"]}
 BOOL = {"bsonType": "bool"}
 SHA256_HEX = {"bsonType": "string", "pattern": "^[0-9a-f]{64}$"}
 PHOTO_TYPES = ["image/jpeg"]           # every upload is re-encoded to JPEG
+NOTIFICATION_TYPES = ["HOST_VISITOR_ARRIVAL"]
+# NONE: nobody to e-mail (host without address) or e-mail switched off (no SMTP server configured).
+EMAIL_STATES = ["NONE", "PENDING", "SENDING", "SENT", "FAILED"]
 
 
 def _schema(required: list[str], properties: dict) -> dict:
@@ -208,6 +213,9 @@ COLLECTIONS: list[CollectionSpec] = [
             "name": TEXT, "name_search": TEXT,
             "email": OPTIONAL_TEXT, "phone": OPTIONAL_TEXT,
             "department_id": OPTIONAL_OBJECT_ID,
+            # v4: optional "Linked app account": an existing Admin/Guard user who gets this host's
+            # in-app notifications. Hosts themselves never log in.
+            "linked_user_id": OPTIONAL_OBJECT_ID,
             "is_active": BOOL,
             "created_at": DATE, "updated_at": DATE,
         }),
@@ -244,6 +252,35 @@ COLLECTIONS: list[CollectionSpec] = [
             IndexModel([("resource.type", ASCENDING), ("resource.id", ASCENDING), ("timestamp", DESCENDING)],
                        name="by_resource"),                                              # record history
             IndexModel([("action", ASCENDING), ("timestamp", DESCENDING)], name="by_action"),           # event counts
+        ],
+    ),
+    CollectionSpec(
+        "notifications",
+        _schema(["event_key", "type", "created_at", "data", "email"], {
+            # One notification per event, enforced by a unique index: "HOST_VISITOR_ARRIVAL:<visit id>".
+            "event_key": TEXT,
+            "type": {"enum": NOTIFICATION_TYPES},
+            "recipient_user_id": OPTIONAL_OBJECT_ID,        # in-app recipient (host's linked app account)
+            "visit_id": OPTIONAL_OBJECT_ID, "visitor_id": OPTIONAL_OBJECT_ID, "host_id": OPTIONAL_OBJECT_ID,
+            "data": {"bsonType": "object"},                 # what the message shows (names, gate, time)
+            "created_at": DATE,
+            "read_at": OPTIONAL_DATE,
+            "email": {"bsonType": "object", "required": ["status", "attempts"], "properties": {
+                "status": {"enum": EMAIL_STATES},
+                "to": OPTIONAL_TEXT,
+                "attempts": {"bsonType": ["int", "long"], "minimum": 0},
+                "next_attempt_at": OPTIONAL_DATE, "last_attempt_at": OPTIONAL_DATE,
+                "lease_until": OPTIONAL_DATE, "sent_at": OPTIONAL_DATE,
+                "reason": OPTIONAL_TEXT, "error": OPTIONAL_TEXT}},
+        }),
+        [
+            IndexModel([("event_key", ASCENDING)], name="event_key_unique", unique=True),     # no duplicates
+            IndexModel([("recipient_user_id", ASCENDING), ("created_at", DESCENDING)],        # the bell / list
+                       name="recipient_newest"),
+            IndexModel([("recipient_user_id", ASCENDING), ("read_at", ASCENDING)],            # unread count
+                       name="recipient_unread"),
+            IndexModel([("email.status", ASCENDING), ("email.next_attempt_at", ASCENDING)],   # e-mails due
+                       name="email_due"),
         ],
     ),
     CollectionSpec("settings"),        # heterogeneous small documents: "org" settings, "schema" version

@@ -5,7 +5,7 @@ import type { Host } from "@/lib/api/directory";
 import { EMPTY_DRAFT, toCheckIn, validateDraft } from "./draft";
 
 const HOST: Host = {
-  id: "h1", name: "Sara Ahmed", email: null, phone: null, department_id: "d1", department_name: "HR", is_active: true,
+  id: "h1", name: "Sara Ahmed", email: null, phone: null, department_id: "d1", department_name: "HR", is_active: true, linked_user: null,
 };
 
 describe("validateDraft", () => {

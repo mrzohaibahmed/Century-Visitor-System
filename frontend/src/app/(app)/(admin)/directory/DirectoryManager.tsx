@@ -20,6 +20,8 @@ import {
   listHosts,
   updateEntry,
 } from "@/lib/api/directory";
+import { listUsers } from "@/lib/api/users";
+import type { User } from "@/lib/api/auth";
 
 type Entry = Gate | Department | Host;
 type Field = { name: string; label: string; type?: "text" | "email" | "tel" | "department"; required?: boolean; hint?: string };
@@ -63,13 +65,14 @@ function secondary(kind: DirectoryKind, e: Entry): string {
   if (kind === "gates") return (e as Gate).location ?? "";
   if (kind === "departments") return (e as Department).notification_email ?? "";
   const h = e as Host;
-  return [h.department_name, h.email, h.phone].filter(Boolean).join(" · ");
+  return [h.department_name, h.email, h.phone, h.linked_user && `App: ${h.linked_user.name}`].filter(Boolean).join(" · ");
 }
 
 export function DirectoryManager({ kind }: { kind: DirectoryKind }) {
   const config = CONFIG[kind];
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
@@ -88,7 +91,10 @@ export function DirectoryManager({ kind }: { kind: DirectoryKind }) {
     // Initial load: results are applied from the async callbacks.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
-    if (kind === "hosts") listDepartments(false).then(setDepartments).catch(() => {});
+    if (kind === "hosts") {
+      listDepartments(false).then(setDepartments).catch(() => {});
+      listUsers().then((r) => setUsers(r.items.filter((u) => u.is_active))).catch(() => {});
+    }
   }, [kind, reload]);
 
   const needle = filter.trim().toLowerCase();
@@ -137,7 +143,7 @@ export function DirectoryManager({ kind }: { kind: DirectoryKind }) {
       <Modal open={editing !== null} title={editing === "new" ? `New ${config.singular}` : `Edit ${config.singular}`}
              onClose={() => setEditing(null)}>
         {editing !== null && (
-          <EntryForm kind={kind} entry={editing === "new" ? null : editing} departments={departments}
+          <EntryForm kind={kind} entry={editing === "new" ? null : editing} departments={departments} users={users}
                      onCancel={() => setEditing(null)}
                      onDone={(saved, created) => {
                        setEditing(null);
@@ -150,10 +156,12 @@ export function DirectoryManager({ kind }: { kind: DirectoryKind }) {
   );
 }
 
-export function EntryForm({ kind, entry, departments, onDone, onCancel }: {
+export function EntryForm({ kind, entry, departments, users = [], onDone, onCancel }: {
   kind: DirectoryKind;
   entry: Entry | null;
   departments: Department[];
+  /** Active app accounts, for a host's optional "Linked app account". */
+  users?: User[];
   onDone: (saved: Entry, created: boolean) => void;
   onCancel: () => void;
 }) {
@@ -161,6 +169,8 @@ export function EntryForm({ kind, entry, departments, onDone, onCancel }: {
   const [values, setValues] = useState<Record<string, string>>(
     Object.fromEntries(fields.map((f) => [f.name, valueOf(entry, f.name)])));
   const [active, setActive] = useState(entry?.is_active ?? true);
+  const initialLink = (entry as Host | null)?.linked_user?.id ?? "";
+  const [linkedUser, setLinkedUser] = useState(initialLink);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -179,6 +189,10 @@ export function EntryForm({ kind, entry, departments, onDone, onCancel }: {
       if (value && value !== valueOf(entry, f.name)) body[f.name] = value;
     }
     if (entry && active !== entry.is_active) body.is_active = active;
+    if (kind === "hosts" && linkedUser !== initialLink) {
+      if (linkedUser) body.linked_user_id = linkedUser;
+      else body.clear_linked_user = true;
+    }
     if (entry && Object.keys(body).length === 0) return onCancel();
 
     setSaving(true);
@@ -207,6 +221,17 @@ export function EntryForm({ kind, entry, departments, onDone, onCancel }: {
         <TextField key={f.name} label={f.label} type={f.type ?? "text"} value={values[f.name]} error={errors[f.name]}
                    hint={f.hint} onChange={(e) => setValues({ ...values, [f.name]: e.target.value })} />
       ))}
+      {kind === "hosts" && (
+        <SelectField label="Linked app account" value={linkedUser} error={errors.linked_user_id}
+                     hint="Optional. This app user sees the host's visitor arrivals under the bell. The host does not log in."
+                     onChange={(e) => setLinkedUser(e.target.value)}>
+          <option value="">None</option>
+          {initialLink && !users.some((u) => u.id === initialLink) && (
+            <option value={initialLink}>{(entry as Host).linked_user?.name}</option>
+          )}
+          {users.map((u) => <option key={u.id} value={u.id}>{u.display_name || u.username} ({u.username})</option>)}
+        </SelectField>
+      )}
       {entry && (
         <label className="flex items-center gap-2 text-sm text-ink">
           <input type="checkbox" className="size-4" checked={active} onChange={(e) => setActive(e.target.checked)} />

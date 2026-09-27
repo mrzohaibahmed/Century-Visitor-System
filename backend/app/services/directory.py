@@ -90,6 +90,24 @@ async def _validate_department(db: AsyncDatabase, fields: dict, s: AsyncClientSe
         fields["department_id"] = (await get_active(db, DEPARTMENT, fields["department_id"], session=s))["_id"]
 
 
+async def _validate_linked_user(db: AsyncDatabase, fields: dict, s: AsyncClientSession) -> None:
+    """A host's "Linked app account" must be an existing, active Admin/Guard user."""
+    if fields.get("linked_user_id") is not None:
+        oid = _oid(fields["linked_user_id"])
+        user = await db.users.find_one({"_id": oid, "is_active": True}, {"_id": 1}, session=s) if oid else None
+        if user is None:
+            raise AppError(422, "invalid_linked_user", "Choose an active app account to link to this host.")
+        fields["linked_user_id"] = user["_id"]
+
+
+async def user_names(db: AsyncDatabase, ids: set[ObjectId]) -> dict[ObjectId, str]:
+    if not ids:
+        return {}
+    docs = await db.users.find({"_id": {"$in": list(ids)}}, {"username": 1, "display_name": 1}) \
+        .to_list(length=len(ids))
+    return {d["_id"]: d.get("display_name") or d["username"] for d in docs}
+
+
 async def create(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestMeta, data: dict) -> dict:
     now = datetime.now(UTC)
     doc = {k: v for k, v in data.items() if v is not None}
@@ -100,6 +118,7 @@ async def create(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestM
     async def work(s: AsyncClientSession):
         if kind is HOST:
             await _validate_department(db, doc, s)
+            await _validate_linked_user(db, doc, s)
         doc["_id"] = (await db[kind.collection].insert_one(doc, session=s)).inserted_id
         await audit.record(db, kind.created, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type=kind.collection, resource_id=doc["_id"],
@@ -116,9 +135,15 @@ async def create(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestM
 async def update(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestMeta, item_id: str,
                  changes: dict) -> dict:
     current = await get(db, kind, item_id)
+    clear_linked_user = changes.pop("clear_linked_user", None)
     fields = {k: v for k, v in changes.items() if v is not None and v != current.get(k)}
-    if "department_id" in changes and changes["department_id"] is not None:
-        fields["department_id"] = changes["department_id"]
+    for key in ("department_id", "linked_user_id"):
+        if changes.get(key) is not None and _oid(changes[key]) != current.get(key):
+            fields[key] = changes[key]
+        elif changes.get(key) is not None:
+            fields.pop(key, None)                      # unchanged
+    if clear_linked_user and current.get("linked_user_id") is not None:
+        fields["linked_user_id"] = None
     if not fields:
         return current
     if kind is HOST and "name" in fields:
@@ -127,6 +152,7 @@ async def update(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestM
     async def work(s: AsyncClientSession):
         if kind is HOST:
             await _validate_department(db, fields, s)
+            await _validate_linked_user(db, fields, s)
         await db[kind.collection].update_one(
             {"_id": current["_id"]}, {"$set": {**fields, "updated_at": datetime.now(UTC)}}, session=s)
         diff = {k: {"from": _plain(current.get(k)), "to": _plain(v)} for k, v in fields.items() if k != "name_search"}

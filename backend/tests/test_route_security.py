@@ -85,7 +85,7 @@ def test_guard_lacks_admin_permissions(permission):
 @pytest.mark.parametrize("permission", [
     Permission.DASHBOARD_VIEW, Permission.VISIT_CHECK_IN, Permission.VISIT_CHECK_OUT,
     Permission.VISITOR_CREATE, Permission.DIRECTORY_READ, Permission.ACCOUNT_SELF,
-    Permission.PASS_ISSUE, Permission.PHOTO_CAPTURE, Permission.PHOTO_VIEW,
+    Permission.PASS_ISSUE, Permission.PHOTO_CAPTURE, Permission.PHOTO_VIEW, Permission.NOTIFICATION_READ,
 ])
 def test_guard_has_gate_permissions(permission):
     assert has_permission(Role.GUARD, permission) is True

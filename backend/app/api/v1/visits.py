@@ -19,7 +19,11 @@ router = APIRouter(prefix="/visits", tags=["visits"])
 async def check_in(body: CheckInRequest, request: Request,
                    ctx: AuthContext = Depends(require(Permission.VISIT_CHECK_IN)),
                    database: Database = Depends(get_database), settings: Settings = Depends(get_settings)) -> VisitOut:
-    return VisitOut.from_doc(await svc.check_in(database.db, settings, ctx, request_meta(request), body))
+    visit = await svc.check_in(database.db, settings, ctx, request_meta(request), body)
+    worker = getattr(request.app.state, "email_worker", None)
+    if worker is not None:
+        worker.wake()                  # send the host's e-mail now; the check-in does not wait for it
+    return VisitOut.from_doc(visit)
 
 
 @router.get("/active", response_model=ActiveVisits)

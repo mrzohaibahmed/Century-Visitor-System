@@ -1,4 +1,6 @@
 """Gates, departments and hosts."""
+from typing import Literal
+
 from pydantic import BaseModel, field_validator, model_validator
 
 from app.core.identity import normalize_name, normalize_phone
@@ -80,6 +82,9 @@ class HostCreate(_HostFields):
     email: Email | None = None
     phone: str | None = None
     department_id: IdStr | None = None
+    # Optional "Linked app account": an existing Admin/Guard user who sees this host's arrival
+    # notifications in the app. The host does not log in.
+    linked_user_id: IdStr | None = None
 
 
 class HostUpdate(_HostFields):
@@ -88,8 +93,21 @@ class HostUpdate(_HostFields):
     phone: str | None = None
     department_id: IdStr | None = None
     is_active: bool | None = None
+    linked_user_id: IdStr | None = None
+    clear_linked_user: Literal[True] | None = None        # true: remove the linked app account
 
     _check = model_validator(mode="after")(_at_least_one)
+
+    @model_validator(mode="after")
+    def _link_or_clear(self):
+        if self.clear_linked_user and self.linked_user_id:
+            raise ValueError("Either link an app account or remove the link, not both.")
+        return self
+
+
+class LinkedUserOut(BaseModel):
+    id: str
+    name: str
 
 
 class HostOut(BaseModel):
@@ -100,10 +118,14 @@ class HostOut(BaseModel):
     department_id: str | None
     department_name: str | None = None
     is_active: bool
+    linked_user: LinkedUserOut | None = None
 
     @classmethod
-    def from_doc(cls, d: dict, department_name: str | None = None) -> "HostOut":
+    def from_doc(cls, d: dict, department_name: str | None = None, linked_user_name: str | None = None) -> "HostOut":
         dep = d.get("department_id")
+        linked = d.get("linked_user_id")
         return cls(id=str(d["_id"]), name=d["name"], email=d.get("email"), phone=d.get("phone"),
                    department_id=str(dep) if dep else None, department_name=department_name,
-                   is_active=d["is_active"])
+                   is_active=d["is_active"],
+                   linked_user=LinkedUserOut(id=str(linked), name=linked_user_name or "(unknown account)")
+                   if linked else None)

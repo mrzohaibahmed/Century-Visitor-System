@@ -26,6 +26,7 @@ from app.db.transactions import run_in_transaction
 from app.schemas.visits import VISIT_NUMBER, CheckInRequest
 from app.services import audit
 from app.services import directory as directory_svc
+from app.services import notifications as notifications_svc
 from app.services import photos as photos_svc
 from app.services import visitors as visitors_svc
 from app.services.audit import AuditAction, actor_from_user
@@ -80,9 +81,10 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
                        "Do not admit this visitor; inform the security supervisor.")
 
     if body.host_id:
-        host = await directory_svc.get_active(db, directory_svc.HOST, body.host_id)
+        host: dict | None = await directory_svc.get_active(db, directory_svc.HOST, body.host_id)
         host_id, host_name, host_department = host["_id"], host["name"], host.get("department_id")
     else:
+        host = None             # an unlisted host has no directory entry: nobody to notify (flagged for review)
         host_id, host_name, host_department = None, body.unlisted_host_name, None
 
     department_id = body.department_id or host_department
@@ -122,6 +124,9 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
                            metadata={"visit_number": visit["visit_number"], "visitor_id": visitor["_id"],
                                      "gate_id": gate["_id"], "host_unlisted": host_id is None,
                                      "photo_id": photo_id}, session=s)
+        if host is not None:
+            # Same transaction: the notification exists exactly when the visit does. E-mail is sent later.
+            await notifications_svc.create_host_arrival(db, settings, visit, host, session=s)
 
     try:
         await run_in_transaction(db, work)
