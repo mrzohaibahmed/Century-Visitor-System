@@ -14,6 +14,8 @@ type SessionValue = {
   user: User;
   hasPermission: (permission: string) => boolean;
   refresh: () => Promise<void>;
+  /** Apply a fresh /auth/me payload returned by another call (e.g. choosing the gate). */
+  replace: (me: Me) => void;
   signOut: (reason?: "logged_out" | "idle") => Promise<void>;
 };
 
@@ -71,6 +73,7 @@ export function SessionProvider({ initial, children }: { initial: Me; children: 
     user: me.user,
     hasPermission: (permission) => me.permissions.includes(permission),
     refresh,
+    replace: setMe,
     signOut,
   }), [me, refresh, signOut]);
 

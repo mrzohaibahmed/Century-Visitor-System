@@ -11,8 +11,17 @@ export type NavItem = {
   roles: Role[];
 };
 
+const EVERYONE: Role[] = ["ADMIN", "GUARD"];
+
 export const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", roles: ["ADMIN", "GUARD"] },
+  { href: "/dashboard", label: "Dashboard", roles: EVERYONE },
+  { href: "/check-in", label: "Check in", roles: EVERYONE },
+  { href: "/check-out", label: "Check out", roles: EVERYONE },
+  { href: "/visitors", label: "Visitors", roles: EVERYONE },
+  { href: "/visits", label: "Visit history", roles: EVERYONE },
+  { href: "/directory/hosts", label: "Hosts", roles: ["ADMIN"] },
+  { href: "/directory/departments", label: "Departments", roles: ["ADMIN"] },
+  { href: "/directory/gates", label: "Gates", roles: ["ADMIN"] },
   { href: "/users", label: "Users", roles: ["ADMIN"] },
 ];
 

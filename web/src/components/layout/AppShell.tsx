@@ -2,6 +2,7 @@
 
 import { createContext, useContext } from "react";
 
+import { GatePicker } from "@/components/session/GatePicker";
 import { useSession } from "@/components/session/SessionProvider";
 import { SystemStatusIndicator } from "@/components/system/SystemStatusIndicator";
 import { type SystemHealth, useSystemHealth } from "@/hooks/useSystemHealth";
@@ -28,7 +29,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex h-16 items-center justify-between gap-4 border-b border-border bg-surface px-6">
             <SystemStatusIndicator state={health.state} />
-            <UserMenu />
+            <div className="flex items-center gap-4">
+              <GatePicker />
+              <UserMenu />
+            </div>
           </header>
           <main className="flex-1 px-6 py-6">{children}</main>
         </div>

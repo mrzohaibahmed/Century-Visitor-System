@@ -83,9 +83,17 @@ class UserOut(BaseModel):
         )
 
 
+class GateRef(BaseModel):
+    id: str
+    name: str
+
+
 class SessionInfo(BaseModel):
     expires_at: datetime
     idle_timeout_minutes: int
+    gate: GateRef | None = None
+    # True when several gates exist and this session has not chosen one yet.
+    gate_selection_required: bool = False
 
 
 class MeResponse(BaseModel):
@@ -94,10 +102,17 @@ class MeResponse(BaseModel):
     session: SessionInfo
 
     @classmethod
-    def build(cls, user: dict, session: dict, idle_minutes: int) -> "MeResponse":
+    def build(cls, user: dict, session: dict, idle_minutes: int, gate: dict | None = None,
+              gate_selection_required: bool = False) -> "MeResponse":
         role = Role(user["role"])
         return cls(user=UserOut.from_doc(user), permissions=sorted(str(p) for p in ROLE_PERMISSIONS[role]),
-                   session=SessionInfo(expires_at=session["expires_at"], idle_timeout_minutes=idle_minutes))
+                   session=SessionInfo(expires_at=session["expires_at"], idle_timeout_minutes=idle_minutes,
+                                       gate=GateRef(id=str(gate["_id"]), name=gate["name"]) if gate else None,
+                                       gate_selection_required=gate_selection_required))
+
+
+class GateSelectRequest(StrictModel):
+    gate_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{24}$")]
 
 
 class UserListResponse(BaseModel):

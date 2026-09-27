@@ -114,7 +114,7 @@ async def login(db: AsyncDatabase, settings: Settings, username: str, password: 
         "token_hash": hash_token(token),
         "csrf_token_hash": hash_token(csrf_token),
         "user_id": user["_id"],
-        "gate_id": None,                 # gate selection arrives with gates (Phase 3)
+        "gate_id": await _only_active_gate(db),   # one gate: automatic; several: chosen after login
         "created_at": now,
         "last_seen_at": now,
         "expires_at": expires_at,
@@ -126,6 +126,39 @@ async def login(db: AsyncDatabase, settings: Settings, username: str, password: 
     await audit.record(db, AuditAction.LOGIN, actor=actor, ip=meta.ip, resource_type="session",
                        resource_id=session["_id"], metadata={"rehashed": bool(new_hash)})
     return NewSession(token, csrf_token, expires_at, user, session)
+
+
+async def _only_active_gate(db: AsyncDatabase):
+    gates = await db.gates.find({"is_active": True}, {"_id": 1}).limit(2).to_list(length=2)
+    return gates[0]["_id"] if len(gates) == 1 else None
+
+
+async def session_gate(db: AsyncDatabase, session: dict) -> tuple[dict | None, bool]:
+    """(the session's active gate or None, whether the user still has to choose one)."""
+    gate = None
+    if session.get("gate_id"):
+        gate = await db.gates.find_one({"_id": session["gate_id"], "is_active": True})
+    if gate is not None:
+        return gate, False
+    active = await db.gates.count_documents({"is_active": True}, limit=2)
+    if active == 1:                          # e.g. a gate was added or deactivated after login
+        gate = await db.gates.find_one({"is_active": True})
+        await db.sessions.update_one({"_id": session["_id"]}, {"$set": {"gate_id": gate["_id"]}})
+        session["gate_id"] = gate["_id"]
+        return gate, False
+    return None, active > 1
+
+
+async def select_gate(db: AsyncDatabase, ctx: "AuthContext", gate_id: str, meta: RequestMeta) -> dict:
+    from bson import ObjectId
+    gate = await db.gates.find_one({"_id": ObjectId(gate_id), "is_active": True})
+    if gate is None:
+        raise AppError(404, "not_found", "That gate does not exist or is no longer active.")
+    await db.sessions.update_one({"_id": ctx.session["_id"]}, {"$set": {"gate_id": gate["_id"]}})
+    ctx.session["gate_id"] = gate["_id"]
+    await audit.record(db, AuditAction.GATE_SELECTED, actor=actor_from_user(ctx.user), ip=meta.ip,
+                       resource_type="gate", resource_id=gate["_id"], metadata={"session_id": ctx.session["_id"]})
+    return gate
 
 
 async def authenticate(db: AsyncDatabase, settings: Settings, token: str | None) -> AuthContext:

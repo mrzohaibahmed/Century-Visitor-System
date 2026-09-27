@@ -57,7 +57,8 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError):
         # Report where and why, never the submitted value (it may be a password or CNIC).
-        details = [{"field": ".".join(str(p) for p in err.get("loc", ())), "message": err.get("msg", "Invalid")}
+        details = [{"field": ".".join(str(p) for p in err.get("loc", ())),
+                    "message": str(err.get("msg", "Invalid")).removeprefix("Value error, ")}
                    for err in exc.errors()]
         return JSONResponse(error_body("validation_error", "The request is not valid.", details), status_code=422)
 

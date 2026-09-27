@@ -1,0 +1,229 @@
+"""
+Check-in, check-out and visit history.
+
+Check-in is one transaction: visit number, visit and audit record succeed or
+fail together. The business rules are enforced on the server:
+- the gate and operator come from the session, never from the request;
+- watchlist screening blocks the entry (and is audited);
+- at most one active visit per visitor (a partial unique index in MongoDB, so
+  two gates checking in the same person at once cannot both succeed).
+Check-out is a single conditional update: atomic and idempotent.
+"""
+from datetime import UTC, date, datetime
+
+from bson import ObjectId
+from pymongo import ReturnDocument
+from pymongo.asynchronous.client_session import AsyncClientSession
+from pymongo.asynchronous.database import AsyncDatabase
+from pymongo.errors import DuplicateKeyError
+
+from app.core.config import Settings
+from app.core.errors import AppError
+from app.core.identity import identifier, mask_identity
+from app.core.pagination import decode_cursor, encode_cursor
+from app.core.timeutil import day_bounds_utc, local_year
+from app.db.transactions import run_in_transaction
+from app.schemas.visits import VISIT_NUMBER, CheckInRequest
+from app.services import audit
+from app.services import directory as directory_svc
+from app.services import visitors as visitors_svc
+from app.services.audit import AuditAction, actor_from_user
+from app.services.auth import AuthContext, RequestMeta, session_gate
+
+ACTIVE_LIMIT = 500
+PAGE_LIMIT_MAX = 100
+NOT_FOUND = AppError(404, "not_found", "Visit not found.")
+# Lists never return large or secret fields.
+LIST_PROJECTION = {"pass": 0}
+
+
+def _oid(value: str) -> ObjectId:
+    if not ObjectId.is_valid(value):
+        raise NOT_FOUND
+    return ObjectId(value)
+
+
+def _operator_name(user: dict) -> str:
+    return user.get("display_name") or user["username"]
+
+
+async def _require_gate(db: AsyncDatabase, ctx: AuthContext) -> dict:
+    gate, selection_required = await session_gate(db, ctx.session)
+    if gate:
+        return gate
+    if selection_required:
+        raise AppError(409, "gate_required", "Choose the gate you are working at before checking visitors in.")
+    raise AppError(409, "no_gate_configured", "No gate is set up yet. An administrator must add a gate first.")
+
+
+async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta,
+                   body: CheckInRequest) -> dict:
+    gate = await _require_gate(db, ctx)
+    visitor = await visitors_svc.get(db, body.visitor_id)
+    actor = actor_from_user(ctx.user)
+
+    ban = await visitors_svc.screening(db, visitor)
+    if ban:
+        ident = visitor["identity"]
+        await audit.record(db, AuditAction.WATCHLIST_MATCH, actor=actor, ip=meta.ip, resource_type="visitor",
+                           resource_id=visitor["_id"],
+                           metadata={"watchlist_id": ban["_id"], "gate_id": gate["_id"],
+                                     "identifier": f"{ident['type']}:{mask_identity(ident['number'])}"})
+        await audit.record(db, AuditAction.VISIT_CHECKED_IN, result="DENIED", actor=actor, ip=meta.ip,
+                           resource_type="visitor", resource_id=visitor["_id"], metadata={"reason": "watchlist"})
+        raise AppError(403, "entry_denied",
+                       f"Entry not permitted: {ban['reason']} "
+                       "Do not admit this visitor; inform the security supervisor.")
+
+    if body.host_id:
+        host = await directory_svc.get_active(db, directory_svc.HOST, body.host_id)
+        host_id, host_name, host_department = host["_id"], host["name"], host.get("department_id")
+    else:
+        host_id, host_name, host_department = None, body.unlisted_host_name, None
+
+    department_id = body.department_id or host_department
+    if not department_id:
+        raise AppError(422, "department_required", "Choose the department being visited.")
+    department = await directory_svc.get_active(db, directory_svc.DEPARTMENT, department_id)
+
+    now = datetime.now(UTC)
+    year = local_year(now, settings.timezone)
+    visit = {
+        "visitor_id": visitor["_id"], "host_id": host_id, "host_unlisted": host_id is None,
+        "department_id": department["_id"], "gate_id": gate["_id"], "checkout_gate_id": None,
+        "reason_code": str(body.reason_code), "reason_note": body.reason_note,
+        "vehicle_registration": body.vehicle_registration, "belongings": body.belongings,
+        "status": "CHECKED_IN", "check_in_at": now, "check_out_at": None,
+        "checked_in_by": ctx.user["_id"], "checked_out_by": None, "checkout_method": None, "pass": None,
+        "snapshot": {"visitor_name": visitor["full_name"], "host_name": host_name,
+                     "department_name": department["name"], "gate_name": gate["name"],
+                     "checked_in_by_name": _operator_name(ctx.user)},
+        "created_at": now, "updated_at": now,
+    }
+
+    async def work(s: AsyncClientSession):
+        counter = await db.counters.find_one_and_update(
+            {"_id": f"visit_number:{year}"}, {"$inc": {"seq": 1}}, upsert=True,
+            return_document=ReturnDocument.AFTER, session=s)
+        visit["visit_number"] = f"V-{year}-{counter['seq']:06d}"
+        visit["_id"] = (await db.visits.insert_one(visit, session=s)).inserted_id
+        await audit.record(db, AuditAction.VISIT_CHECKED_IN, actor=actor, ip=meta.ip, resource_type="visit",
+                           resource_id=visit["_id"],
+                           metadata={"visit_number": visit["visit_number"], "visitor_id": visitor["_id"],
+                                     "gate_id": gate["_id"], "host_unlisted": host_id is None}, session=s)
+
+    try:
+        await run_in_transaction(db, work)
+    except DuplicateKeyError:
+        existing = await visitors_svc.active_visit(db, visitor["_id"])
+        number = f" (visit {existing['visit_number']})" if existing else ""
+        raise AppError(409, "already_inside",
+                       f"{visitor['full_name']} is already checked in{number}. Check them out first.") from None
+    return visit
+
+
+async def check_out(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visit_id: ObjectId | str,
+                    method: str = "MANUAL") -> tuple[dict, bool]:
+    """Returns (visit, already_checked_out). Repeating a check-out changes nothing."""
+    oid = visit_id if isinstance(visit_id, ObjectId) else _oid(visit_id)
+    gate, _ = await session_gate(db, ctx.session)
+    now = datetime.now(UTC)
+    fields = {"status": "CHECKED_OUT", "check_out_at": now, "checked_out_by": ctx.user["_id"],
+              "checkout_gate_id": gate["_id"] if gate else None, "checkout_method": method,
+              "snapshot.checked_out_by_name": _operator_name(ctx.user),
+              "snapshot.checkout_gate_name": gate["name"] if gate else None,
+              "updated_at": now}
+    result: dict = {}
+
+    async def work(s: AsyncClientSession):
+        # The status condition makes this atomic: only one request can move CHECKED_IN -> CHECKED_OUT.
+        doc = await db.visits.find_one_and_update(
+            {"_id": oid, "status": "CHECKED_IN"}, {"$set": fields}, return_document=ReturnDocument.AFTER,
+            session=s)
+        if doc is not None:
+            await audit.record(db, AuditAction.VISIT_CHECKED_OUT, actor=actor_from_user(ctx.user), ip=meta.ip,
+                               resource_type="visit", resource_id=oid,
+                               metadata={"visit_number": doc["visit_number"], "method": method,
+                                         "gate_id": fields["checkout_gate_id"]}, session=s)
+        result["doc"] = doc
+
+    await run_in_transaction(db, work)
+    if result["doc"] is not None:
+        return result["doc"], False
+    existing = await db.visits.find_one({"_id": oid})
+    if existing is None:
+        raise NOT_FOUND
+    if existing["status"] == "CHECKED_OUT":
+        return existing, True
+    raise AppError(409, "not_checked_in", "This visit is not currently checked in.")
+
+
+async def resolve_and_check_out(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, *,
+                                visit_number: str | None, identity: dict | None) -> tuple[dict, bool]:
+    if visit_number:
+        visit = await db.visits.find_one({"visit_number": visit_number})
+        if visit is None:
+            raise AppError(404, "not_found", f"No visit {visit_number} was found.")
+        if visit["status"] != "CHECKED_IN":
+            return visit, True
+        return await check_out(db, ctx, meta, visit["_id"], "VISIT_NUMBER")
+    visitor = await db.visitors.find_one({"identity.type": identity["type"], "identity.number": identity["number"]})
+    active = await visitors_svc.active_visit(db, visitor["_id"]) if visitor else None
+    if active is None:
+        raise AppError(404, "not_inside", "No visitor with this ID number is currently inside.")
+    return await check_out(db, ctx, meta, active["_id"], "ID_NUMBER")
+
+
+async def get_visit(db: AsyncDatabase, visit_id: str) -> dict:
+    doc = await db.visits.find_one({"_id": _oid(visit_id)}, LIST_PROJECTION)
+    if doc is None:
+        raise NOT_FOUND
+    return doc
+
+
+async def list_active(db: AsyncDatabase) -> tuple[list[dict], int]:
+    query = {"status": "CHECKED_IN"}
+    docs = await db.visits.find(query, LIST_PROJECTION).sort("check_in_at", -1).limit(ACTIVE_LIMIT) \
+        .to_list(length=ACTIVE_LIMIT)
+    total = len(docs) if len(docs) < ACTIVE_LIMIT else await db.visits.count_documents(query)
+    return docs, total
+
+
+async def list_visits(db: AsyncDatabase, settings: Settings, *, status: str | None, day_from: date | None,
+                      day_to: date | None, host_id: str | None, department_id: str | None, gate_id: str | None,
+                      visitor_id: str | None, q: str | None, cursor: str | None, limit: int
+                      ) -> tuple[list[dict], str | None]:
+    limit = max(1, min(limit, PAGE_LIMIT_MAX))
+    query: dict = {}
+    if status:
+        query["status"] = status
+    start, end = day_bounds_utc(day_from, day_to, settings.timezone)
+    if start or end:
+        query["check_in_at"] = {k: v for k, v in (("$gte", start), ("$lt", end)) if v}
+    for field, value in (("host_id", host_id), ("department_id", department_id), ("gate_id", gate_id),
+                         ("visitor_id", visitor_id)):
+        if value:
+            query[field] = _oid(value)
+    if q and q.strip():
+        term = q.strip().upper()
+        if VISIT_NUMBER.match(term):
+            query["visit_number"] = term
+        else:
+            query["visitor_id"] = {"$in": await visitors_svc.matching_ids(db, q)}
+
+    if cursor:
+        last_at, last_id = decode_cursor(cursor)
+        query = {"$and": [query, {"$or": [{"check_in_at": {"$lt": last_at}},
+                                          {"check_in_at": last_at, "_id": {"$lt": last_id}}]}]}
+    docs = await db.visits.find(query, LIST_PROJECTION).sort([("check_in_at", -1), ("_id", -1)]) \
+        .limit(limit + 1).to_list(length=limit + 1)
+    next_cursor = None
+    if len(docs) > limit:
+        docs = docs[:limit]
+        next_cursor = encode_cursor(docs[-1]["check_in_at"], docs[-1]["_id"])
+    return docs, next_cursor
+
+
+def watchlist_identifier(visitor: dict) -> str | None:
+    ident = visitor.get("identity")
+    return identifier(ident["type"], ident["number"]) if ident else None

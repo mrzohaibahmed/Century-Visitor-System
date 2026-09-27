@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # v2 (Phase 3): visit history filter indexes; reason/check-out enums
 
 # Case-insensitive uniqueness (e.g. "Admin" and "admin" are the same user).
 # Queries must pass the same collation to use these indexes.
@@ -26,6 +26,8 @@ ROLES = ["ADMIN", "GUARD"]
 VISIT_STATUSES = ["SCHEDULED", "EXPECTED", "CHECKED_IN", "CHECKED_OUT", "CANCELLED", "EXPIRED", "NO_SHOW"]
 IDENTITY_TYPES = ["CNIC", "PASSPORT", "OTHER"]
 AUDIT_RESULTS = ["SUCCESS", "FAILURE", "DENIED"]
+VISIT_REASONS = ["OFFICIAL_MEETING", "INTERVIEW", "DELIVERY", "MAINTENANCE", "CONTRACTOR_WORK", "PERSONAL", "OTHER"]
+CHECKOUT_METHODS = ["MANUAL", "VISIT_NUMBER", "ID_NUMBER", "QR", "AUTO"]
 
 DATE = {"bsonType": "date"}
 OPTIONAL_DATE = {"bsonType": ["date", "null"]}
@@ -114,6 +116,9 @@ COLLECTIONS: list[CollectionSpec] = [
             "status": {"enum": VISIT_STATUSES},
             "check_in_at": DATE,
             "check_out_at": OPTIONAL_DATE,
+            "reason_code": {"enum": VISIT_REASONS},
+            "checkout_method": {"enum": [*CHECKOUT_METHODS, None]},
+            "host_unlisted": BOOL,
             "checked_in_by": OBJECT_ID,
             "checked_out_by": OPTIONAL_OBJECT_ID,
             "snapshot": {"bsonType": "object", "required": ["visitor_name"], "properties": {
@@ -134,6 +139,9 @@ COLLECTIONS: list[CollectionSpec] = [
                        partialFilterExpression={"check_out_at": {"$type": "date"}}),
             IndexModel([("pass.token_hash", ASCENDING)], name="pass_token_unique", unique=True,  # QR check-out
                        partialFilterExpression={"pass.token_hash": {"$type": "string"}}),
+            # v2: visit history filtered by host / department, newest first.
+            IndexModel([("host_id", ASCENDING), ("check_in_at", DESCENDING)], name="host_history"),
+            IndexModel([("department_id", ASCENDING), ("check_in_at", DESCENDING)], name="department_history"),
         ],
     ),
     CollectionSpec(

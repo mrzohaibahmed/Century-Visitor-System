@@ -97,6 +97,22 @@ Secrets live only in the server environment, never in the frontend or the reposi
   deleted.
 - Login and user-management events are recorded in `audit_logs` (append-only).
 
+## Visitors & visits (Phase 3)
+
+- **First-time setup (administrator):** add at least one gate, the departments and the hosts under
+  *Hosts / Departments / Gates* in the menu. With one gate, every session uses it automatically; with
+  several, each user picks the gate they are working at after logging in (shown in the top bar).
+- **Check-in:** ID lookup → register the visitor if new → watchlist and "already inside" checks → host,
+  department, reason, vehicle, belongings → review → confirm. The visit number (`V-YYYY-NNNNNN`) is
+  shown on success. A host who is not in the directory can be typed in; that visit is flagged.
+- **Check-out:** by visit number or ID number (Enter), or from the list of visitors inside. Repeating a
+  check-out is harmless.
+- **Visitors / Visit history:** search by name, ID or phone; history filters by date, status, gate and
+  department. Opening a visitor's record and every ID lookup is audited (ID numbers are masked in the
+  audit log). Only administrators can edit a visitor's details.
+- The database guarantees one active visit per visitor, gap-free visit numbers per year and
+  idempotent check-out, even with several gates working at once.
+
 ## Status
 
-Phase 2 (authentication & RBAC) of the implementation roadmap is complete. Next: Phase 3, visitors and visits.
+Phase 3 (visitors & visits) of the implementation roadmap is complete. Next: Phase 4.

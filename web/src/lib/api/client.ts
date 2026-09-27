@@ -44,6 +44,25 @@ const FALLBACK_MESSAGES: Record<number, string> = {
   429: "Too many attempts. Please wait a moment and try again.",
 };
 
+/** A message that is safe to show for any thrown value. */
+export function errorMessage(error: unknown): string {
+  return error instanceof ApiError ? error.message : "Something went wrong. Please try again.";
+}
+
+/**
+ * Validation messages keyed by top-level request field ("body.identity.number" → "identity").
+ * Whole-body rules (no field) are keyed "_form".
+ */
+export function fieldErrors(error: unknown): Record<string, string> {
+  if (!(error instanceof ApiError)) return {};
+  const out: Record<string, string> = {};
+  for (const d of error.details) {
+    const key = d.field.replace(/^(body|query|path)\.?/, "").split(".")[0] || "_form";
+    out[key] ??= d.message;
+  }
+  return out;
+}
+
 export type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;

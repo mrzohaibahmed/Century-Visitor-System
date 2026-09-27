@@ -16,10 +16,19 @@ export type User = {
   updated_at: string;
 };
 
+export type GateRef = { id: string; name: string };
+
 export type Me = {
   user: User;
   permissions: string[];
-  session: { expires_at: string; idle_timeout_minutes: number };
+  session: {
+    expires_at: string;
+    idle_timeout_minutes: number;
+    /** The gate this session works at (recorded on every check-in / check-out). */
+    gate: GateRef | null;
+    /** Several gates exist and none has been chosen yet. */
+    gate_selection_required: boolean;
+  };
 };
 
 export function login(username: string, password: string): Promise<Me> {
@@ -39,6 +48,10 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
     method: "POST",
     body: { current_password: currentPassword, new_password: newPassword },
   });
+}
+
+export function selectGate(gateId: string): Promise<Me> {
+  return apiRequest<Me>("/auth/session/gate", { method: "PUT", body: { gate_id: gateId } });
 }
 
 /** Only same-site relative paths may be used after login (no open redirects). */

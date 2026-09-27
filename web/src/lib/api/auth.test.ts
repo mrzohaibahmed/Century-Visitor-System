@@ -19,11 +19,13 @@ describe("safeNextPath (no open redirects after login)", () => {
 });
 
 describe("navItemsFor", () => {
-  it("shows administrators the user management page", () => {
-    expect(navItemsFor("ADMIN").map((i) => i.href)).toContain("/users");
+  it("shows administrators the management pages", () => {
+    const hrefs = navItemsFor("ADMIN").map((i) => i.href);
+    expect(hrefs).toEqual(expect.arrayContaining(["/users", "/directory/hosts", "/directory/gates"]));
   });
 
-  it("hides administration pages from guards", () => {
-    expect(navItemsFor("GUARD").map((i) => i.href)).toEqual(["/dashboard"]);
+  it("gives guards the gate work pages and hides administration pages", () => {
+    expect(navItemsFor("GUARD").map((i) => i.href)).toEqual(
+      ["/dashboard", "/check-in", "/check-out", "/visitors", "/visits"]);
   });
 });
