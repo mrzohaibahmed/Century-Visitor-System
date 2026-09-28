@@ -1,20 +1,23 @@
 "use client";
 
-import Link from "next/link";
+import { ArrowLeft, Pencil, RotateCcw, UserRoundSearch } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 
 import { useSession } from "@/components/session/SessionProvider";
 import { Alert } from "@/components/ui/Alert";
-import { Button } from "@/components/ui/Button";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { DescriptionList } from "@/components/ui/DescriptionList";
 import { Modal } from "@/components/ui/Modal";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TextField } from "@/components/ui/TextField";
 import { IdentityInput } from "@/components/visits/IdentityInput";
 import { VisitorPhoto } from "@/components/visits/VisitorPhoto";
 import { VisitTable } from "@/components/visits/VisitTable";
 import { usePagedList } from "@/hooks/usePagedList";
-import { errorMessage, fieldErrors } from "@/lib/api/client";
+import { ApiError, errorMessage, fieldErrors } from "@/lib/api/client";
 import {
   getVisitor,
   IDENTITY_LABELS,
@@ -27,19 +30,28 @@ import {
 } from "@/lib/api/visitors";
 import { formatDateTime, formatTime } from "@/lib/format";
 
+function BackToVisitors() {
+  return (
+    <ButtonLink href="/visitors" variant="ghost" className="-ml-3">
+      <ArrowLeft aria-hidden="true" />
+      Visitors
+    </ButtonLink>
+  );
+}
+
 export function VisitorDetail({ id }: { id: string }) {
   const { hasPermission } = useSession();
   const [data, setData] = useState<VisitorWithStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; notFound: boolean } | null>(null);
   const [editing, setEditing] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const visits = usePagedList(id, (cursor) => visitorVisits(id, cursor));
 
   const load = useCallback(async () => {
+    setError(null);
     try {
       setData(await getVisitor(id));
     } catch (e) {
-      setError(errorMessage(e));
+      setError({ message: errorMessage(e), notFound: e instanceof ApiError && e.status === 404 });
     }
   }, [id]);
 
@@ -49,52 +61,116 @@ export function VisitorDetail({ id }: { id: string }) {
     void load();
   }, [load]);
 
-  if (error) return <Alert tone="danger">{error}</Alert>;
-  if (!data) return <p className="text-sm text-ink-muted">Loading…</p>;
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <BackToVisitors />
+        <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-surface px-6 py-12 text-center shadow-card">
+          <span aria-hidden="true" className="flex size-12 items-center justify-center rounded-full bg-surface-subtle text-ink-muted">
+            <UserRoundSearch className="size-6" />
+          </span>
+          <h1 className="text-heading text-ink">{error.notFound ? "Visitor not found" : "Unable to load this visitor"}</h1>
+          <p role="alert" className="max-w-sm text-sm text-ink-muted">
+            {error.notFound ? "There is no visitor record at this address. Search for the visitor instead." : error.message}
+          </p>
+          {!error.notFound && (
+            <Button variant="secondary" onClick={() => void load()}>
+              <RotateCcw aria-hidden="true" />
+              Try again
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div role="status" className="space-y-6">
+        <span className="sr-only">Loading visitor…</span>
+        <Skeleton className="h-11 w-28" />
+        <div className="flex items-center gap-5 rounded-2xl border border-border bg-surface p-6 shadow-card">
+          <Skeleton className="size-28 rounded-2xl" />
+          <div className="flex-1 space-y-3">
+            <Skeleton className="h-8 w-2/3" />
+            <Skeleton className="h-4 w-1/3" />
+            <Skeleton className="h-6 w-28 rounded-full" />
+          </div>
+        </div>
+        <Skeleton className="h-40 rounded-2xl" />
+      </div>
+    );
+  }
 
   const { visitor, screening } = data;
   const active = visitor.active_visit;
+  const details = [
+    { label: "ID", value: visitor.identity
+      ? <><span className="text-ink-muted">{IDENTITY_LABELS[visitor.identity.type]} </span><span className="font-mono break-all">{visitor.identity.number}</span></>
+      : <span className="text-ink-muted">No ID recorded</span> },
+    ...(visitor.phone ? [{ label: "Phone", value: visitor.phone }] : []),
+    ...(active ? [{ label: "Current visit", value: (
+      <>Inside since {formatTime(active.check_in_at)}{active.gate_name ? ` at ${active.gate_name}` : ""}
+        <span className="font-mono text-ink-muted"> ({active.visit_number})</span></>
+    ) }] : []),
+    { label: "Registered", value: formatDateTime(visitor.created_at) },
+    { label: "Last updated", value: formatDateTime(visitor.updated_at) },
+  ];
+
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <Link href="/visitors" className="text-sm text-brand-700 hover:underline">← Visitors</Link>
-          <h1 className="mt-1 text-2xl font-bold text-ink">{visitor.full_name}</h1>
+      <BackToVisitors />
+
+      <section className="flex flex-col gap-5 rounded-2xl border border-border bg-surface p-5 shadow-card sm:flex-row sm:items-center sm:p-6">
+        <div className="shrink-0 self-start overflow-hidden rounded-2xl sm:self-auto">
+          <VisitorPhoto photoId={visitor.photo_id} name={visitor.full_name} className="size-24 sm:size-28" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-title break-words text-ink">{visitor.full_name}</h1>
+          {visitor.identity && (
+            <p className="mt-1 text-ink-muted">
+              {IDENTITY_LABELS[visitor.identity.type]} <span className="font-mono break-all text-ink">{visitor.identity.number}</span>
+            </p>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {active
+              ? <StatusBadge tone="ok">Inside since {formatTime(active.check_in_at)} ({active.visit_number})</StatusBadge>
+              : <StatusBadge tone="neutral">Not inside</StatusBadge>}
+            {screening.status === "BLOCKED" && <StatusBadge tone="danger">On the watchlist</StatusBadge>}
+          </div>
         </div>
         {hasPermission("visitor:edit") && (
-          <Button variant="secondary" onClick={() => { setNotice(null); setEditing(true); }}>Edit details</Button>
+          <Button variant="secondary" size="lg" onClick={() => setEditing(true)} className="shrink-0">
+            <Pencil aria-hidden="true" />
+            Edit details
+          </Button>
         )}
-      </div>
-      <div aria-live="polite">{notice && <Alert tone="ok">{notice}</Alert>}</div>
+      </section>
+
       {screening.status === "BLOCKED" && (
         <Alert tone="danger">
           <strong>On the watchlist: entry not permitted.</strong>{screening.reason && ` Reason: ${screening.reason}`}
         </Alert>
       )}
 
-      <Card title="Details">
-        <div className="flex gap-6">
-          <VisitorPhoto photoId={visitor.photo_id} name={visitor.full_name} className="size-32" />
-          <dl className="grid flex-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-            <div><dt className="text-ink-muted">ID</dt>
-              <dd className="font-medium">{visitor.identity ? `${IDENTITY_LABELS[visitor.identity.type]} ${visitor.identity.number}` : "—"}</dd></div>
-            <div><dt className="text-ink-muted">Phone</dt><dd className="font-medium">{visitor.phone ?? "—"}</dd></div>
-            <div><dt className="text-ink-muted">Registered</dt><dd className="font-medium">{formatDateTime(visitor.created_at)}</dd></div>
-            <div><dt className="text-ink-muted">Status</dt>
-              <dd>{active
-                ? <StatusBadge tone="ok">Inside since {formatTime(active.check_in_at)} ({active.visit_number})</StatusBadge>
-                : <StatusBadge tone="neutral">Not inside</StatusBadge>}</dd></div>
-          </dl>
-        </div>
+      <Card title="Details" divided={false}>
+        <DescriptionList items={details} />
       </Card>
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-ink">Visits</h2>
-        {visits.error && <Alert tone="danger">{visits.error}</Alert>}
-        <VisitTable visits={visits.items} loading={visits.loading} showVisitor={false} empty="No visits yet." />
+      <section aria-labelledby="visits-heading" className="space-y-3">
+        <h2 id="visits-heading" className="text-heading text-ink">Visits</h2>
+        {visits.error && (
+          <Alert tone="danger" title="Unable to load the visits">
+            <p>{visits.error}</p>
+            <button type="button" onClick={visits.reload} className="mt-1 font-semibold underline underline-offset-2">Try again</button>
+          </Alert>
+        )}
+        {!(visits.error && visits.items.length === 0) && (
+          <VisitTable visits={visits.items} loading={visits.loading} showVisitor={false} empty="No visits yet." />
+        )}
         {visits.hasMore && (
           <div className="flex justify-center">
-            <Button variant="secondary" onClick={visits.loadMore} loading={visits.loading}>Load more</Button>
+            <Button variant="secondary" size="lg" onClick={visits.loadMore} loading={visits.loading}>Load more</Button>
           </div>
         )}
       </section>
@@ -104,7 +180,7 @@ export function VisitorDetail({ id }: { id: string }) {
           <EditVisitorForm visitor={visitor} onCancel={() => setEditing(false)}
                            onDone={(v) => {
                              setEditing(false);
-                             setNotice("Visitor details updated.");
+                             toast.success("Visitor details updated.");
                              setData({ ...data, visitor: v });
                              visits.reload();
                            }} />
@@ -151,15 +227,15 @@ export function EditVisitorForm({ visitor, onDone, onCancel }: {
   }
 
   return (
-    <form onSubmit={onSubmit} noValidate className="space-y-4">
+    <form onSubmit={onSubmit} noValidate className="space-y-5">
       {(error || errors._form) && <Alert tone="danger">{error || errors._form}</Alert>}
       <TextField label="Full name" value={name} onChange={(e) => setName(e.target.value)} error={errors.full_name} />
       <IdentityInput type={idType} number={idNumber} onType={setIdType} onNumber={setIdNumber} error={errors.identity} />
       <TextField label="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} error={errors.phone} inputMode="tel" />
-      <p className="text-xs text-ink-muted">Changes are logged. Past visits keep the name recorded at the time.</p>
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" loading={saving}>Save changes</Button>
+      <p className="text-sm text-ink-muted">Changes are logged. Past visits keep the name recorded at the time.</p>
+      <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+        <Button type="button" variant="secondary" size="lg" onClick={onCancel}>Cancel</Button>
+        <Button type="submit" size="lg" loading={saving}>Save changes</Button>
       </div>
     </form>
   );

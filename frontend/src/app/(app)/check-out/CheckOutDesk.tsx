@@ -1,14 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Check, LoaderCircle, LogOut, Printer, RefreshCw, ScanLine, UserRoundX } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { BadgePreview } from "@/components/badge/VisitorBadge";
 import { QrScanner } from "@/components/scan/QrScanner";
 import { Alert } from "@/components/ui/Alert";
+import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Modal } from "@/components/ui/Modal";
 import { SelectField } from "@/components/ui/SelectField";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TextField } from "@/components/ui/TextField";
 import { VisitorPhoto } from "@/components/visits/VisitorPhoto";
 import { errorMessage } from "@/lib/api/client";
@@ -16,6 +20,8 @@ import { checkOutWithPass, type IssuedPass, issuePass, looksLikePass, resolvePas
 import { IDENTITY_LABELS, type IdentityType } from "@/lib/api/visitors";
 import { activeVisits, checkOut, checkOutBy, type CheckOutResult, type Visit, VISIT_NUMBER_PATTERN } from "@/lib/api/visits";
 import { formatDuration, formatTime } from "@/lib/format";
+
+import { isLongStay } from "../dashboard/useDashboardData";
 
 const REFRESH_MS = 30_000;
 
@@ -37,26 +43,38 @@ function resultMessage({ visit, already_checked_out }: CheckOutResult): { tone: 
   };
 }
 
+/**
+ * Check-out: find the visitor (camera scan, USB scanner or typed number, or the list of people
+ * inside), confirm, done. A scanned badge is only looked up; nothing changes until the guard confirms.
+ */
 export function CheckOutDesk() {
   const [visits, setVisits] = useState<Visit[] | null>(null);
   const [total, setTotal] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+  const [outcome, setOutcome] = useState<CheckOutResult | null>(null);
   const [filter, setFilter] = useState("");
   const [confirming, setConfirming] = useState<Visit | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [resolving, setResolving] = useState(false);
   const [scanned, setScanned] = useState<{ qrText: string; result: ScanResult } | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [reissuing, setReissuing] = useState<Visit | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [focusFind, setFocusFind] = useState(0);
+  const [now, setNow] = useState<number | null>(null);
 
   const load = useCallback(async () => {
+    setRefreshing(true);
     try {
       const data = await activeVisits();
       setVisits(data.items);
       setTotal(data.total);
       setLoadError(null);
+      setNow(Date.now());
     } catch (e) {
       setLoadError(errorMessage(e));
+    } finally {
+      setRefreshing(false);
     }
   }, []);
 
@@ -71,19 +89,26 @@ export function CheckOutDesk() {
   function done(result: CheckOutResult) {
     setConfirming(null);
     setScanned(null);
-    setNotice(resultMessage(result));
+    setOutcome(result);
     void load();
+  }
+
+  function clearMessages() {
+    setOutcome(null);
+    setScanError(null);
   }
 
   /** A pass read by the camera or typed by a USB scanner: look it up, then ask the guard to confirm. */
   async function passScanned(qrText: string) {
     setScanning(false);
-    setNotice(null);
-    setScanError(null);
+    clearMessages();
+    setResolving(true);
     try {
       setScanned({ qrText, result: await resolvePass(qrText) });
     } catch (e) {
       setScanError(errorMessage(e));
+    } finally {
+      setResolving(false);
     }
   }
 
@@ -93,66 +118,129 @@ export function CheckOutDesk() {
 
   return (
     <div className="space-y-6">
-      <QuickCheckOut onDone={done} onPass={passScanned}
-                     onScanWithCamera={() => { setNotice(null); setScanError(null); setScanning(true); }} />
-      <div aria-live="polite">
-        {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
-        {scanError && <Alert tone="danger">{scanError}</Alert>}
+      <div aria-live="polite" className="space-y-3 empty:hidden">
+        {resolving && (
+          <p role="status" className="flex items-center gap-2 text-sm text-ink-muted">
+            <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
+            Looking up the badge…
+          </p>
+        )}
+        {outcome && (outcome.already_checked_out
+          ? <Alert tone="warn">{resultMessage(outcome).text}</Alert>
+          : <CheckedOut result={outcome} onNext={() => { clearMessages(); setFocusFind((n) => n + 1); }} />)}
+        {scanError && <Alert tone="danger" title="Badge not accepted">{scanError}</Alert>}
       </div>
 
-      <Card title={`Visitors inside${visits ? ` (${total})` : ""}`}
-            actions={<Button variant="secondary" onClick={() => void load()}>Refresh</Button>}>
-        <div className="space-y-3">
-          {loadError && <Alert tone="danger">{loadError}</Alert>}
-          <TextField label="Filter" value={filter} onChange={(e) => setFilter(e.target.value)}
-                     placeholder="Name, visit number or host" />
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-ink-muted">
-                <tr>
-                  <th scope="col" className="py-2 pr-3">Visitor</th>
-                  <th scope="col" className="py-2 pr-3">Visit</th>
-                  <th scope="col" className="py-2 pr-3">Host</th>
-                  <th scope="col" className="py-2 pr-3">In since</th>
-                  <th scope="col" className="py-2 pr-3">Gate</th>
-                  <th scope="col" className="py-2"><span className="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {visits === null && !loadError && (
-                  <tr><td colSpan={6} className="py-6 text-center text-ink-muted">Loading…</td></tr>
-                )}
-                {visits !== null && shown.length === 0 && (
-                  <tr><td colSpan={6} className="py-6 text-center text-ink-muted">
-                    {visits.length === 0 ? "Nobody is checked in." : "No visitor matches the filter."}
-                  </td></tr>
-                )}
-                {shown.map((v) => (
-                  <tr key={v.id} data-testid="active-visit">
-                    <td className="py-2 pr-3 font-medium text-ink">{v.visitor.name}</td>
-                    <td className="py-2 pr-3 font-mono">{v.visit_number}</td>
-                    <td className="py-2 pr-3">
-                      {v.host.name}
-                      {v.host_unlisted && <span className="ml-1 text-xs text-warn">(not listed)</span>}
-                    </td>
-                    <td className="py-2 pr-3">
-                      {formatTime(v.check_in_at)}
-                      <span className="block text-xs text-ink-muted">{formatDuration(v.check_in_at)}</span>
-                    </td>
-                    <td className="py-2 pr-3">{v.gate.name}</td>
-                    <td className="whitespace-nowrap py-2 text-right">
-                      <Button variant="ghost" aria-label={`Reprint badge for ${v.visitor.name} (${v.visit_number})`}
-                              onClick={() => { setNotice(null); setReissuing(v); }}>Badge</Button>
-                      <Button variant="secondary" aria-label={`Check out ${v.visitor.name} (${v.visit_number})`}
-                              onClick={() => { setNotice(null); setConfirming(v); }}>Check out</Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-start">
+        <FindVisitor focusKey={focusFind} onDone={done} onPass={passScanned} onStart={clearMessages}
+                     onScanWithCamera={() => { clearMessages(); setScanning(true); }} />
+
+        <section aria-labelledby="inside-heading" className="rounded-2xl border border-border bg-surface shadow-card">
+          <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4 sm:px-6">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <h2 id="inside-heading" className="text-heading text-ink">Visitors inside</h2>
+              {visits && (
+                <span className="rounded-full bg-surface-subtle px-2.5 py-0.5 text-sm font-semibold text-ink-muted tabular-nums">
+                  {total}
+                </span>
+              )}
+            </div>
+            <Button variant="ghost" onClick={() => void load()} disabled={refreshing} className="shrink-0">
+              <RefreshCw aria-hidden="true" className={refreshing ? "animate-spin" : ""} />
+              Refresh
+            </Button>
+          </header>
+
+          <div className="space-y-4 px-5 pt-4 sm:px-6">
+            {loadError && (
+              <Alert tone="danger" title={visits ? "Could not refresh the list" : "Unable to load visitors inside"}>
+                <p>{loadError}</p>
+                <button type="button" onClick={() => void load()} className="mt-1 font-semibold underline underline-offset-2">
+                  Try again
+                </button>
+              </Alert>
+            )}
+            {(visits?.length ?? 0) > 0 && (
+              <TextField label="Filter" value={filter} onChange={(e) => setFilter(e.target.value)}
+                         placeholder="Name, visit number or host" autoComplete="off" />
+            )}
           </div>
-        </div>
-      </Card>
+
+          {visits === null && !loadError && (
+            <div role="status" className="space-y-4 px-5 py-5 sm:px-6">
+              <span className="sr-only">Loading visitors inside…</span>
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <Skeleton className="size-9 rounded-full" />
+                  <Skeleton className="h-4 flex-1" />
+                  <Skeleton className="h-9 w-28" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {visits !== null && shown.length === 0 && (
+            <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
+              <span aria-hidden="true" className="flex size-12 items-center justify-center rounded-full bg-surface-subtle text-ink-muted">
+                <UserRoundX className="size-6" />
+              </span>
+              <p className="font-semibold text-ink">{visits.length === 0 ? "Nobody is checked in." : "No visitor matches the filter."}</p>
+              <p className="max-w-xs text-sm text-ink-muted">
+                {visits.length === 0 ? "Visitors appear here after they check in." : "Check the spelling, or clear the filter."}
+              </p>
+            </div>
+          )}
+
+          {shown.length > 0 && (
+            <>
+              {/* One markup for every width (no duplicate rows): columns from md, cards below. */}
+              <div aria-hidden="true" className="mt-4 hidden gap-4 border-y border-border px-6 py-2.5 text-xs font-medium text-ink-muted
+                md:grid md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_11.5rem]">
+                <span>Visitor</span><span>Host</span><span />
+              </div>
+              <ul aria-label="Visitors inside" className="mt-4 divide-y divide-border border-t border-border md:mt-0 md:border-t-0">
+                {shown.map((v) => (
+                  <li key={v.id} data-testid="active-visit"
+                      className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 px-5 py-4 transition-colors hover:bg-surface-subtle
+                        sm:px-6 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_11.5rem] md:items-center md:gap-4">
+                    <div className="col-span-2 flex min-w-0 items-start gap-3 md:col-span-1">
+                      <Avatar name={v.visitor.name ?? ""} size="sm" />
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-ink">{v.visitor.name}</p>
+                        <p className="font-mono text-xs text-ink-muted">{v.visit_number}</p>
+                        <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-muted">
+                          <span>In <span className="text-ink tabular-nums">{formatTime(v.check_in_at)}</span> · {v.gate.name}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="tabular-nums">{formatDuration(v.check_in_at)}</span>
+                          {now !== null && isLongStay(v, now) && <StatusBadge tone="warn">Long stay</StatusBadge>}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="col-start-2 min-w-0 text-sm md:col-start-auto">
+                      <span className="text-ink">{v.host.name}</span>
+                      {v.host_unlisted && <span className="ml-1 text-xs font-medium text-warn">(not listed)</span>}
+                      {v.department.name && <span className="block truncate text-xs text-ink-muted">{v.department.name}</span>}
+                    </div>
+                    <div className="col-span-2 grid grid-cols-2 gap-2 md:col-span-1 md:flex md:justify-end">
+                      <Button variant="ghost" aria-label={`Reprint badge for ${v.visitor.name} (${v.visit_number})`}
+                              title="Reprint badge" className="whitespace-nowrap md:w-11 md:shrink-0 md:px-0"
+                              onClick={() => { clearMessages(); setReissuing(v); }}>
+                        <Printer aria-hidden="true" />
+                        <span className="md:hidden">Badge</span>
+                      </Button>
+                      <Button variant="secondary" aria-label={`Check out ${v.visitor.name} (${v.visit_number})`}
+                              className="whitespace-nowrap" onClick={() => { clearMessages(); setConfirming(v); }}>
+                        <LogOut aria-hidden="true" />
+                        Check out
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      </div>
 
       <Modal open={confirming !== null} title="Check out visitor" onClose={() => setConfirming(null)}>
         {confirming && <ConfirmCheckOut visit={confirming} onDone={done} onCancel={() => setConfirming(null)} />}
@@ -174,20 +262,53 @@ export function CheckOutDesk() {
   );
 }
 
-function QuickCheckOut({ onDone, onPass, onScanWithCamera }: {
+/** The completed check-out, with the way on to the next visitor. */
+function CheckedOut({ result, onNext }: { result: CheckOutResult; onNext: () => void }) {
+  const { visit } = result;
+  return (
+    <section aria-labelledby="checked-out-heading"
+             className="flex flex-col gap-4 rounded-2xl border border-ok/30 bg-ok-bg p-5 sm:flex-row sm:items-center">
+      <span aria-hidden="true" className="flex size-12 shrink-0 animate-success-in items-center justify-center rounded-full bg-surface text-ok">
+        <Check className="size-6" strokeWidth={3} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <h2 id="checked-out-heading" className="text-heading text-ink">Checked out</h2>
+        <p className="text-ink">{resultMessage(result).text}</p>
+        <p className="mt-0.5 text-sm text-ink-muted tabular-nums">
+          In {formatTime(visit.check_in_at)} · Out {formatTime(visit.check_out_at)} · {(visit.checkout_gate ?? visit.gate).name}
+        </p>
+      </div>
+      <Button size="lg" onClick={onNext} className="shrink-0">
+        <ScanLine aria-hidden="true" />
+        Check out next visitor
+      </Button>
+    </section>
+  );
+}
+
+function FindVisitor({ focusKey, onDone, onPass, onStart, onScanWithCamera }: {
+  focusKey: number;
   onDone: (result: CheckOutResult) => void;
   onPass: (qrText: string) => Promise<void>;
+  onStart: () => void;
   onScanWithCamera: () => void;
 }) {
   const [value, setValue] = useState("");
   const [idType, setIdType] = useState<IdentityType>("CNIC");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    // "Check out next visitor": ready for the next badge (a USB scanner types into this box).
+    if (focusKey > 0) form.current?.querySelector("input")?.focus();
+  }, [focusKey]);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
     if (!value.trim()) return setError("Enter a visit number or the visitor's ID number.");
+    onStart();
     setSaving(true);
     try {
       if (looksLikePass(value)) {
@@ -206,20 +327,50 @@ function QuickCheckOut({ onDone, onPass, onScanWithCamera }: {
   }
 
   return (
-    <Card title="Quick check-out" description="Scan the QR code on the visitor's badge, type the visit number, or enter the visitor's ID number."
-          actions={<Button variant="secondary" onClick={onScanWithCamera}>Scan badge with camera</Button>}>
-      <form onSubmit={onSubmit} noValidate className="grid items-start gap-3 sm:grid-cols-[1fr_10rem_auto]">
-        <TextField label="Visit number or ID number" value={value} onChange={(e) => setValue(e.target.value)}
-                   hint="A USB badge scanner can scan into this box."
-                   placeholder="V-2026-000123" autoComplete="off" spellCheck={false} autoFocus error={error ?? undefined} />
-        <SelectField label="ID type (if not a visit number)" value={idType}
-                     onChange={(e) => setIdType(e.target.value as IdentityType)}>
-          {(Object.keys(IDENTITY_LABELS) as IdentityType[]).map((t) => <option key={t} value={t}>{IDENTITY_LABELS[t]}</option>)}
-        </SelectField>
-        <Button type="submit" loading={saving} className="sm:mt-6">Check out</Button>
-      </form>
+    <Card title="Find the visitor" description="Scan the QR code on the visitor's badge, or type the visit number."
+          icon={<ScanLine />} divided={false}>
+      <div className="space-y-5">
+        <Button size="lg" className="w-full" onClick={onScanWithCamera}>
+          <ScanLine aria-hidden="true" />
+          Scan badge with camera
+        </Button>
+        <div aria-hidden="true" className="flex items-center gap-3 text-xs font-medium text-ink-subtle">
+          <span className="h-px flex-1 bg-border" />or type it<span className="h-px flex-1 bg-border" />
+        </div>
+        <form ref={form} onSubmit={onSubmit} noValidate className="space-y-4">
+          <TextField label="Visit number or ID number" value={value} onChange={(e) => setValue(e.target.value)} size="lg"
+                     hint="A USB badge scanner can scan into this box."
+                     placeholder="V-2026-000123" autoComplete="off" spellCheck={false} autoFocus error={error ?? undefined} />
+          <SelectField label="ID type" value={idType} hint="Only used for an ID number, not a visit number."
+                       onChange={(e) => setIdType(e.target.value as IdentityType)}>
+            {(Object.keys(IDENTITY_LABELS) as IdentityType[]).map((t) => <option key={t} value={t}>{IDENTITY_LABELS[t]}</option>)}
+          </SelectField>
+          <Button type="submit" variant="secondary" size="lg" loading={saving} className="w-full">
+            {!saving && <LogOut aria-hidden="true" />}
+            Check out
+          </Button>
+        </form>
+      </div>
     </Card>
   );
+}
+
+function ConfirmActions({ saving, onConfirm, onCancel }: { saving: boolean; onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+      <Button variant="secondary" size="lg" onClick={onCancel} disabled={saving}>Cancel</Button>
+      <Button size="lg" onClick={onConfirm} loading={saving} autoFocus>
+        {!saving && <LogOut aria-hidden="true" />}
+        Confirm check-out
+      </Button>
+    </div>
+  );
+}
+
+function Belongings({ items }: { items: string[] }) {
+  return items.length > 0
+    ? <Alert tone="info" title="Check their belongings">Belongings recorded at entry: {items.join(", ")}.</Alert>
+    : null;
 }
 
 function ConfirmCheckOut({ visit, onDone, onCancel }: {
@@ -245,30 +396,28 @@ function ConfirmCheckOut({ visit, onDone, onCancel }: {
   return (
     <div className="space-y-4">
       {error && <Alert tone="danger">{error}</Alert>}
-      <p className="text-sm text-ink">
-        Check out <strong>{visit.visitor.name}</strong> ({visit.visit_number}), visiting {visit.host.name}, inside since{" "}
-        {formatTime(visit.check_in_at)}?
-      </p>
-      {visit.belongings.length > 0 && (
-        <Alert tone="info">Belongings recorded at entry: {visit.belongings.join(", ")}.</Alert>
-      )}
-      <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button onClick={() => void confirm()} loading={saving} autoFocus>Confirm check-out</Button>
-      </div>
+      <VisitSummary visit={visit} />
+      <Belongings items={visit.belongings} />
+      <ConfirmActions saving={saving} onConfirm={() => void confirm()} onCancel={onCancel} />
     </div>
   );
 }
 
+/** The visitor being checked out: photo, name, visit, host and time inside. */
 function VisitSummary({ visit }: { visit: Visit }) {
   return (
-    <div className="flex gap-4">
-      <VisitorPhoto photoId={visit.photo_id} name={visit.visitor.name} />
-      <dl className="space-y-1 text-sm">
-        <div><dt className="sr-only">Visitor</dt><dd className="text-base font-semibold text-ink" data-testid="scanned-visitor">{visit.visitor.name}</dd></div>
-        <div><dt className="sr-only">Visit</dt><dd className="font-mono">{visit.visit_number}</dd></div>
-        <div><dt className="inline text-ink-muted">Visiting: </dt><dd className="inline">{visit.host.name}{visit.department.name ? ` (${visit.department.name})` : ""}</dd></div>
-        <div><dt className="inline text-ink-muted">Inside since: </dt><dd className="inline">{formatTime(visit.check_in_at)} · {visit.gate.name}</dd></div>
+    <div className="flex gap-4 rounded-xl border border-border bg-surface-subtle p-4">
+      <div className="shrink-0 overflow-hidden rounded-xl">
+        <VisitorPhoto photoId={visit.photo_id} name={visit.visitor.name} className="size-24" />
+      </div>
+      <dl className="min-w-0 space-y-1 text-sm">
+        <div><dt className="sr-only">Visitor</dt><dd className="text-heading break-words text-ink" data-testid="scanned-visitor">{visit.visitor.name}</dd></div>
+        <div><dt className="sr-only">Visit</dt><dd className="font-mono text-ink-muted">{visit.visit_number}</dd></div>
+        <div><dt className="inline text-ink-muted">Visiting: </dt><dd className="inline text-ink">{visit.host.name}{visit.department.name ? ` (${visit.department.name})` : ""}</dd></div>
+        <div>
+          <dt className="inline text-ink-muted">Inside since: </dt>
+          <dd className="inline text-ink tabular-nums">{formatTime(visit.check_in_at)} · {visit.gate.name} · {formatDuration(visit.check_in_at, visit.check_out_at)}</dd>
+        </div>
       </dl>
     </div>
   );
@@ -303,18 +452,13 @@ export function ConfirmPassCheckOut({ scan, qrText, onDone, onCancel }: {
       {scan.status === "CHECKED_OUT" ? (
         <>
           <Alert tone="warn">This badge belongs to a visit that was already checked out at {formatTime(visit.check_out_at)}. Nothing was changed.</Alert>
-          <div className="flex justify-end"><Button onClick={onCancel} autoFocus>Close</Button></div>
+          <div className="flex justify-end"><Button size="lg" onClick={onCancel} autoFocus>Close</Button></div>
         </>
       ) : (
         <>
           <p className="text-sm text-ink">Check that the person in front of you matches the photo, then confirm.</p>
-          {visit.belongings.length > 0 && (
-            <Alert tone="info">Belongings recorded at entry: {visit.belongings.join(", ")}.</Alert>
-          )}
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-            <Button onClick={() => void confirm()} loading={saving} autoFocus>Confirm check-out</Button>
-          </div>
+          <Belongings items={visit.belongings} />
+          <ConfirmActions saving={saving} onConfirm={() => void confirm()} onCancel={onCancel} />
         </>
       )}
     </div>
@@ -344,7 +488,7 @@ function ReissueBadge({ visit, onClose }: { visit: Visit; onClose: () => void })
       <div className="space-y-4">
         <Alert tone="ok">New badge ready. The previous badge no longer works.</Alert>
         <BadgePreview issued={issued} visitId={visit.id} />
-        <div className="flex justify-end"><Button variant="secondary" onClick={onClose}>Close</Button></div>
+        <div className="flex justify-end"><Button variant="secondary" size="lg" onClick={onClose}>Close</Button></div>
       </div>
     );
   }
@@ -353,9 +497,12 @@ function ReissueBadge({ visit, onClose }: { visit: Visit; onClose: () => void })
       {error && <Alert tone="danger">{error}</Alert>}
       <VisitSummary visit={visit} />
       <Alert tone="warn">Printing a new badge cancels the old one: its QR code will be refused at check-out.</Alert>
-      <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button onClick={() => void reissue()} loading={saving}>Issue new badge</Button>
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+        <Button variant="secondary" size="lg" onClick={onClose} disabled={saving}>Cancel</Button>
+        <Button size="lg" onClick={() => void reissue()} loading={saving}>
+          {!saving && <Printer aria-hidden="true" />}
+          Issue new badge
+        </Button>
       </div>
     </div>
   );

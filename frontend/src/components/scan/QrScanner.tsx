@@ -1,6 +1,7 @@
 "use client";
 
 import jsQR from "jsqr";
+import { CameraOff, RotateCcw, ScanLine } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { asProblem, CAMERA_MESSAGES, type CameraProblem, openCamera, stopCamera } from "@/components/camera/camera";
@@ -73,22 +74,46 @@ export function QrScanner({ onScan, onCancel }: { onScan: (text: string) => void
   }, [attempt]);
 
   return (
-    <div className="space-y-3" data-testid="qr-scanner">
+    <div className="space-y-4" data-testid="qr-scanner">
       {problem ? (
-        <Alert tone="danger">{CAMERA_MESSAGES[problem]}</Alert>
+        <Alert tone="danger" title="Camera not available">
+          <p>{CAMERA_MESSAGES[problem]}</p>
+          <p className="mt-1">You can also type the visit number in the box on the check-out page.</p>
+        </Alert>
       ) : (
-        <p className="text-sm text-ink-muted">Hold the QR code on the visitor&apos;s badge in front of the camera.</p>
+        <div role="status" className="flex items-start gap-3">
+          <ScanLine aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-brand-700" />
+          <p className="text-sm text-ink-muted">
+            <span className="block font-semibold text-ink">Ready to scan</span>
+            Hold the QR code on the visitor&apos;s badge in front of the camera.
+          </p>
+        </div>
       )}
       {notAPass && !problem && <Alert tone="warn">That code is not a Century Gate visitor pass.</Alert>}
-      <div className="relative mx-auto aspect-[4/3] w-full max-w-md overflow-hidden rounded-lg bg-brand-900">
+      <div className="relative mx-auto aspect-[4/3] w-full max-w-md overflow-hidden rounded-2xl bg-brand-900">
         <video ref={videoRef} muted playsInline aria-label="QR scanner camera" className="size-full object-cover" />
-        <div aria-hidden="true" className="pointer-events-none absolute inset-[18%] rounded-lg border-4 border-white/70" />
-      </div>
-      <div className="flex justify-end gap-2">
-        {problem && (
-          <Button variant="secondary" onClick={() => { setProblem(null); setAttempt((n) => n + 1); }}>Try again</Button>
+        {problem ? (
+          <div aria-hidden="true" className="absolute inset-0 flex items-center justify-center text-white/70">
+            <CameraOff className="size-10" />
+          </div>
+        ) : (
+          // Aim here: corner guides, the middle stays clear for the camera image.
+          <div aria-hidden="true" className="pointer-events-none absolute inset-[18%]">
+            <span className="absolute top-0 left-0 size-8 rounded-tl-xl border-t-4 border-l-4 border-white/80" />
+            <span className="absolute top-0 right-0 size-8 rounded-tr-xl border-t-4 border-r-4 border-white/80" />
+            <span className="absolute bottom-0 left-0 size-8 rounded-bl-xl border-b-4 border-l-4 border-white/80" />
+            <span className="absolute right-0 bottom-0 size-8 rounded-br-xl border-r-4 border-b-4 border-white/80" />
+          </div>
         )}
-        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+      </div>
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+        <Button variant="secondary" size="lg" onClick={onCancel}>Cancel</Button>
+        {problem && (
+          <Button size="lg" onClick={() => { setProblem(null); setAttempt((n) => n + 1); }}>
+            <RotateCcw aria-hidden="true" />
+            Try again
+          </Button>
+        )}
       </div>
     </div>
   );

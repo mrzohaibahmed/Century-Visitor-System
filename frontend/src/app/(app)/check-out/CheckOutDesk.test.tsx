@@ -71,7 +71,60 @@ describe("CheckOutDesk", () => {
   });
 });
 
+describe("CheckOutDesk states", () => {
+  it("shows the completed check-out, then gets ready for the next visitor", async () => {
+    api.checkOutBy.mockResolvedValue({ visit: OUT, already_checked_out: false });
+    render(<CheckOutDesk />);
+    const box = screen.getByLabelText("Visit number or ID number");
+    fireEvent.change(box, { target: { value: "V-2026-000042" } });
+    fireEvent.submit(box.closest("form")!);
+    expect(await screen.findByRole("heading", { name: "Checked out" })).toBeTruthy();
+    expect((box as HTMLInputElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Check out next visitor" }));
+    expect(screen.queryByRole("heading", { name: "Checked out" })).toBeNull();
+    expect(document.activeElement).toBe(box);                               // a USB scanner can scan straight in
+  });
+
+  it("shows a loading list, then an empty day", async () => {
+    let resolve: (v: unknown) => void = () => {};
+    api.activeVisits.mockReturnValue(new Promise((r) => { resolve = r; }));
+    render(<CheckOutDesk />);
+    expect(screen.getByText("Loading visitors inside…")).toBeTruthy();
+    expect(screen.queryByText("Nobody is checked in.")).toBeNull();            // no false empty state while loading
+    resolve({ items: [], total: 0 });
+    expect(await screen.findByText("Nobody is checked in.")).toBeTruthy();
+  });
+
+  it("offers a retry when the list cannot be loaded", async () => {
+    api.activeVisits.mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ items: [VISIT], total: 1 });
+    render(<CheckOutDesk />);
+    expect(await screen.findByText("Unable to load visitors inside")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Ali Khan")).toBeTruthy();
+    expect(screen.queryByText("Unable to load visitors inside")).toBeNull();
+  });
+
+  it("marks a visitor inside for more than 8 hours as a long stay", async () => {
+    api.activeVisits.mockResolvedValue({ items: [{ ...VISIT, check_in_at: new Date(Date.now() - 9 * 3600_000).toISOString() }], total: 1 });
+    render(<CheckOutDesk />);
+    expect(await screen.findByText("Long stay")).toBeTruthy();
+  });
+});
+
 describe("CheckOutDesk with a scanned badge", () => {
+  it("says it is looking the badge up while the lookup runs", async () => {
+    let resolve: (v: unknown) => void = () => {};
+    api.resolvePass.mockReturnValue(new Promise((r) => { resolve = r; }));
+    render(<CheckOutDesk />);
+    const box = screen.getByLabelText("Visit number or ID number");
+    fireEvent.change(box, { target: { value: PASS } });
+    fireEvent.submit(box.closest("form")!);
+    expect(await screen.findByText("Looking up the badge…")).toBeTruthy();
+    resolve({ status: "VALID", visit: VISIT });
+    await screen.findByTestId("scan-confirm");
+    expect(screen.queryByText("Looking up the badge…")).toBeNull();
+  });
+
   function scanIntoBox(text: string) {
     const box = screen.getByLabelText("Visit number or ID number");
     fireEvent.change(box, { target: { value: text } });
