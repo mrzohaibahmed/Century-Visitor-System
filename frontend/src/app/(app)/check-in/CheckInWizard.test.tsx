@@ -91,6 +91,15 @@ describe("CheckInWizard", () => {
     expect(api.lookupVisitor).toHaveBeenCalledWith("CNIC", "3520112345671");
   });
 
+  it("looks the visitor up by the ID type tapped", async () => {
+    api.lookupVisitor.mockRejectedValue(new ApiError(404, "not_found", "No visitor is registered with this ID number."));
+    render(<CheckInWizard />);
+    fireEvent.click(screen.getByRole("radio", { name: "Passport" }));
+    fireEvent.change(screen.getByLabelText("ID number"), { target: { value: "AB1234567" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find visitor" }));
+    await waitFor(() => expect(api.lookupVisitor).toHaveBeenCalledWith("PASSPORT", "AB1234567"));
+  });
+
   it("shows the server's message for an invalid ID number", async () => {
     api.lookupVisitor.mockRejectedValue(new ApiError(422, "invalid_identity", "A CNIC must have exactly 13 digits."));
     findVisitor("123");
@@ -130,6 +139,44 @@ describe("CheckInWizard", () => {
     expect(screen.getByText("Choose the reason for the visit.")).toBeTruthy();
   });
 
+  it("clears an error as soon as its field is corrected, and adds none before Review", async () => {
+    api.lookupVisitor.mockResolvedValue(CLEAR);
+    findVisitor();
+    fireEvent.change(await screen.findByLabelText("Belongings (optional)"), { target: { value: "a,b,c,d,e,f,g,h,i,j,k" } });
+    expect(screen.queryByText("At most 10 items.")).toBeNull();                        // nothing new before Review
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(screen.getByText("Choose the person being visited.")).toBeTruthy();
+    expect(screen.getByText("Choose the department being visited.")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /Sara Ahmed/ }));
+    expect(screen.queryByText("Choose the person being visited.")).toBeNull();
+    expect(screen.queryByText("Choose the department being visited.")).toBeNull();       // taken from the host
+    expect(screen.getByText("Choose the reason for the visit.")).toBeTruthy();         // still wrong: still shown
+    fireEvent.change(screen.getByLabelText("Reason for visit"), { target: { value: "INTERVIEW" } });
+    expect(screen.queryByText("Choose the reason for the visit.")).toBeNull();
+    expect(screen.getByText("At most 10 items.")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Belongings (optional)"), { target: { value: "laptop" } });
+    expect(screen.queryByText("At most 10 items.")).toBeNull();
+  });
+
+  it("goes back from review to edit the visit details without losing them", async () => {
+    api.lookupVisitor.mockResolvedValue(CLEAR);
+    api.checkIn.mockResolvedValue(VISIT);
+    findVisitor();
+    await detailsAndSkipPhoto();
+    expect(screen.queryByText("Also recorded")).toBeNull();                 // no vehicle or belongings entered
+    fireEvent.click(await screen.findByRole("button", { name: "Edit visit details" }));
+    expect((await screen.findByTestId("selected-host")).textContent).toBe("Sara Ahmed");
+    expect((screen.getByLabelText("Reason for visit") as HTMLSelectElement).value).toBe("INTERVIEW");
+    fireEvent.change(screen.getByLabelText("Vehicle registration (optional)"), { target: { value: "lea-1234" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Continue without a photo" }));
+    expect(await screen.findByText("LEA-1234")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm check-in" }));
+    await screen.findByTestId("visit-number");
+    expect(api.checkIn).toHaveBeenCalledWith(expect.objectContaining({
+      host_id: "h1", department_id: "d1", reason_code: "INTERVIEW", vehicle_registration: "lea-1234", photo_id: null }));
+  });
+
   it("switches to the denial screen if the server refuses entry at confirmation", async () => {
     api.lookupVisitor.mockResolvedValue(CLEAR);
     api.checkIn.mockRejectedValue(new ApiError(403, "entry_denied", "Entry denied: this person is on the watchlist."));
@@ -165,6 +212,22 @@ describe("CheckInWizard photo, pass and badge", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm check-in" }));
     await screen.findByTestId("visit-number");
     expect(api.checkIn).toHaveBeenCalledWith(expect.objectContaining({ photo_id: "p1" }));
+  });
+
+  it("offers the photo just taken again after editing the details from review", async () => {
+    installCamera();
+    api.uploadVisitorPhoto.mockResolvedValue({ id: "p1", captured_at: "", width: 640, height: 480 });
+    api.checkIn.mockResolvedValue({ ...VISIT, photo_id: "p1" });
+    await toPhotoStep();
+    fireEvent.click(screen.getByRole("button", { name: "Start camera" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Take photo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this photo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit visit details" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Keep this photo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm check-in" }));
+    await waitFor(() => expect(api.checkIn).toHaveBeenCalledWith(expect.objectContaining({ photo_id: "p1" })));
+    expect(api.uploadVisitorPhoto).toHaveBeenCalledTimes(1);
   });
 
   it("offers to keep the photo from an earlier visit", async () => {

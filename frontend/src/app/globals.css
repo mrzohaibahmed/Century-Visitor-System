@@ -5,18 +5,24 @@
  * targets, calm colours; red/amber/green are reserved for status.
  */
 @theme {
-  --font-sans: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Inter is self-hosted by next/font (app/layout.tsx sets --font-inter); the rest is the fallback. */
+  --font-sans: var(--font-inter), system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-system: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
 
+  /* One accent colour: brand blue. */
   --color-brand-50: #eef4fb;
   --color-brand-100: #d6e4f5;
+  --color-brand-200: #b3cdec;
   --color-brand-600: #1f5fa8;
   --color-brand-700: #184d8a;
   --color-brand-900: #0f1b2d;
 
   --color-surface: #ffffff;
+  --color-surface-subtle: #f8fafc;
   --color-canvas: #f3f5f8;
   --color-border: #dde3ea;
+  --color-border-strong: #c4ccd6;
   --color-ink: #111827;
   --color-ink-muted: #5b6573;
 
@@ -26,6 +32,39 @@
   --color-warn-bg: #fdf3e2;
   --color-danger: #b42318;
   --color-danger-bg: #fdecea;
+
+  /*
+   * Type scale. Use these for hierarchy instead of ad-hoc sizes:
+   *   text-display  big numbers and outcome headlines (visit number, "Checked in")
+   *   text-title    page titles (h1)
+   *   text-heading  section and card headings (h2)
+   *   text-base     body and form input text
+   *   text-sm       secondary text, labels (font-medium), helper and error text
+   *   text-xs       metadata only (timestamps, table captions)
+   */
+  --text-display: 2.25rem;
+  --text-display--line-height: 2.75rem;
+  --text-display--font-weight: 700;
+  --text-display--letter-spacing: -0.02em;
+  --text-title: 1.75rem;
+  --text-title--line-height: 2.25rem;
+  --text-title--font-weight: 700;
+  --text-title--letter-spacing: -0.02em;
+  --text-heading: 1.125rem;
+  --text-heading--line-height: 1.75rem;
+  --text-heading--font-weight: 600;
+  --text-heading--letter-spacing: -0.01em;
+
+  /* Soft elevation: cards sit just above the canvas; overlays float. */
+  --shadow-card: 0 1px 2px rgb(15 27 45 / 0.04), 0 1px 3px rgb(15 27 45 / 0.06);
+  --shadow-overlay: 0 12px 32px rgb(15 27 45 / 0.16), 0 2px 6px rgb(15 27 45 / 0.08);
+
+  --animate-dialog-in: dialog-in 160ms ease-out;
+}
+
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
 }
 
 html,
@@ -39,9 +78,42 @@ body {
   font-family: var(--font-sans);
 }
 
-:focus-visible {
-  outline: 3px solid var(--color-brand-600);
-  outline-offset: 2px;
+/* In the base layer so a component can refine its own focus style with utilities. */
+@layer base {
+  :focus-visible {
+    outline: 3px solid var(--color-brand-600);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Toasts (sonner, components/ui/Toaster.tsx) use the app's tokens. The selector outranks
+   sonner's own injected [data-sonner-toaster][data-sonner-theme] rule whatever the load order. */
+:root [data-sonner-toaster][data-sonner-theme] {
+  --normal-bg: var(--color-surface);
+  --normal-border: var(--color-border);
+  --normal-text: var(--color-ink);
+  --success-bg: var(--color-ok-bg);
+  --success-border: color-mix(in srgb, var(--color-ok) 30%, transparent);
+  --success-text: var(--color-ok);
+  --warning-bg: var(--color-warn-bg);
+  --warning-border: color-mix(in srgb, var(--color-warn) 30%, transparent);
+  --warning-text: var(--color-warn);
+  --error-bg: var(--color-danger-bg);
+  --error-border: color-mix(in srgb, var(--color-danger) 30%, transparent);
+  --error-text: var(--color-danger);
+  --info-bg: var(--color-brand-50);
+  --info-border: var(--color-brand-100);
+  --info-text: var(--color-brand-700);
+  --border-radius: 0.75rem;
+  font-family: var(--font-sans);
 }
 
 /*
@@ -62,7 +134,8 @@ body {
   overflow: hidden;
   background: #fff;
   color: #000;
-  font-family: var(--font-sans);
+  /* Kept on the system font: the badge layout is sized in mm for it (see the badge print test). */
+  font-family: var(--font-system);
   text-align: center;
   line-height: 1.15;
 }

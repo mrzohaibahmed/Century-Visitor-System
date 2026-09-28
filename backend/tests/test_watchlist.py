@@ -50,6 +50,30 @@ async def test_the_listed_person_is_blocked_at_the_gate(admin, guard, directory)
     assert r.status_code == 403 and r.json()["error"]["code"] == "entry_denied"
 
 
+@pytest.mark.parametrize("ban,visitor", [
+    (("CNIC", "35201-1234567-1"), ("PASSPORT", "3520112345671")),   # banned CNIC typed in as a passport
+    (("CNIC", "35201-1234567-1"), ("OTHER", "35201-1234567-1")),    # ... or as another ID
+    (("PASSPORT", "AB1234567"), ("OTHER", "ab 1234567")),
+    (("OTHER", "DL-7788 99"), ("OTHER", "DL778899")),                # separators in "other" numbers
+    (("OTHER", "DL778899"), ("PASSPORT", "DL778899")),
+])
+async def test_choosing_another_id_type_does_not_get_round_a_ban(admin, guard, directory, ban, visitor):  # noqa: F811
+    body = {"identity": {"type": ban[0], "number": ban[1]}, "reason": "Theft of company property."}
+    assert (await admin.post(URL, json=body)).status_code == 201
+    person = await new_visitor(guard, id_type=visitor[0], number=visitor[1])
+    lookup = await guard.get(f"/api/v1/visitors/{person['id']}")
+    assert lookup.json()["screening"]["status"] == "BLOCKED"
+    r = await check_in(guard, person["id"], directory)
+    assert r.status_code == 403 and r.json()["error"]["code"] == "entry_denied"
+
+
+async def test_other_id_numbers_are_not_caught_by_a_ban(admin, guard, directory):  # noqa: F811
+    await add(admin, number="35201-1234567-1")
+    for id_type, number in (("CNIC", "35201-1234567-2"), ("PASSPORT", "352011234567"), ("OTHER", "35201-1234567")):
+        person = await new_visitor(guard, id_type=id_type, number=number)
+        assert (await check_in(guard, person["id"], directory)).status_code == 201, (id_type, number)
+
+
 async def test_the_name_is_taken_from_the_registered_visitor(admin, guard):
     await new_visitor(guard, name="Ali Khan")
     assert (await add(admin)).json()["name"] == "Ali Khan"

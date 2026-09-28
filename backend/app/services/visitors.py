@@ -5,7 +5,8 @@ Visitors: the person, independent of any single visit.
 - Opening a visitor's details or looking one up by ID number is audited
   (personal data access); audit records only ever hold masked ID numbers.
 - Watchlist screening compares normalised identifiers, so formatting cannot
-  bypass a ban.
+  bypass a ban, and it ignores the document type chosen at the gate: a banned
+  CNIC typed in as a passport or "other ID" is still refused.
 """
 import re
 from datetime import UTC, datetime
@@ -58,10 +59,27 @@ async def screening(db: AsyncDatabase, visitor: dict) -> dict | None:
     if not ident:
         return None
     return await db.watchlist.find_one({
-        "identifier": identifier(ident["type"], ident["number"]),
+        "$and": [_watchlist_match(ident), {"$or": [{"expires_at": None}, {"expires_at": {"$gt": datetime.now(UTC)}}]}],
         "is_active": True,
-        "$or": [{"expires_at": None}, {"expires_at": {"$gt": datetime.now(UTC)}}],
     })
+
+
+def _watchlist_match(ident: dict) -> dict:
+    """Every watchlist identifier this document number could have been entered under, in any type.
+
+    The type a guard picks is not proof of anything, so the number itself decides: "3520112345671" as a
+    passport matches a CNIC ban, "AB12345" as another ID matches a passport ban, and so on. "Other" numbers
+    keep spaces, / and - after normalisation, so they are compared with those separators ignored.
+    """
+    number = ident["number"]
+    compact = re.sub(r"[^0-9A-Z]", "", number.upper())
+    keys = {identifier(ident["type"], number)}
+    keys.update(identifier(t, n) for value in {number, compact} for t, n in _identity_candidates(value))
+    clauses: list[dict] = [{"identifier": {"$in": sorted(keys)}}]
+    if compact:
+        # Letters and digits only, so nothing to escape; the fixed "OTHER:<first char>" prefix uses the index.
+        clauses.append({"identifier": {"$regex": "^OTHER:" + "[ /-]*".join(compact) + "$"}})
+    return {"$or": clauses}
 
 
 async def create(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, full_name: str, identity: dict,

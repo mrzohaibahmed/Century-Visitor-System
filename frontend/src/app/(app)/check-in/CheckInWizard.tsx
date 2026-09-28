@@ -1,14 +1,20 @@
 "use client";
 
+import { ArrowLeft, ArrowRight, Camera, Check, ClipboardCheck, ClipboardList, IdCard, Pencil, Search, UserPlus } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { BadgePreview } from "@/components/badge/VisitorBadge";
 import { CameraCapture } from "@/components/camera/CameraCapture";
 import { Alert } from "@/components/ui/Alert";
+import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { DescriptionList } from "@/components/ui/DescriptionList";
 import { SelectField } from "@/components/ui/SelectField";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Stepper } from "@/components/ui/Stepper";
 import { TextField } from "@/components/ui/TextField";
 import { IdentityInput } from "@/components/visits/IdentityInput";
 import { VisitorPhoto } from "@/components/visits/VisitorPhoto";
@@ -80,16 +86,8 @@ export function CheckInWizard() {
   }
 
   return (
-    <div className="space-y-4">
-      <ol className="flex gap-2 text-sm" aria-label="Check-in steps">
-        {STEP_TITLES.map((title, i) => (
-          <li key={title} aria-current={i === stepIndex(step) ? "step" : undefined}
-              className={`flex-1 rounded-lg px-3 py-2 font-medium ${i === stepIndex(step)
-                ? "bg-brand-600 text-white" : i < stepIndex(step) ? "bg-brand-50 text-brand-700" : "bg-canvas text-ink-muted"}`}>
-            {i + 1}. {title}
-          </li>
-        ))}
-      </ol>
+    <div className="space-y-6">
+      <Stepper steps={STEP_TITLES} current={stepIndex(step)} label="Check-in steps" />
 
       {step.kind === "identify" && (
         <IdentifyStep idType={idType} idNumber={idNumber} onType={setIdType} onNumber={setIdNumber}
@@ -115,6 +113,10 @@ export function CheckInWizard() {
       {step.kind === "review" && (
         <ReviewStep visitor={step.visitor} draft={draft} photoId={step.photoId}
                     onBack={() => setStep({ kind: "photo", visitor: step.visitor })}
+                    // The upload already made this photo the visitor's current one on the server, so after
+                    // editing the details the photo step offers to keep it instead of asking for a retake.
+                    onEditDetails={() => setStep({ kind: "details",
+                      visitor: { ...step.visitor, photo_id: step.photoId ?? step.visitor.photo_id } })}
                     onDenied={(reason) => setStep({ kind: "blocked", name: step.visitor.full_name, reason })}
                     onDone={(visit) => setStep({ kind: "done", visit })} />
       )}
@@ -154,12 +156,17 @@ function IdentifyStep({ idType, idNumber, onType, onNumber, onFound, onNotRegist
   }
 
   return (
-    <Card title="Who is visiting?" description="Enter the ID number from the visitor's identity document.">
-      <form onSubmit={onSubmit} noValidate className="space-y-4">
+    <Card title="Who is visiting?" description="Enter the ID number from the visitor's identity document."
+          icon={<IdCard />} divided={false}>
+      <form onSubmit={onSubmit} noValidate className="space-y-6">
         {error && <Alert tone="danger">{error}</Alert>}
-        <IdentityInput type={idType} number={idNumber} onType={onType} onNumber={onNumber} error={fieldError} autoFocus />
+        <IdentityInput type={idType} number={idNumber} onType={onType} onNumber={onNumber} error={fieldError}
+                       size="lg" autoFocus />
         <div className="flex justify-end">
-          <Button type="submit" loading={searching}>Find visitor</Button>
+          <Button type="submit" size="lg" loading={searching} className="w-full sm:w-auto">
+            {!searching && <Search aria-hidden="true" />}
+            Find visitor
+          </Button>
         </div>
       </form>
     </Card>
@@ -209,21 +216,28 @@ function RegisterStep({ idType, idNumber, onBack, onRegistered }: {
   }
 
   return (
-    <Card title="New visitor" description="This ID number is not registered yet. Add the visitor's details.">
-      <form onSubmit={onSubmit} noValidate className="space-y-4">
+    <Card title="New visitor" description="This ID number is not registered yet. Add the visitor's details."
+          icon={<UserPlus />} divided={false}>
+      <form onSubmit={onSubmit} noValidate className="space-y-6">
         {error && <Alert tone="danger">{error}</Alert>}
-        <p className="text-sm">
-          <span className="text-ink-muted">{IDENTITY_LABELS[idType]}: </span>
-          <span className="font-semibold text-ink">{idNumber}</span>
-        </p>
+        <div className="flex items-center gap-3 rounded-xl border border-border bg-surface-subtle px-4 py-3">
+          <IdCard aria-hidden="true" className="size-5 shrink-0 text-ink-muted" />
+          <p className="min-w-0">
+            <span className="block text-sm text-ink-muted">{IDENTITY_LABELS[idType]}</span>
+            <span className="block break-all font-mono text-base font-semibold text-ink">{idNumber}</span>
+          </p>
+        </div>
         {(errors.identity || errors._form) && <Alert tone="danger">{errors.identity || errors._form}</Alert>}
         <TextField label="Full name" value={name} onChange={(e) => setName(e.target.value)} error={errors.full_name}
-                   autoComplete="off" autoFocus />
+                   size="lg" autoComplete="off" autoFocus />
         <TextField label="Phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} error={errors.phone}
-                   inputMode="tel" autoComplete="off" />
-        <div className="flex justify-between gap-2">
-          <Button type="button" variant="secondary" onClick={onBack}>Back</Button>
-          <Button type="submit" loading={saving}>Register and continue</Button>
+                   size="lg" inputMode="tel" autoComplete="off" />
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
+          <Button type="button" variant="secondary" size="lg" onClick={onBack}>
+            <ArrowLeft aria-hidden="true" />
+            Back
+          </Button>
+          <Button type="submit" size="lg" loading={saving}>Register and continue</Button>
         </div>
       </form>
     </Card>
@@ -291,12 +305,27 @@ function InsideStep({ visitor, onCancel, onCheckedOut }: {
 // ---------------------------------------------------------------- step 2: visit details
 function VisitorSummary({ visitor }: { visitor: Visitor }) {
   return (
-    <div className="rounded-lg bg-canvas px-4 py-3 text-sm">
-      <p className="text-base font-semibold text-ink" data-testid="visitor-name">{visitor.full_name}</p>
-      <p className="text-ink-muted">
-        {visitor.identity && `${IDENTITY_LABELS[visitor.identity.type]} ${visitor.identity.number}`}
-        {visitor.phone && ` · ${visitor.phone}`}
-      </p>
+    <div className="flex items-center gap-3 rounded-xl border border-border bg-surface-subtle px-4 py-3">
+      <Avatar name={visitor.full_name} />
+      <div className="min-w-0">
+        <p className="truncate text-base font-semibold text-ink" data-testid="visitor-name">{visitor.full_name}</p>
+        <p className="text-sm text-ink-muted">
+          {visitor.identity && `${IDENTITY_LABELS[visitor.identity.type]} ${visitor.identity.number}`}
+          {visitor.phone && ` · ${visitor.phone}`}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** A labelled group of fields inside a step. */
+function FieldGroup({ legend, children }: { legend: string; children: React.ReactNode }) {
+  return (
+    <div className="border-t border-border pt-6">
+      <fieldset className="space-y-5">
+        <legend className="text-sm font-semibold text-ink">{legend}</legend>
+        {children}
+      </fieldset>
     </div>
   );
 }
@@ -310,7 +339,15 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
 }) {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [errors, setErrors] = useState<DraftErrors>({});
-  const set = (changes: Partial<VisitDraft>) => onChange({ ...draft, ...changes });
+  const set = (changes: Partial<VisitDraft>) => {
+    const next = { ...draft, ...changes };
+    onChange(next);
+    // A shown error disappears as soon as its field is valid; new errors still appear only on Review.
+    setErrors((shown) => {
+      const now = validateDraft(next);
+      return Object.fromEntries(Object.keys(shown).filter((k) => k in now).map((k) => [k, now[k as keyof DraftErrors]]));
+    });
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -327,44 +364,53 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
 
   const hostDepartment = !draft.unlistedHost ? draft.host?.department_name : null;
   return (
-    <Card title="Visit details">
-      <form onSubmit={onSubmit} noValidate className="space-y-4">
+    <Card title="Visit details" description="Who they are here to see, and why." icon={<ClipboardList />} divided={false}>
+      <form onSubmit={onSubmit} noValidate className="space-y-6">
         <VisitorSummary visitor={visitor} />
-        {draft.unlistedHost ? (
-          <TextField label="Name of the person being visited" value={draft.unlistedHostName} autoComplete="off"
-                     onChange={(e) => set({ unlistedHostName: e.target.value })} error={errors.host}
-                     hint="The visit is flagged so an administrator can add this person to the directory." />
-        ) : (
-          <HostPicker value={draft.host} onChange={(host) => set({ host, departmentId: "" })} error={errors.host} />
-        )}
-        <label className="flex items-center gap-2 text-sm text-ink">
-          <input type="checkbox" className="size-4" checked={draft.unlistedHost}
-                 onChange={(e) => set({ unlistedHost: e.target.checked, host: null, departmentId: "" })} />
-          The host is not in the list
-        </label>
-        <SelectField label="Department" value={draft.departmentId} error={errors.department}
-                     onChange={(e) => set({ departmentId: e.target.value })}>
-          <option value="">{hostDepartment ? `${hostDepartment} (host's department)` : "Choose a department"}</option>
-          {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </SelectField>
-        <SelectField label="Reason for visit" value={draft.reason} error={errors.reason}
-                     onChange={(e) => set({ reason: e.target.value as VisitReason | "" })}>
-          <option value="">Choose a reason</option>
-          {VISIT_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-        </SelectField>
-        {draft.reason === "OTHER" && (
-          <TextField label="Describe the reason" value={draft.reasonNote} maxLength={200} error={errors.reasonNote}
-                     onChange={(e) => set({ reasonNote: e.target.value })} />
-        )}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <TextField label="Vehicle registration (optional)" value={draft.vehicle} autoComplete="off"
-                     onChange={(e) => set({ vehicle: e.target.value })} placeholder="LEA-1234" />
-          <TextField label="Belongings (optional)" value={draft.belongings} error={errors.belongings}
-                     onChange={(e) => set({ belongings: e.target.value })} hint="Separate items with commas." />
-        </div>
-        <div className="flex justify-between gap-2">
-          <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-          <Button type="submit">Review</Button>
+        <FieldGroup legend="Visiting">
+          <div className="space-y-2">
+            {draft.unlistedHost ? (
+              <TextField label="Name of the person being visited" value={draft.unlistedHostName} autoComplete="off"
+                         size="lg" onChange={(e) => set({ unlistedHostName: e.target.value })} error={errors.host}
+                         hint="The visit is flagged so an administrator can add this person to the directory." />
+            ) : (
+              <HostPicker value={draft.host} onChange={(host) => set({ host, departmentId: "" })} error={errors.host} />
+            )}
+            <Checkbox label="The host is not in the list" checked={draft.unlistedHost}
+                      onChange={(e) => set({ unlistedHost: e.target.checked, host: null, departmentId: "" })} />
+          </div>
+          <SelectField label="Department" value={draft.departmentId} error={errors.department} size="lg"
+                       hint={hostDepartment ? "Taken from the host. Change it only if the visit is for another department." : undefined}
+                       onChange={(e) => set({ departmentId: e.target.value })}>
+            <option value="">{hostDepartment ? `${hostDepartment} (host's department)` : "Choose a department"}</option>
+            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </SelectField>
+        </FieldGroup>
+        <FieldGroup legend="Purpose">
+          <SelectField label="Reason for visit" value={draft.reason} error={errors.reason} size="lg"
+                       onChange={(e) => set({ reason: e.target.value as VisitReason | "" })}>
+            <option value="">Choose a reason</option>
+            {VISIT_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+          </SelectField>
+          {draft.reason === "OTHER" && (
+            <TextField label="Describe the reason" value={draft.reasonNote} maxLength={200} error={errors.reasonNote}
+                       size="lg" onChange={(e) => set({ reasonNote: e.target.value })} />
+          )}
+        </FieldGroup>
+        <FieldGroup legend="Also record (optional)">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <TextField label="Vehicle registration (optional)" value={draft.vehicle} autoComplete="off" size="lg"
+                       onChange={(e) => set({ vehicle: e.target.value })} placeholder="LEA-1234" />
+            <TextField label="Belongings (optional)" value={draft.belongings} error={errors.belongings} size="lg"
+                       onChange={(e) => set({ belongings: e.target.value })} hint="Separate items with commas." />
+          </div>
+        </FieldGroup>
+        <div className="flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:justify-between">
+          <Button type="button" variant="secondary" size="lg" onClick={onCancel}>Cancel</Button>
+          <Button type="submit" size="lg">
+            Review
+            <ArrowRight aria-hidden="true" />
+          </Button>
         </div>
       </form>
     </Card>
@@ -372,11 +418,12 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
 }
 
 // ---------------------------------------------------------------- step 3: review and confirm
-function ReviewStep({ visitor, draft, photoId, onBack, onDenied, onDone }: {
+function ReviewStep({ visitor, draft, photoId, onBack, onEditDetails, onDenied, onDone }: {
   visitor: Visitor;
   draft: VisitDraft;
   photoId: string | null;
   onBack: () => void;
+  onEditDetails: () => void;
   onDenied: (reason: string) => void;
   onDone: (visit: Visit) => void;
 }) {
@@ -384,6 +431,7 @@ function ReviewStep({ visitor, draft, photoId, onBack, onDenied, onDone }: {
   const [problems, setProblems] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const visitorHeading = useId();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -410,42 +458,104 @@ function ReviewStep({ visitor, draft, photoId, onBack, onDenied, onDone }: {
   const departmentName = departments.find((d) => d.id === departmentId)?.name
     ?? (draft.host?.department_id === departmentId ? draft.host?.department_name : null) ?? "—";
   const belongings = parseList(draft.belongings);
-  const rows: [string, React.ReactNode][] = [
-    ["Visitor", visitor.full_name],
-    ["ID", visitor.identity ? `${IDENTITY_LABELS[visitor.identity.type]} ${visitor.identity.number}` : "—"],
-    ["Host", draft.unlistedHost ? `${draft.unlistedHostName.trim()} (not in directory)` : draft.host?.name],
-    ["Department", departmentName],
-    ["Reason", draft.reason ? `${reasonLabel(draft.reason)}${draft.reasonNote.trim() ? ` — ${draft.reasonNote.trim()}` : ""}` : "—"],
-    ["Vehicle", draft.vehicle.trim().toUpperCase() || "—"],
-    ["Belongings", belongings.length ? belongings.join(", ") : "—"],
+  const vehicle = draft.vehicle.trim().toUpperCase();
+  const note = draft.reasonNote.trim();
+  // Only what the check-in will actually record (the same values toCheckIn sends).
+  const visit = [
+    { label: "Host", value: draft.unlistedHost ? (
+      <span className="flex flex-wrap items-center gap-2">
+        {draft.unlistedHostName.trim()}
+        <StatusBadge tone="warn">Not in directory</StatusBadge>
+      </span>
+    ) : draft.host?.name },
+    { label: "Department", value: departmentName },
+    { label: "Reason", value: draft.reason ? reasonLabel(draft.reason) : "—" },
+    ...(note ? [{ label: "Reason details", value: note }] : []),
+  ];
+  const extra = [
+    ...(vehicle ? [{ label: "Vehicle", value: <span className="font-mono">{vehicle}</span> }] : []),
+    ...(belongings.length ? [{ label: "Belongings", value: (
+      <ul className="flex flex-wrap gap-2">
+        {belongings.map((b, i) => (
+          <li key={`${b}-${i}`} className="rounded-lg bg-canvas px-2.5 py-1 text-sm font-medium text-ink">{b}</li>
+        ))}
+      </ul>
+    ) }] : []),
   ];
 
   return (
-    <Card title="Confirm check-in" description="Check the details with the visitor before confirming.">
-      <div className="space-y-4">
+    <Card title="Confirm check-in" description="Check the details with the visitor before confirming."
+          icon={<ClipboardCheck />} divided={false}>
+      <div className="space-y-6">
         {error && (
-          <Alert tone="danger">
+          <Alert tone="danger" title="The visitor was not checked in">
             <p>{error}</p>
             {problems.length > 0 && <ul className="mt-1 list-disc pl-5">{problems.map((p) => <li key={p}>{p}</li>)}</ul>}
           </Alert>
         )}
-        <div className="flex gap-4">
-          <dl className="flex-1 divide-y divide-border rounded-lg border border-border text-sm">
-            {rows.map(([label, value]) => (
-              <div key={label} className="grid grid-cols-[9rem_1fr] gap-3 px-4 py-2">
-                <dt className="text-ink-muted">{label}</dt>
-                <dd className="font-medium text-ink">{value}</dd>
-              </div>
-            ))}
-          </dl>
-          <VisitorPhoto photoId={photoId} name={visitor.full_name} />
-        </div>
-        <div className="flex justify-between gap-2">
-          <Button variant="secondary" onClick={onBack} disabled={saving}>Back</Button>
-          <Button onClick={() => void confirm()} loading={saving}>Confirm check-in</Button>
+
+        <section aria-labelledby={visitorHeading} className="flex flex-col items-center gap-4 rounded-xl border border-border
+          bg-surface-subtle p-4 text-center sm:flex-row sm:items-center sm:gap-5 sm:text-left">
+          <div className="overflow-hidden rounded-2xl shadow-card">
+            <VisitorPhoto photoId={photoId} name={visitor.full_name} className="size-32" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h3 id={visitorHeading} className="text-heading break-words text-ink">{visitor.full_name}</h3>
+            <p className="mt-1 text-base text-ink-muted">
+              {visitor.identity ? `${IDENTITY_LABELS[visitor.identity.type]} ${visitor.identity.number}` : "No ID recorded"}
+            </p>
+            {visitor.phone && <p className="text-base text-ink-muted">{visitor.phone}</p>}
+            <Button variant="ghost" size="lg" onClick={onBack} disabled={saving} className="-ml-4 mt-1">
+              <Camera aria-hidden="true" />
+              {photoId ? "Change photo" : "Add a photo"}
+            </Button>
+          </div>
+        </section>
+
+        <ReviewSection title="Visit" onEdit={onEditDetails} editLabel="Edit visit details" disabled={saving}>
+          <DescriptionList items={visit} />
+        </ReviewSection>
+
+        {extra.length > 0 && (
+          <ReviewSection title="Also recorded" onEdit={onEditDetails} editLabel="Edit vehicle and belongings" disabled={saving}>
+            <DescriptionList items={extra} />
+          </ReviewSection>
+        )}
+
+        <div className="flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:justify-between">
+          <Button variant="secondary" size="lg" onClick={onBack} disabled={saving}>
+            <ArrowLeft aria-hidden="true" />
+            Back
+          </Button>
+          <Button size="lg" onClick={() => void confirm()} loading={saving}>
+            {!saving && <Check aria-hidden="true" />}
+            Confirm check-in
+          </Button>
         </div>
       </div>
     </Card>
+  );
+}
+
+/** One group of facts on the review step, with a way back to where they were entered. */
+function ReviewSection({ title, onEdit, editLabel, disabled, children }: {
+  title: string;
+  onEdit: () => void;
+  editLabel: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-border px-4 pb-4 sm:px-5">
+      <div className="flex items-center justify-between gap-3 py-1">
+        <h3 className="text-sm font-semibold text-ink">{title}</h3>
+        <Button variant="ghost" size="lg" onClick={onEdit} disabled={disabled} aria-label={editLabel} className="-mr-3">
+          <Pencil aria-hidden="true" />
+          Edit
+        </Button>
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -498,26 +608,36 @@ export function PhotoStep({ visitor, onBack, onNext }: {
   }
 
   return (
-    <Card title="Visitor photo" description="Take a photo of the visitor's face, looking at the camera.">
-      <div className="space-y-4">
+    <Card title="Visitor photo" description="Take a photo of the visitor's face, looking at the camera."
+          icon={<Camera />} divided={false}>
+      <div className="space-y-6">
         <VisitorSummary visitor={visitor} />
         {visitor.photo_id && !retaking ? (
-          <div className="space-y-3 text-center">
-            <div className="flex justify-center">
-              <VisitorPhoto photoId={visitor.photo_id} name={visitor.full_name} className="size-48" />
+          <div className="flex flex-col items-center gap-4 text-center">
+            <div className="overflow-hidden rounded-2xl shadow-card">
+              <VisitorPhoto photoId={visitor.photo_id} name={visitor.full_name} className="size-56" />
             </div>
-            <p className="text-sm text-ink-muted">Photo from an earlier visit. Check that it is the same person.</p>
-            <div className="flex justify-center gap-2">
-              <Button variant="secondary" onClick={() => setRetaking(true)}>Take a new photo</Button>
-              <Button onClick={() => onNext(visitor.photo_id)}>Keep this photo</Button>
+            <p className="max-w-sm text-base text-ink-muted">Photo from an earlier visit. Check that it is the same person.</p>
+            <div className="flex w-full flex-col-reverse gap-3 sm:w-auto sm:flex-row">
+              <Button variant="secondary" size="lg" onClick={() => setRetaking(true)}>
+                <Camera aria-hidden="true" />
+                Take a new photo
+              </Button>
+              <Button size="lg" onClick={() => onNext(visitor.photo_id)}>
+                <Check aria-hidden="true" />
+                Keep this photo
+              </Button>
             </div>
           </div>
         ) : (
           <CameraCapture onConfirm={upload} />
         )}
-        <div className="flex justify-between gap-2 border-t border-border pt-4">
-          <Button variant="secondary" onClick={onBack}>Back</Button>
-          <Button variant="ghost" onClick={() => onNext(null)}>Continue without a photo</Button>
+        <div className="flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:justify-between">
+          <Button variant="secondary" size="lg" onClick={onBack}>
+            <ArrowLeft aria-hidden="true" />
+            Back
+          </Button>
+          <Button variant="ghost" size="lg" onClick={() => onNext(null)}>Continue without a photo</Button>
         </div>
       </div>
     </Card>

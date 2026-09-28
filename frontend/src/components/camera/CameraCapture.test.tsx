@@ -78,6 +78,40 @@ describe("CameraCapture", () => {
     await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(2));
   });
 
+  it("keeps Take photo disabled until the video has a frame", async () => {
+    installCamera();
+    let width = 0;                                                     // camera started, no frame yet
+    Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", { configurable: true, get: () => width });
+    render(<CameraCapture onConfirm={vi.fn()} />);
+    const takePhoto = await startCamera();
+    expect((takePhoto as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Starting camera…")).toBeTruthy();
+    width = 640;
+    fireEvent(screen.getByLabelText("Camera preview"), new Event("loadeddata"));
+    await waitFor(() => expect((takePhoto as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(takePhoto);
+    expect(await screen.findByTestId("captured-photo")).toBeTruthy();
+  });
+
+  it("says so, instead of doing nothing, when the frame is lost at the moment of capture", async () => {
+    installCamera();
+    let width = 640;
+    Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", { configurable: true, get: () => width });
+    render(<CameraCapture onConfirm={vi.fn()} />);
+    const takePhoto = await startCamera();
+    await waitFor(() => expect((takePhoto as HTMLButtonElement).disabled).toBe(false));
+    width = 0;
+    fireEvent.click(takePhoto);
+    expect(await screen.findByText("Camera not ready, try again.")).toBeTruthy();
+    expect((takePhoto as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId("captured-photo")).toBeNull();
+    width = 640;
+    fireEvent(screen.getByLabelText("Camera preview"), new Event("loadeddata"));
+    await waitFor(() => expect(screen.queryByText("Camera not ready, try again.")).toBeNull());
+    fireEvent.click(takePhoto);
+    expect(await screen.findByTestId("captured-photo")).toBeTruthy();
+  });
+
   it("stops the camera when the component goes away", async () => {
     const camera = installCamera();
     const { unmount } = render(<CameraCapture onConfirm={vi.fn()} />);

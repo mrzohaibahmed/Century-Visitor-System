@@ -31,7 +31,8 @@ export function GatePicker() {
           <Button variant="ghost" className="min-h-8 px-2 py-1" onClick={() => setChanging(true)}>Change</Button>
         </div>
       )}
-      <Modal open={open} title="Which gate are you at?" onClose={() => { if (!required) setChanging(false); }}>
+      <Modal open={open} title="Which gate are you at?" dismissible={!required}
+             onClose={() => { if (!required) setChanging(false); }}>
         {open && (
           <GateChoice current={me.session.gate?.id ?? null} onCancel={required ? undefined : () => setChanging(false)}
                       onChosen={async (gateId) => { replace(await selectGate(gateId)); setChanging(false); }} />
