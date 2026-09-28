@@ -224,6 +224,8 @@ describe("CheckInWizard photo, pass and badge", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Use this photo" }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit visit details" }));
     fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    expect(await screen.findByText("Photo captured for this visit.")).toBeTruthy();
+    expect(screen.queryByText(/Photo from an earlier visit/)).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Keep this photo" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm check-in" }));
     await waitFor(() => expect(api.checkIn).toHaveBeenCalledWith(expect.objectContaining({ photo_id: "p1" })));
@@ -235,6 +237,8 @@ describe("CheckInWizard photo, pass and badge", () => {
     api.checkIn.mockResolvedValue(VISIT);
     await toPhotoStep({ ...CLEAR, visitor: { ...VISITOR, photo_id: "old" } });
     expect(screen.getByTestId("visitor-photo").getAttribute("src")).toBe("/api/v1/photos/old");
+    expect(screen.getByText(/Photo from an earlier visit/)).toBeTruthy();
+    expect(screen.queryByText("Photo captured for this visit.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Keep this photo" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm check-in" }));
     await waitFor(() => expect(api.checkIn).toHaveBeenCalledWith(expect.objectContaining({ photo_id: "old" })));
@@ -250,6 +254,26 @@ describe("CheckInWizard photo, pass and badge", () => {
     expect(screen.getByRole("button", { name: "Print badge" })).toBeTruthy();
     expect(api.issuePass).toHaveBeenCalledTimes(1);
     expect(api.issuePass).toHaveBeenCalledWith("visit1");
+  });
+
+  it("confirms the check-in, then starts the next visitor from a clean slate", async () => {
+    api.checkIn.mockResolvedValue(VISIT);
+    await toPhotoStep();
+    fireEvent.click(screen.getByRole("button", { name: "Continue without a photo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm check-in" }));
+    expect(await screen.findByRole("heading", { name: "Check-in complete" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Print badge" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Visitors inside" }).getAttribute("href")).toBe("/check-out");
+    fireEvent.click(screen.getByRole("button", { name: "Check in next visitor" }));
+    expect((screen.getByLabelText("ID number") as HTMLInputElement).value).toBe("");
+    expect(screen.queryByTestId("check-in-done")).toBeNull();
+    // The next visitor's details start empty (no host or reason carried over).
+    api.lookupVisitor.mockResolvedValue({ ...CLEAR, visitor: { ...VISITOR, id: "v2", full_name: "Hina Shah" } });
+    fireEvent.change(screen.getByLabelText("ID number"), { target: { value: "3520199999999" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find visitor" }));
+    expect((await screen.findByTestId("visitor-name")).textContent).toBe("Hina Shah");
+    expect(screen.queryByTestId("selected-host")).toBeNull();
+    expect((screen.getByLabelText("Reason for visit") as HTMLSelectElement).value).toBe("");
   });
 
   it("keeps the visit and offers a retry when the pass cannot be issued", async () => {

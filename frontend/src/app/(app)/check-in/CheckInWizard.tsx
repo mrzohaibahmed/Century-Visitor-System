@@ -1,18 +1,20 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Camera, Check, ClipboardCheck, ClipboardList, IdCard, Pencil, Search, UserPlus } from "lucide-react";
-import Link from "next/link";
+import {
+  ArrowLeft, ArrowRight, Camera, Check, ClipboardCheck, ClipboardList, IdCard, Pencil, Printer, RotateCcw, Search, UserPlus, Users,
+} from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { BadgePreview } from "@/components/badge/VisitorBadge";
 import { CameraCapture } from "@/components/camera/CameraCapture";
 import { Alert } from "@/components/ui/Alert";
 import { Avatar } from "@/components/ui/Avatar";
-import { Button } from "@/components/ui/Button";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { DescriptionList } from "@/components/ui/DescriptionList";
 import { SelectField } from "@/components/ui/SelectField";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Stepper } from "@/components/ui/Stepper";
 import { TextField } from "@/components/ui/TextField";
@@ -52,7 +54,8 @@ const STEP_TITLES = ["Identify visitor", "Visit details", "Photo", "Confirm"];
 function stepIndex(step: Step): number {
   if (step.kind === "details") return 1;
   if (step.kind === "photo") return 2;
-  if (step.kind === "review" || step.kind === "done") return 3;
+  if (step.kind === "review") return 3;
+  if (step.kind === "done") return STEP_TITLES.length;                  // every step complete
   return 0;
 }
 
@@ -67,11 +70,14 @@ export function CheckInWizard() {
   const [idType, setIdType] = useState<IdentityType>("CNIC");
   const [idNumber, setIdNumber] = useState("");
   const [draft, setDraft] = useState<VisitDraft>(EMPTY_DRAFT);
+  /** The photo uploaded during this check-in (so the photo step does not call it one from an earlier visit). */
+  const [capturedPhotoId, setCapturedPhotoId] = useState<string | null>(null);
 
   function restart() {
     setStep({ kind: "identify" });
     setIdNumber("");
     setDraft(EMPTY_DRAFT);
+    setCapturedPhotoId(null);
   }
 
   function route(found: VisitorWithStatus) {
@@ -107,7 +113,8 @@ export function CheckInWizard() {
                      onNext={() => setStep({ kind: "photo", visitor: step.visitor })} />
       )}
       {step.kind === "photo" && (
-        <PhotoStep visitor={step.visitor} onBack={() => setStep({ kind: "details", visitor: step.visitor })}
+        <PhotoStep visitor={step.visitor} capturedPhotoId={capturedPhotoId} onCaptured={setCapturedPhotoId}
+                   onBack={() => setStep({ kind: "details", visitor: step.visitor })}
                    onNext={(photoId) => setStep({ kind: "review", visitor: step.visitor, photoId })} />
       )}
       {step.kind === "review" && (
@@ -559,52 +566,90 @@ function ReviewSection({ title, onEdit, editLabel, disabled, children }: {
   );
 }
 
+/** Checked in: the outcome first, then the badge to print (the main next step), then who and where. */
 function DoneStep({ visit, onNext }: { visit: Visit; onNext: () => void }) {
-  return (
-    <div className="space-y-4">
-      <CheckedInCard visit={visit} onNext={onNext} />
-      <PassCard visit={visit} />
-    </div>
-  );
-}
+  const headingId = useId();
+  const details = [
+    { label: "Visiting", value: visit.host_unlisted ? (
+      <span className="flex flex-wrap items-center gap-2">
+        {visit.host.name}
+        <StatusBadge tone="warn">Not in directory</StatusBadge>
+      </span>
+    ) : visit.host.name },
+    ...(visit.department.name ? [{ label: "Department", value: visit.department.name }] : []),
+    { label: "Reason", value: reasonLabel(visit.reason_code) },
+    { label: "Checked in", value: formatDateTime(visit.check_in_at) },
+    { label: "Gate", value: visit.gate.name },
+  ];
 
-function CheckedInCard({ visit, onNext }: { visit: Visit; onNext: () => void }) {
   return (
-    <Card title="Checked in">
-      <div className="space-y-4 text-center" data-testid="check-in-done">
-        <Alert tone="ok">{visit.visitor.name} has been checked in.</Alert>
-        <div>
-          <p className="text-sm text-ink-muted">Visit number</p>
-          <p className="font-mono text-3xl font-bold tracking-wide text-ink" data-testid="visit-number">{visit.visit_number}</p>
-        </div>
-        <p className="text-sm text-ink-muted">
-          Visiting {visit.host.name}{visit.department.name ? ` (${visit.department.name})` : ""} · {visit.gate.name} ·{" "}
-          {formatDateTime(visit.check_in_at)}
-        </p>
-        {visit.host_unlisted && (
-          <Alert tone="warn">The host is not in the directory; this visit is flagged for review.</Alert>
-        )}
-        <div className="flex justify-center gap-2">
-          <Link href="/check-out" className="inline-flex min-h-10 items-center rounded-lg border border-border px-4 text-sm font-semibold text-ink hover:bg-canvas">
-            Visitors inside
-          </Link>
-          <Button onClick={onNext}>Check in next visitor</Button>
+    <section aria-labelledby={headingId} data-testid="check-in-done"
+             className="rounded-2xl border border-border bg-surface shadow-card">
+      <div role="status" className="flex flex-col items-center gap-4 border-b border-border px-6 py-5 text-center
+        sm:flex-row sm:text-left">
+        <span aria-hidden="true" className="flex size-14 shrink-0 animate-success-in items-center justify-center rounded-full
+          bg-ok-bg text-ok ring-8 ring-ok-bg/50">
+          <Check className="size-7" strokeWidth={3} />
+        </span>
+        <div className="min-w-0">
+          <h2 id={headingId} className="text-title text-ink">Check-in complete</h2>
+          <p className="mt-1 text-base text-ink-muted">{visit.visitor.name} has been checked in.</p>
         </div>
       </div>
-    </Card>
+
+      <div className="grid gap-8 p-6 lg:grid-cols-[auto_1fr]">
+        <PassCard visit={visit} />
+
+        <div className="min-w-0 space-y-5">
+          <div className="flex items-center gap-3">
+            {visit.photo_id ? (
+              <div className="overflow-hidden rounded-xl">
+                <VisitorPhoto photoId={visit.photo_id} name={visit.visitor.name} className="size-14" />
+              </div>
+            ) : <Avatar name={visit.visitor.name ?? ""} />}
+            <p className="text-heading min-w-0 break-words text-ink">{visit.visitor.name}</p>
+          </div>
+          <div>
+            <p className="text-sm text-ink-muted">Visit number</p>
+            <p className="font-mono text-2xl font-bold tracking-wide text-ink" data-testid="visit-number">{visit.visit_number}</p>
+          </div>
+          <DescriptionList items={details} />
+          {visit.host_unlisted && (
+            <Alert tone="warn">The host is not in the directory; this visit is flagged for review.</Alert>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 border-t border-border px-6 py-5 lg:flex-row lg:justify-between">
+        <Button variant="secondary" size="lg" onClick={onNext}>
+          <UserPlus aria-hidden="true" />
+          Check in next visitor
+        </Button>
+        <ButtonLink href="/check-out" variant="ghost" size="lg">
+          <Users aria-hidden="true" />
+          Visitors inside
+        </ButtonLink>
+      </div>
+    </section>
   );
 }
 
 // ---------------------------------------------------------------- photo
-export function PhotoStep({ visitor, onBack, onNext }: {
+export function PhotoStep({ visitor, capturedPhotoId = null, onCaptured, onBack, onNext }: {
   visitor: Visitor;
+  /** A photo uploaded earlier in this same check-in, if any. */
+  capturedPhotoId?: string | null;
+  onCaptured?: (photoId: string) => void;
   onBack: () => void;
   onNext: (photoId: string | null) => void;
 }) {
   const [retaking, setRetaking] = useState(!visitor.photo_id);
+  const thisVisit = visitor.photo_id != null && visitor.photo_id === capturedPhotoId;
 
   async function upload(photo: Blob) {
-    onNext((await uploadVisitorPhoto(visitor.id, photo)).id);
+    const { id } = await uploadVisitorPhoto(visitor.id, photo);
+    onCaptured?.(id);
+    onNext(id);
   }
 
   return (
@@ -617,7 +662,9 @@ export function PhotoStep({ visitor, onBack, onNext }: {
             <div className="overflow-hidden rounded-2xl shadow-card">
               <VisitorPhoto photoId={visitor.photo_id} name={visitor.full_name} className="size-56" />
             </div>
-            <p className="max-w-sm text-base text-ink-muted">Photo from an earlier visit. Check that it is the same person.</p>
+            <p className="max-w-sm text-base text-ink-muted">
+              {thisVisit ? "Photo captured for this visit." : "Photo from an earlier visit. Check that it is the same person."}
+            </p>
             <div className="flex w-full flex-col-reverse gap-3 sm:w-auto sm:flex-row">
               <Button variant="secondary" size="lg" onClick={() => setRetaking(true)}>
                 <Camera aria-hidden="true" />
@@ -670,16 +717,29 @@ function PassCard({ visit }: { visit: Visit }) {
     void issue();
   }, [issue]);
 
+  const headingId = useId();
   return (
-    <Card title="Visitor badge" description="Print the badge and give it to the visitor. The QR code is used at check-out.">
+    <section aria-labelledby={headingId} className="space-y-4 lg:w-64">
+      <h3 id={headingId} className="flex items-center gap-2 text-base font-semibold text-ink">
+        {issued ? <><Printer aria-hidden="true" className="size-5 text-brand-700" />Badge ready</>
+          : error ? "Badge not issued" : "Preparing the badge…"}
+      </h3>
       {error && (
         <div className="space-y-3">
           <Alert tone="danger">The pass could not be issued: {error}</Alert>
-          <Button onClick={() => void issue()} loading={issuing}>Try again</Button>
+          <Button size="lg" className="w-full" onClick={() => void issue()} loading={issuing}>
+            {!issuing && <RotateCcw aria-hidden="true" />}
+            Try again
+          </Button>
         </div>
       )}
-      {!error && !issued && <p className="text-sm text-ink-muted">Preparing the badge…</p>}
-      {issued && <BadgePreview issued={issued} visitId={visit.id} />}
-    </Card>
+      {!error && !issued && (
+        <div className="flex justify-center rounded-lg bg-canvas p-4">
+          <Skeleton className="h-[86mm] w-[54mm] rounded-[3mm]" />
+        </div>
+      )}
+      {issued && <BadgePreview issued={issued} visitId={visit.id} prominent />}
+      <p className="text-sm text-ink-muted">Give the badge to the visitor. Its QR code is used at check-out.</p>
+    </section>
   );
 }

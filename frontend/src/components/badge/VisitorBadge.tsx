@@ -1,5 +1,6 @@
 "use client";
 
+import { Printer } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -55,7 +56,8 @@ function BadgeCard({ issued, qr, onScreen = false }: { issued: IssuedPass; qr: s
   );
 }
 
-export function BadgePreview({ issued, visitId }: { issued: IssuedPass; visitId: string }) {
+/** `prominent`: printing is the main next step on the screen (check-in done), so the button is large. */
+export function BadgePreview({ issued, visitId, prominent = false }: { issued: IssuedPass; visitId: string; prominent?: boolean }) {
   const qr = useQrDataUrl(issued.qr_text);
   const [printRoot, setPrintRoot] = useState<HTMLElement | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +91,11 @@ export function BadgePreview({ issued, visitId }: { issued: IssuedPass; visitId:
         <div className="badge-screen"><BadgeCard issued={issued} qr={qr} onScreen /></div>
       </div>
       <div className="flex justify-center">
-        <Button onClick={() => void print()} disabled={!qr} autoFocus>Print badge</Button>
+        <Button onClick={() => void print()} disabled={!qr} autoFocus size={prominent ? "lg" : "md"}
+                className={prominent ? "w-full" : ""}>
+          {prominent && <Printer aria-hidden="true" />}
+          Print badge
+        </Button>
       </div>
       {printRoot && createPortal(<BadgeCard issued={issued} qr={qr} />, printRoot)}
     </div>
