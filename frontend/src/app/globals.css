@@ -3,35 +3,17 @@
 /*
  * Design tokens. Gate stations are used for long shifts: high contrast, large
  * targets, calm colours; red/amber/green are reserved for status.
+ *
+ * Colours are semantic and themed: components use the Tailwind names below
+ * (bg-surface, text-ink, …), which resolve to the --vms-* values of the active
+ * theme. Dark is the default; <html data-theme="light"> switches (lib/theme.ts).
+ * Every text pair meets WCAG AA in both themes.
  */
 @theme {
   /* Inter is self-hosted by next/font (app/layout.tsx sets --font-inter); the rest is the fallback. */
   --font-sans: var(--font-inter), system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-system: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
-
-  /* One accent colour: brand blue. */
-  --color-brand-50: #eef4fb;
-  --color-brand-100: #d6e4f5;
-  --color-brand-200: #b3cdec;
-  --color-brand-600: #1f5fa8;
-  --color-brand-700: #184d8a;
-  --color-brand-900: #0f1b2d;
-
-  --color-surface: #ffffff;
-  --color-surface-subtle: #f8fafc;
-  --color-canvas: #f3f5f8;
-  --color-border: #dde3ea;
-  --color-border-strong: #c4ccd6;
-  --color-ink: #111827;
-  --color-ink-muted: #5b6573;
-
-  --color-ok: #1e7b43;
-  --color-ok-bg: #e7f5ec;
-  --color-warn: #9a5b00;
-  --color-warn-bg: #fdf3e2;
-  --color-danger: #b42318;
-  --color-danger-bg: #fdecea;
 
   /*
    * Type scale. Use these for hierarchy instead of ad-hoc sizes:
@@ -55,17 +37,127 @@
   --text-heading--font-weight: 600;
   --text-heading--letter-spacing: -0.01em;
 
-  /* Soft elevation: cards sit just above the canvas; overlays float. */
-  --shadow-card: 0 1px 2px rgb(15 27 45 / 0.04), 0 1px 3px rgb(15 27 45 / 0.06);
-  --shadow-overlay: 0 12px 32px rgb(15 27 45 / 0.16), 0 2px 6px rgb(15 27 45 / 0.08);
-
   --animate-dialog-in: dialog-in 160ms ease-out;
+  --animate-drawer-in: drawer-in 200ms ease-out;
   --animate-success-in: success-in 320ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+/* Themed tokens: the utilities point at the active theme's values. */
+@theme inline {
+  /* One accent colour: brand blue. 50–200 are tints (backgrounds, rings), 600 fills primary
+     buttons, 700 is brand-coloured text and links, hover darkens a brand fill. */
+  --color-brand-50: var(--vms-brand-50);
+  --color-brand-100: var(--vms-brand-100);
+  --color-brand-200: var(--vms-brand-200);
+  --color-brand-600: var(--vms-brand-600);
+  --color-brand-700: var(--vms-brand-700);
+  --color-brand-900: var(--vms-brand-900);
+  --color-brand-hover: var(--vms-brand-hover);
+  --color-focus: var(--vms-focus);
+
+  --color-canvas: var(--vms-canvas);
+  --color-surface: var(--vms-surface);
+  --color-surface-subtle: var(--vms-surface-subtle);
+  --color-surface-elevated: var(--vms-surface-elevated);
+  --color-border: var(--vms-border);
+  --color-border-strong: var(--vms-border-strong);
+  --color-overlay: var(--vms-overlay);
+  --color-ink: var(--vms-ink);
+  --color-ink-muted: var(--vms-ink-muted);
+  --color-ink-subtle: var(--vms-ink-subtle);
+
+  /* Status: the plain name is text/icon colour; -bg a tinted background; -solid a fill for white text. */
+  --color-ok: var(--vms-ok);
+  --color-ok-bg: var(--vms-ok-bg);
+  --color-warn: var(--vms-warn);
+  --color-warn-bg: var(--vms-warn-bg);
+  --color-danger: var(--vms-danger);
+  --color-danger-bg: var(--vms-danger-bg);
+  --color-danger-solid: var(--vms-danger-solid);
+
+  /* Soft elevation: cards sit just above the canvas; overlays float. */
+  --shadow-card: var(--vms-shadow-card);
+  --shadow-overlay: var(--vms-shadow-overlay);
+}
+
+/* Dark (default): a security-console canvas with slightly lighter surfaces. */
+:root {
+  color-scheme: dark;
+  --vms-brand-50: #0f1d33;
+  --vms-brand-100: #16294a;
+  --vms-brand-200: #1f3a66;
+  --vms-brand-600: #2f6fc2;
+  --vms-brand-700: #8db8f2;
+  --vms-brand-900: #0f1b2d;
+  --vms-brand-hover: #2862ad;
+  --vms-focus: #6ea4ee;
+
+  --vms-canvas: #0b0d12;
+  --vms-surface: #12151c;
+  --vms-surface-subtle: #181c24;
+  --vms-surface-elevated: #1c212b;
+  --vms-border: #262c37;
+  --vms-border-strong: #3a4352;
+  --vms-overlay: rgb(0 0 0 / 0.6);
+  --vms-ink: #e7eaf0;
+  --vms-ink-muted: #9ca5b3;
+  --vms-ink-subtle: #858e9c;
+
+  --vms-ok: #5cc98f;
+  --vms-ok-bg: #0f2a1d;
+  --vms-warn: #e9b04d;
+  --vms-warn-bg: #2c2210;
+  --vms-danger: #f47a70;
+  --vms-danger-bg: #36171a;
+  --vms-danger-solid: #c4362b;
+
+  --vms-shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+  --vms-shadow-overlay: 0 16px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
+}
+
+/* Light: the original Century Gate palette. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --vms-brand-50: #eef4fb;
+  --vms-brand-100: #d6e4f5;
+  --vms-brand-200: #b3cdec;
+  --vms-brand-600: #1f5fa8;
+  --vms-brand-700: #184d8a;
+  --vms-brand-900: #0f1b2d;
+  --vms-brand-hover: #184d8a;
+  --vms-focus: #1f5fa8;
+
+  --vms-canvas: #f3f5f8;
+  --vms-surface: #ffffff;
+  --vms-surface-subtle: #f8fafc;
+  --vms-surface-elevated: #ffffff;
+  --vms-border: #dde3ea;
+  --vms-border-strong: #c4ccd6;
+  --vms-overlay: rgb(15 27 45 / 0.45);
+  --vms-ink: #111827;
+  --vms-ink-muted: #5b6573;
+  --vms-ink-subtle: #6b7280;
+
+  --vms-ok: #1e7b43;
+  --vms-ok-bg: #e7f5ec;
+  --vms-warn: #9a5b00;
+  --vms-warn-bg: #fdf3e2;
+  --vms-danger: #b42318;
+  --vms-danger-bg: #fdecea;
+  --vms-danger-solid: #b42318;
+
+  --vms-shadow-card: 0 1px 2px rgb(15 27 45 / 0.04), 0 1px 3px rgb(15 27 45 / 0.06);
+  --vms-shadow-overlay: 0 12px 32px rgb(15 27 45 / 0.16), 0 2px 6px rgb(15 27 45 / 0.08);
 }
 
 @keyframes dialog-in {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
   to { opacity: 1; transform: none; }
+}
+
+@keyframes drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: none; }
 }
 
 @keyframes success-in {
@@ -79,15 +171,15 @@ body {
 }
 
 body {
-  background: var(--color-canvas);
-  color: var(--color-ink);
+  background: var(--vms-canvas);
+  color: var(--vms-ink);
   font-family: var(--font-sans);
 }
 
 /* In the base layer so a component can refine its own focus style with utilities. */
 @layer base {
   :focus-visible {
-    outline: 3px solid var(--color-brand-600);
+    outline: 3px solid var(--vms-focus);
     outline-offset: 2px;
   }
 }
@@ -103,21 +195,21 @@ body {
 /* Toasts (sonner, components/ui/Toaster.tsx) use the app's tokens. The selector outranks
    sonner's own injected [data-sonner-toaster][data-sonner-theme] rule whatever the load order. */
 :root [data-sonner-toaster][data-sonner-theme] {
-  --normal-bg: var(--color-surface);
-  --normal-border: var(--color-border);
-  --normal-text: var(--color-ink);
-  --success-bg: var(--color-ok-bg);
-  --success-border: color-mix(in srgb, var(--color-ok) 30%, transparent);
-  --success-text: var(--color-ok);
-  --warning-bg: var(--color-warn-bg);
-  --warning-border: color-mix(in srgb, var(--color-warn) 30%, transparent);
-  --warning-text: var(--color-warn);
-  --error-bg: var(--color-danger-bg);
-  --error-border: color-mix(in srgb, var(--color-danger) 30%, transparent);
-  --error-text: var(--color-danger);
-  --info-bg: var(--color-brand-50);
-  --info-border: var(--color-brand-100);
-  --info-text: var(--color-brand-700);
+  --normal-bg: var(--vms-surface-elevated);
+  --normal-border: var(--vms-border);
+  --normal-text: var(--vms-ink);
+  --success-bg: var(--vms-ok-bg);
+  --success-border: color-mix(in srgb, var(--vms-ok) 30%, transparent);
+  --success-text: var(--vms-ok);
+  --warning-bg: var(--vms-warn-bg);
+  --warning-border: color-mix(in srgb, var(--vms-warn) 30%, transparent);
+  --warning-text: var(--vms-warn);
+  --error-bg: var(--vms-danger-bg);
+  --error-border: color-mix(in srgb, var(--vms-danger) 30%, transparent);
+  --error-text: var(--vms-danger);
+  --info-bg: var(--vms-brand-50);
+  --info-border: var(--vms-brand-100);
+  --info-text: var(--vms-brand-700);
   --border-radius: 0.75rem;
   font-family: var(--font-sans);
 }
@@ -145,8 +237,9 @@ body {
   text-align: center;
   line-height: 1.15;
 }
+/* Fixed colours, not theme tokens: the preview must look like the white card in both themes. */
 .badge-screen .badge-card {
-  border: 1px solid var(--color-border);
+  border: 1px solid #dde3ea;
   border-radius: 3mm;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
 }

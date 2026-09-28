@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronDown, MapPin } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Alert } from "@/components/ui/Alert";
@@ -25,11 +26,15 @@ export function GatePicker() {
   return (
     <>
       {me.session.gate && (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-ink-muted">Gate:</span>
-          <span className="font-semibold text-ink" data-testid="current-gate">{me.session.gate.name}</span>
-          <Button variant="ghost" className="min-h-8 px-2 py-1" onClick={() => setChanging(true)}>Change</Button>
-        </div>
+        <button type="button" onClick={() => setChanging(true)}
+                className="inline-flex min-h-11 max-w-[8rem] items-center gap-2 rounded-xl border border-border bg-surface px-3
+                  text-sm transition-colors hover:bg-surface-subtle sm:max-w-[16rem]">
+          <MapPin aria-hidden="true" className="size-4 shrink-0 text-ink-muted" />
+          <span className="sr-only text-ink-muted sm:not-sr-only">Gate:</span>
+          <span className="truncate font-semibold text-ink" data-testid="current-gate">{me.session.gate.name}</span>
+          <span className="sr-only">, change gate</span>
+          <ChevronDown aria-hidden="true" className="hidden size-4 shrink-0 text-ink-subtle sm:block" />
+        </button>
       )}
       <Modal open={open} title="Which gate are you at?" dismissible={!required}
              onClose={() => { if (!required) setChanging(false); }}>

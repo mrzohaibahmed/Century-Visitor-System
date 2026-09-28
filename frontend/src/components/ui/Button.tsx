@@ -5,9 +5,9 @@ type Variant = "primary" | "secondary" | "danger" | "ghost";
 type Size = "sm" | "md" | "lg";
 
 const VARIANTS: Record<Variant, string> = {
-  primary: "bg-brand-600 text-white shadow-card hover:bg-brand-700 disabled:bg-brand-600/60 disabled:shadow-none",
+  primary: "bg-brand-600 text-white shadow-card hover:bg-brand-hover disabled:bg-brand-600/60 disabled:shadow-none",
   secondary: "border border-border-strong bg-surface text-ink shadow-card hover:bg-surface-subtle disabled:text-ink-muted disabled:shadow-none",
-  danger: "bg-danger text-white shadow-card hover:bg-danger/90 disabled:bg-danger/60 disabled:shadow-none",
+  danger: "bg-danger-solid text-white shadow-card hover:bg-danger-solid/90 disabled:bg-danger-solid/60 disabled:shadow-none",
   ghost: "text-ink-muted hover:bg-canvas hover:text-ink disabled:text-ink-muted/60",
 };
 

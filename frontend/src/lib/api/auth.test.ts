@@ -26,6 +26,6 @@ describe("navItemsFor", () => {
 
   it("gives guards the gate work pages and hides administration pages", () => {
     expect(navItemsFor("GUARD").map((i) => i.href)).toEqual(
-      ["/dashboard", "/check-in", "/check-out", "/visitors", "/visits"]);
+      ["/dashboard", "/check-in", "/check-out", "/visitors", "/visits", "/notifications"]);
   });
 });

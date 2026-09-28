@@ -1,5 +1,8 @@
 "use client";
 
+import { Activity, RefreshCw } from "lucide-react";
+
+import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import type { SystemHealth } from "@/hooks/useSystemHealth";
@@ -29,15 +32,13 @@ export function SystemStatusCard({ health }: { health: SystemHealth }) {
   return (
     <Card
       title="System status"
+      icon={<Activity />}
       description={checkedAt ? `Last checked ${checkedAt.toLocaleTimeString()}` : "Checking the server…"}
       actions={
-        <button
-          type="button"
-          onClick={refresh}
-          className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
-        >
+        <Button variant="secondary" onClick={refresh} className="shrink-0">
+          <RefreshCw aria-hidden="true" />
           Check again
-        </button>
+        </Button>
       }
     >
       <div className="mb-4">

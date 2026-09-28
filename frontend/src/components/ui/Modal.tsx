@@ -31,8 +31,8 @@ export function Modal({ open, title, description, onClose, dismissible = true, c
       aria-labelledby={`${id}-title`}
       aria-describedby={description ? `${id}-description` : undefined}
       onCancel={(e) => { e.preventDefault(); if (dismissible) onClose(); }}
-      className="m-auto max-h-[90vh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-0
-        text-ink shadow-overlay backdrop:bg-brand-900/40 open:animate-dialog-in"
+      className="m-auto max-h-[90vh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface-elevated p-0
+        text-ink shadow-overlay backdrop:bg-overlay open:animate-dialog-in"
     >
       {open && (
         <div className="p-6">

@@ -24,7 +24,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-brand-900 px-4">
       <div className="w-full max-w-sm rounded-2xl bg-surface p-8 shadow-xl">
-        <p className="text-xs font-bold tracking-widest text-brand-600">CENTURY GATE</p>
+        <p className="text-xs font-bold tracking-widest text-brand-700">CENTURY GATE</p>
         <h1 className="mt-1 text-2xl font-bold text-ink">Visitor Management</h1>
         <p className="mt-1 mb-6 text-sm text-ink-muted">Log in to continue.</p>
         <LoginForm next={next} notice={reason} />

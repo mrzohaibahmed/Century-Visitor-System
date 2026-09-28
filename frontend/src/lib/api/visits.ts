@@ -104,6 +104,10 @@ export function visitQuery(filters: VisitFilters, cursor?: string | null): strin
   return text ? `?${text}` : "";
 }
 
-export function listVisits(filters: VisitFilters, cursor?: string | null, signal?: AbortSignal): Promise<Page<Visit>> {
-  return apiRequest<Page<Visit>>(`/visits${visitQuery(filters, cursor)}`, { signal });
+/** `limit`: page size (the API allows up to 100; it defaults to 25). */
+export function listVisits(filters: VisitFilters, cursor?: string | null, signal?: AbortSignal,
+                           limit?: number): Promise<Page<Visit>> {
+  const query = visitQuery(filters, cursor);
+  const sized = limit ? `${query}${query ? "&" : "?"}limit=${limit}` : query;
+  return apiRequest<Page<Visit>>(`/visits${sized}`, { signal });
 }

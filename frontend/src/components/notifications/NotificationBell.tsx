@@ -1,5 +1,6 @@
 "use client";
 
+import { Bell } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -88,15 +89,12 @@ export function NotificationBell() {
     <div className="relative" ref={panel}>
       <button type="button" aria-label={label} aria-expanded={open} aria-haspopup="true"
               onClick={() => { setOpen(!open); if (!open) void load(); }}
-              className="relative rounded-lg p-2 text-ink-muted hover:bg-canvas hover:text-ink">
-        <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8"
-             strokeLinecap="round" strokeLinejoin="round">
-          <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-          <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-        </svg>
+              className="relative inline-flex size-11 items-center justify-center rounded-xl border border-border bg-surface
+                text-ink-muted transition-colors hover:bg-surface-subtle hover:text-ink">
+        <Bell aria-hidden="true" className="size-5" />
         {unread > 0 && (
           <span data-testid="notification-count"
-                className="absolute -right-0.5 -top-0.5 min-w-5 rounded-full bg-danger px-1.5 text-center text-xs font-bold leading-5 text-white">
+                className="absolute -top-1.5 -right-1.5 min-w-5 rounded-full bg-danger-solid px-1.5 text-center text-xs leading-5 font-bold text-white ring-2 ring-canvas">
             {unread > 99 ? "99+" : unread}
           </span>
         )}
@@ -104,7 +102,7 @@ export function NotificationBell() {
 
       {open && (
         <div role="dialog" aria-label="Notifications"
-             className="absolute right-0 z-20 mt-2 w-96 max-w-[90vw] overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
+             className="absolute right-0 z-40 mt-2 w-96 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-surface-elevated shadow-overlay">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold text-ink">Notifications</h2>
             {unread > 0 && (
