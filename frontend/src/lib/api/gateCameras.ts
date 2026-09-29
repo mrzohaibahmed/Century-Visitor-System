@@ -86,3 +86,17 @@ export async function captureTestPhoto(gateId: string): Promise<TestPhoto> {
   };
   return { blob, cameraSize: size("x-camera-width", "x-camera-height"), photoSize: size("x-photo-width", "x-photo-height") };
 }
+
+// ---------------------------------------------------------------- check-in (guards)
+// No gate or camera is ever named here: the server uses the camera of this session's gate.
+
+/** Whether this session's gate has a camera for visitor photos. Does not contact the camera. */
+export function sessionGateCamera(): Promise<{ available: boolean }> {
+  return apiRequest<{ available: boolean }>("/gate-camera");
+}
+
+/** A preview picture from this session's gate camera. Not stored: "Use this photo" uploads it
+ *  like a webcam photo (uploadVisitorPhoto → POST /visitors/{id}/photo). */
+export async function captureGateCameraPhoto(): Promise<Blob> {
+  return (await apiBlob("/gate-camera/snapshot", { method: "POST" })).blob;
+}

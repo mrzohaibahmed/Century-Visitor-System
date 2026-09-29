@@ -1,7 +1,11 @@
-"""Gate cameras (administrators only): settings per gate, connection test and test photo.
+"""Gate cameras.
 
-The camera password can be set here but is never returned. Tests use the saved settings and never
-store a picture. Guards do not use these routes (check-in capture comes in a later step).
+/gate-cameras (administrators): settings per gate, connection test and test photo. The camera
+password can be set here but is never returned. Tests use the saved settings and never store a picture.
+
+/gate-camera (anyone who takes visitor photos): the camera of the SESSION's gate, for check-in. These
+routes take no gate or camera parameters: the server picks the camera from the session. The picture
+is a preview; storing it is the normal visitor photo upload (POST /visitors/{id}/photo).
 """
 from fastapi import APIRouter, Depends, Request, Response
 
@@ -10,12 +14,33 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.permissions import Permission
 from app.db.client import Database
-from app.schemas.gate_cameras import CameraTestOut, GateCameraIn, GateCameraOut
+from app.schemas.gate_cameras import CameraTestOut, GateCameraIn, GateCameraOut, SessionCameraOut
 from app.services import camera_settings as svc
 from app.services.auth import AuthContext
 
 router = APIRouter(prefix="/gate-cameras", tags=["gate cameras"])
 manage = require(Permission.SETTINGS_MANAGE)
+
+session_router = APIRouter(prefix="/gate-camera", tags=["gate cameras"])
+capture = require(Permission.PHOTO_CAPTURE)
+
+
+@session_router.get("", response_model=SessionCameraOut)
+async def session_gate_camera(ctx: AuthContext = Depends(capture), database: Database = Depends(get_database),
+                              settings: Settings = Depends(get_settings)) -> SessionCameraOut:
+    """Whether this session's gate has a camera to take visitor photos with. Does not contact the camera."""
+    return SessionCameraOut(available=await svc.session_camera(database.db, settings, ctx) is not None)
+
+
+@session_router.post("/snapshot", response_class=Response,
+                     responses={200: {"content": {"image/jpeg": {}}, "description": "A preview; not stored"}})
+async def session_gate_camera_snapshot(ctx: AuthContext = Depends(capture), database: Database = Depends(get_database),
+                                       settings: Settings = Depends(get_settings)) -> Response:
+    """One picture from this session's gate camera, as a preview. Not stored: "Use this photo"
+    uploads it with POST /visitors/{id}/photo like a webcam picture."""
+    photo = await svc.capture_for_session(database.db, settings, ctx)
+    return Response(content=photo.data, media_type=photo.content_type,
+                    headers={"Cache-Control": "no-store, private", "Content-Disposition": "inline"})
 
 
 @router.get("", response_model=list[GateCameraOut])

@@ -72,6 +72,12 @@ class GateCameraOut(BaseModel):
                    if last else None)
 
 
+class SessionCameraOut(BaseModel):
+    """For check-in: whether the session's gate has a usable camera. Nothing about the camera itself."""
+
+    available: bool
+
+
 class CameraTestOut(BaseModel):
     status: Literal["CONNECTED", "FAILED"]
     tested_at: datetime

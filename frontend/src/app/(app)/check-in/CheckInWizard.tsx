@@ -8,6 +8,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { BadgePreview } from "@/components/badge/VisitorBadge";
 import { CameraCapture } from "@/components/camera/CameraCapture";
+import { GateCameraCapture } from "@/components/camera/GateCameraCapture";
 import { Alert } from "@/components/ui/Alert";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button, ButtonLink } from "@/components/ui/Button";
@@ -23,6 +24,7 @@ import { IdentityInput } from "@/components/visits/IdentityInput";
 import { VisitorPhoto } from "@/components/visits/VisitorPhoto";
 import { ApiError, errorMessage, fieldErrors } from "@/lib/api/client";
 import { type Department, listDepartments } from "@/lib/api/directory";
+import { sessionGateCamera } from "@/lib/api/gateCameras";
 import { type IssuedPass, issuePass } from "@/lib/api/passes";
 import { uploadVisitorPhoto } from "@/lib/api/photos";
 import {
@@ -712,6 +714,18 @@ export function PhotoStep({ visitor, capturedPhotoId = null, onCaptured, onBack,
   // While a photo is saving, Back / Continue without would be overtaken by the upload moving on to review.
   const [uploading, setUploading] = useState(false);
   const thisVisit = visitor.photo_id != null && visitor.photo_id === capturedPhotoId;
+  // The gate's fixed camera, when this session's gate has one; the webcam otherwise, or when chosen.
+  // Asking does not contact the camera; any problem simply means the webcam, as before.
+  const [gateCamera, setGateCamera] = useState<"checking" | "available" | "none">("checking");
+  const [source, setSource] = useState<"gate" | "webcam">("gate");
+
+  useEffect(() => {
+    let current = true;
+    sessionGateCamera()
+      .then((r) => { if (current) setGateCamera(r.available ? "available" : "none"); })
+      .catch(() => { if (current) setGateCamera("none"); });
+    return () => { current = false; };
+  }, []);
 
   async function upload(photo: Blob) {
     setUploading(true);
@@ -748,8 +762,25 @@ export function PhotoStep({ visitor, capturedPhotoId = null, onCaptured, onBack,
               </Button>
             </div>
           </div>
+        ) : gateCamera === "checking" ? (
+          <div role="status" className="mx-auto aspect-[4/3] w-full max-w-lg">
+            <span className="sr-only">Checking for a gate camera…</span>
+            <Skeleton className="size-full rounded-2xl" />
+          </div>
+        ) : gateCamera === "available" && source === "gate" ? (
+          <GateCameraCapture onConfirm={upload} onUseWebcam={() => setSource("webcam")} />
         ) : (
-          <CameraCapture onConfirm={upload} />
+          <div className="space-y-3">
+            <CameraCapture onConfirm={upload} />
+            {gateCamera === "available" && (
+              <div className="flex justify-center">
+                <Button variant="ghost" onClick={() => setSource("gate")}>
+                  <Camera aria-hidden="true" />
+                  Use the gate camera instead
+                </Button>
+              </div>
+            )}
+          </div>
         )}
         <div className="flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:justify-between">
           <Button variant="secondary" size="lg" onClick={onBack} disabled={uploading}>

@@ -10,6 +10,7 @@ import { installCamera } from "@/test-utils/camera";
 const api = {
   lookupVisitor: vi.fn(), createVisitor: vi.fn(), getVisitor: vi.fn(), checkIn: vi.fn(), checkOut: vi.fn(),
   listHosts: vi.fn(), listDepartments: vi.fn(), issuePass: vi.fn(), recordBadgePrint: vi.fn(), uploadVisitorPhoto: vi.fn(),
+  sessionGateCamera: vi.fn(), captureGateCameraPhoto: vi.fn(),
 };
 vi.mock("@/lib/api/visitors", async (original) => ({
   ...(await original<typeof import("@/lib/api/visitors")>()),
@@ -30,6 +31,11 @@ vi.mock("@/lib/api/passes", async (original) => ({
 vi.mock("@/lib/api/photos", async (original) => ({
   ...(await original<typeof import("@/lib/api/photos")>()),
   uploadVisitorPhoto: (...a: unknown[]) => api.uploadVisitorPhoto(...a),
+}));
+vi.mock("@/lib/api/gateCameras", async (original) => ({
+  ...(await original<typeof import("@/lib/api/gateCameras")>()),
+  sessionGateCamera: (...a: unknown[]) => api.sessionGateCamera(...a),
+  captureGateCameraPhoto: (...a: unknown[]) => api.captureGateCameraPhoto(...a),
 }));
 vi.mock("@/lib/api/directory", () => ({
   listHosts: (...a: unknown[]) => api.listHosts(...a),
@@ -74,6 +80,7 @@ beforeEach(() => {
   api.listHosts.mockResolvedValue([HOST]);
   api.listDepartments.mockResolvedValue([{ id: "d1", name: "HR", notification_email: null, is_active: true }]);
   api.issuePass.mockResolvedValue(ISSUED);
+  api.sessionGateCamera.mockResolvedValue({ available: false });          // no gate camera: the webcam, as before
 });
 afterEach(cleanup);
 
@@ -273,6 +280,7 @@ describe("CheckInWizard photo, pass and badge", () => {
     fireEvent.change(screen.getByLabelText("Reason for visit"), { target: { value: "INTERVIEW" } });
     fireEvent.click(screen.getByRole("button", { name: "Review" }));
     await screen.findByText("Visitor photo");
+    await waitFor(() => expect(screen.queryByText("Checking for a gate camera…")).toBeNull());
   }
 
   it("captures and uploads a photo, and records it with the visit", async () => {
@@ -392,5 +400,103 @@ describe("CheckInWizard photo, pass and badge", () => {
     expect(screen.getByTestId("visit-number").textContent).toBe("V-2026-000042");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByTestId("badge-card")).toBeTruthy();
+  });
+});
+
+describe("CheckInWizard photo from the gate camera", () => {
+  async function toPhotoStep(found: VisitorWithStatus = CLEAR) {
+    api.lookupVisitor.mockResolvedValue(found);
+    findVisitor();
+    fireEvent.click(await screen.findByRole("button", { name: /Sara Ahmed/ }));
+    fireEvent.change(screen.getByLabelText("Reason for visit"), { target: { value: "INTERVIEW" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    await screen.findByText("Visitor photo");
+  }
+  const picture = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], { type: "image/jpeg" });
+
+  beforeEach(() => {
+    api.sessionGateCamera.mockResolvedValue({ available: true });
+    URL.createObjectURL = vi.fn(() => "blob:gate-1");
+    URL.revokeObjectURL = vi.fn();
+  });
+
+  it("offers the gate camera first; its photo goes through the normal upload into the check-in", async () => {
+    api.captureGateCameraPhoto.mockResolvedValue(picture);
+    api.uploadVisitorPhoto.mockResolvedValue({ id: "p1", captured_at: "", width: 1024, height: 576 });
+    api.checkIn.mockResolvedValue({ ...VISIT, photo_id: "p1" });
+    await toPhotoStep();
+    expect(api.sessionGateCamera).toHaveBeenCalledWith();                     // the server picks the camera
+    fireEvent.click(await screen.findByRole("button", { name: "Take photo with gate camera" }));
+    expect(api.captureGateCameraPhoto).toHaveBeenCalledWith();
+    expect((await screen.findByTestId("gate-camera-photo")).getAttribute("src")).toBe("blob:gate-1");
+    expect(api.uploadVisitorPhoto).not.toHaveBeenCalled();                    // a preview is not a visitor photo
+    fireEvent.click(screen.getByRole("button", { name: "Use this photo" }));
+    await screen.findByRole("button", { name: "Confirm check-in" });
+    expect(api.uploadVisitorPhoto).toHaveBeenCalledWith("v1", picture);       // same upload as the webcam
+    expect(api.uploadVisitorPhoto).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm check-in" }));
+    await screen.findByTestId("visit-number");
+    expect(api.checkIn).toHaveBeenCalledWith(expect.objectContaining({ photo_id: "p1" }));
+  });
+
+  it("Retake takes a new picture without uploading anything", async () => {
+    api.captureGateCameraPhoto.mockResolvedValue(picture);
+    await toPhotoStep();
+    fireEvent.click(await screen.findByRole("button", { name: "Take photo with gate camera" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retake" }));
+    await screen.findByRole("button", { name: "Use this photo" });
+    expect(api.captureGateCameraPhoto).toHaveBeenCalledTimes(2);
+    expect(api.uploadVisitorPhoto).not.toHaveBeenCalled();
+  });
+
+  it("a failed gate camera never blocks the check-in: the webcam is one click away", async () => {
+    const camera = installCamera();
+    api.captureGateCameraPhoto.mockRejectedValue(new ApiError(502, "camera_timeout", "The camera did not answer in time."));
+    api.uploadVisitorPhoto.mockResolvedValue({ id: "p2", captured_at: "", width: 640, height: 480 });
+    await toPhotoStep();
+    fireEvent.click(await screen.findByRole("button", { name: "Take photo with gate camera" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("The camera did not answer in time.");
+    fireEvent.click(screen.getByRole("button", { name: "Use webcam" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start camera" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Take photo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this photo" }));
+    await screen.findByRole("button", { name: "Confirm check-in" });
+    expect(api.uploadVisitorPhoto).toHaveBeenCalledWith("v1", expect.any(Blob));
+    expect(camera.tracks.every((t) => t.stopped)).toBe(true);
+  });
+
+  it("can switch to the webcam and back without asking the camera", async () => {
+    installCamera();
+    await toPhotoStep();
+    fireEvent.click(await screen.findByRole("button", { name: "Use webcam" }));
+    expect(screen.getByRole("button", { name: "Start camera" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Use the gate camera instead" }));
+    expect(screen.getByRole("button", { name: "Take photo with gate camera" })).toBeTruthy();
+    expect(api.captureGateCameraPhoto).not.toHaveBeenCalled();
+  });
+
+  it("continue without a photo still works with a gate camera", async () => {
+    api.checkIn.mockResolvedValue(VISIT);
+    await toPhotoStep();
+    await screen.findByRole("button", { name: "Take photo with gate camera" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue without a photo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm check-in" }));
+    await screen.findByTestId("visit-number");
+    expect(api.checkIn).toHaveBeenCalledWith(expect.objectContaining({ photo_id: null }));
+    expect(api.captureGateCameraPhoto).not.toHaveBeenCalled();
+    expect(api.uploadVisitorPhoto).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no usable camera (none, disabled or unreadable)", () => api.sessionGateCamera.mockResolvedValue({ available: false })],
+    ["a refused check (403)", () => api.sessionGateCamera.mockRejectedValue(new ApiError(403, "forbidden", "No."))],
+    ["a network failure", () => api.sessionGateCamera.mockRejectedValue(new ApiError(0, "network_error", "Offline."))],
+  ])("with %s, the webcam is used exactly as before", async (_, setup) => {
+    setup();
+    await toPhotoStep();
+    expect(await screen.findByRole("button", { name: "Start camera" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /gate camera/ })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();                          // no broken camera UI
+    expect(api.captureGateCameraPhoto).not.toHaveBeenCalled();
   });
 });

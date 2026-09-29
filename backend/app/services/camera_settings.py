@@ -12,8 +12,13 @@ to another machine.
 
 Tests use the saved settings (the password is never sent back to the browser to test with). They
 never store a photo: the test picture is only checked with the same validation as visitor photos
-(core/images.normalize_photo) and returned. One test per gate at a time: repeated failed logins lock
-Hikvision accounts.
+(core/images.normalize_photo) and returned. One request per camera at a time (tests and check-in
+captures share the lock): repeated failed logins lock Hikvision accounts.
+
+Check-in capture (guards): the camera is the one of the SESSION's gate (services/auth.session_gate),
+never one named by the browser. The picture is returned as a preview only; the guard's "Use this
+photo" uploads it through the normal visitor photo endpoint (services/photos.capture), which stays
+the only way a visitor photo is stored.
 """
 import asyncio
 import logging
@@ -33,7 +38,7 @@ from app.db.transactions import run_in_transaction
 from app.services import audit
 from app.services import directory as directory_svc
 from app.services.audit import AuditAction, actor_from_user
-from app.services.auth import AuthContext, RequestMeta
+from app.services.auth import AuthContext, RequestMeta, session_gate
 from app.services.gate_camera import CameraConfig, CameraError, DeviceInfo, GateCameraClient
 
 log = logging.getLogger(__name__)
@@ -170,6 +175,53 @@ class CameraTestResult:
     device: DeviceInfo | None = None
     photo: NormalizedPhoto | None = None  # test picture as the VMS would keep it (never stored)
     camera_size: tuple[int, int] | None = None
+
+
+# ---------------------------------------------------------------- check-in capture (guards)
+UNAVAILABLE_AT_GATE = AppError(404, "gate_camera_unavailable",
+                               "This gate has no camera to use. Use the webcam, or continue without a photo.")
+UNUSABLE_AT_GATE = AppError(409, "gate_camera_unavailable",
+                            "The gate camera cannot be used right now. Use the webcam and tell the administrator.")
+CAMERA_BUSY = AppError(409, "gate_camera_busy", "The gate camera is busy. Try again in a moment.")
+
+
+async def session_camera(db: AsyncDatabase, settings: Settings, ctx: AuthContext) -> tuple[dict, dict] | None:
+    """(gate, camera settings) for the session's gate when its camera is switched on and has a usable
+    password; else None. Never contacts the camera."""
+    gate, _ = await session_gate(db, ctx.session)
+    if gate is None:
+        return None
+    doc = await db.settings.find_one({"_id": doc_id(gate["_id"])})
+    if doc is None or not doc.get("enabled") or password_status(doc, settings) != "SAVED":
+        return None
+    return gate, doc
+
+
+async def capture_for_session(db: AsyncDatabase, settings: Settings, ctx: AuthContext) -> NormalizedPhoto:
+    """One picture from the session's gate camera, checked and scaled like a visitor photo (so the
+    upload that follows accepts it), returned as a preview. Nothing is stored here."""
+    found = await session_camera(db, settings, ctx)
+    if found is None:
+        raise UNAVAILABLE_AT_GATE
+    gate, _ = found
+    lock = _testing.setdefault(gate["_id"], asyncio.Lock())
+    if lock.locked():
+        raise CAMERA_BUSY
+    async with lock:
+        try:
+            client = await client_for(db, settings, gate["_id"])
+        except AppError:                                  # key missing / password unreadable: admin wording
+            raise UNUSABLE_AT_GATE from None
+        try:
+            shot = await asyncio.to_thread(client.capture_snapshot)
+        except CameraError as e:
+            raise AppError(502, e.code.value.lower(), e.message) from None
+        try:
+            return await asyncio.to_thread(normalize_photo, shot.data)
+        except InvalidImageError:
+            raise AppError(502, "camera_image_unusable",
+                           "The gate camera's picture cannot be used. Use the webcam and tell the administrator.") \
+                from None
 
 
 async def _run_test(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta, gate_id: str,
