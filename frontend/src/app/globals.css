@@ -37,6 +37,13 @@
   --text-heading--font-weight: 600;
   --text-heading--letter-spacing: -0.01em;
 
+  /* Century gold, from the crest (Logo/). Same in both themes: use it on the brand navy
+     (gold-400 on #0f1b2d is 8.6:1), for accents and the login's primary button, never as body text on white. */
+  --color-gold-300: #e6c96a;
+  --color-gold-400: #d5b23a;
+  --color-gold-500: #b8942a;
+  --color-navy-950: #070b14;
+
   --animate-dialog-in: dialog-in 160ms ease-out;
   --animate-drawer-in: drawer-in 200ms ease-out;
   --animate-success-in: success-in 320ms cubic-bezier(0.2, 0.9, 0.3, 1.2);

@@ -1,7 +1,7 @@
 import { LoaderCircle } from "lucide-react";
 import Link from "next/link";
 
-type Variant = "primary" | "secondary" | "danger" | "ghost";
+type Variant = "primary" | "secondary" | "danger" | "ghost" | "gold";
 type Size = "sm" | "md" | "lg";
 
 const VARIANTS: Record<Variant, string> = {
@@ -9,6 +9,8 @@ const VARIANTS: Record<Variant, string> = {
   secondary: "border border-border-strong bg-surface text-ink shadow-card hover:bg-surface-subtle disabled:text-ink-muted disabled:shadow-none",
   danger: "bg-danger-solid text-white shadow-card hover:bg-danger-solid/90 disabled:bg-danger-solid/60 disabled:shadow-none",
   ghost: "text-ink-muted hover:bg-canvas hover:text-ink disabled:text-ink-muted/60",
+  // The brand gold (login): navy text on gold. Reserved for the one headline action of a branded screen.
+  gold: "bg-gold-400 text-brand-900 shadow-card hover:bg-gold-300 disabled:bg-gold-400/60 disabled:shadow-none",
 };
 
 /** md matches the text inputs (44 px); lg is for touch-first gate flows (check-in, check-out). */

@@ -2,12 +2,14 @@
 
 import {
   Bell, Building2, Cctv, Contact, DoorClosed, History, LayoutDashboard, LogIn, LogOut, type LucideIcon, Mail, ShieldAlert,
-  ShieldCheck, UserCog, Users,
+  UserCog, Users,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useId } from "react";
 
+import crest from "@/assets/century-crest.png";
 import { Tooltip } from "@/components/ui/Tooltip";
 import type { Role } from "@/lib/api/auth";
 import { isActive, NAV_GROUPS, type NavItem, navItemsFor } from "@/lib/navigation";
@@ -31,8 +33,10 @@ const ICONS: Record<string, LucideIcon> = {
 export function Brand({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand-600 text-white">
-        <ShieldCheck className="size-5" />
+      {/* The Century crest on the brand navy, as on the login page (the same in both themes). */}
+      <span aria-hidden="true"
+            className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-linear-160 from-brand-900 to-navy-950 ring-1 ring-gold-400/30">
+        <Image src={crest} alt="" sizes="36px" className="h-auto w-9" />
       </span>
       <span className={collapsed ? "sr-only" : "min-w-0 leading-tight"}>
         <span className="block truncate text-sm font-bold tracking-wide text-ink">Century Gate</span>

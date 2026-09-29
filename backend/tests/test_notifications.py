@@ -181,6 +181,61 @@ async def test_email_is_sent_once_with_safe_content(harness, settings, guard, di
     assert n["email"]["status"] == "SENT" and n["email"]["sent_at"] and n["email"]["attempts"] == 1
 
 
+DEPT_EMAIL = "hr-desk@century.test"
+
+
+async def _department_email(admin, directory, address=DEPT_EMAIL):
+    r = await admin.patch(f"/api/v1/departments/{directory['dep']['id']}", json={"notification_email": address})
+    assert r.status_code == 200, r.text
+
+
+async def test_the_department_is_emailed_too(harness, settings, admin, guard, directory):
+    await _department_email(admin, directory)
+    visit = await check_in(guard, directory)
+    dept = await harness.db.notifications.find_one({"type": "DEPARTMENT_VISITOR_ARRIVAL"})
+    assert dept["event_key"] == f"DEPARTMENT_VISITOR_ARRIVAL:{visit['id']}" and dept["recipient_user_id"] is None
+    assert dept["email"]["status"] == "PENDING" and dept["email"]["to"] == DEPT_EMAIL
+    with FakeSMTP(port=SMTP_PORT) as smtp:
+        assert await svc.dispatch_due(harness.db, settings) == 2
+    by_to = {m["To"]: m for m in smtp.messages}
+    assert set(by_to) == {HOST_EMAIL, DEPT_EMAIL}
+    text = by_to[DEPT_EMAIL].get_payload(0).get_payload(decode=True).decode()
+    assert "Dear HR team" in text and "Ali Khan has arrived at the gate to visit Sara Ahmed." in text
+    assert "Host: Sara Ahmed" in text and CNIC not in by_to[DEPT_EMAIL].as_string()
+    host_text = by_to[HOST_EMAIL].get_payload(0).get_payload(decode=True).decode()
+    assert "Dear Sara Ahmed" in host_text and "to visit you." in host_text
+    # The department's e-mail never shows under anyone's bell.
+    r = await admin.get(LIST)
+    assert [n["type"] for n in r.json()["items"]] == ["HOST_VISITOR_ARRIVAL"]
+
+
+async def test_the_department_is_emailed_for_an_unlisted_host(harness, admin, guard, directory):
+    await _department_email(admin, directory)
+    visitor = await new_visitor(guard)
+    r = await guard.post("/api/v1/visits", json={"visitor_id": visitor["id"], "unlisted_host_name": "Imran Ali",
+                                                 "department_id": directory["dep"]["id"], "reason_code": "DELIVERY"})
+    assert r.status_code == 201
+    n = await only_notification(harness.db)
+    assert n["type"] == "DEPARTMENT_VISITOR_ARRIVAL" and n["email"]["to"] == DEPT_EMAIL
+    assert n["host_id"] is None and n["data"]["host_name"] == "Imran Ali"
+
+
+async def test_the_department_is_not_emailed_twice_at_the_hosts_address(harness, admin, guard, directory):
+    await _department_email(admin, directory, HOST_EMAIL.upper())
+    await check_in(guard, directory)
+    n = await only_notification(harness.db)
+    assert n["type"] == "HOST_VISITOR_ARRIVAL"
+
+
+async def test_no_department_email_when_email_is_switched_off(harness, admin, guard, directory):
+    await _department_email(admin, directory)
+    visit = {"_id": ObjectId(), "visitor_id": ObjectId(), "check_in_at": datetime.now(UTC), "reason_code": "INTERVIEW",
+             "snapshot": {"visitor_name": "Ali Khan", "host_name": "Sara Ahmed"}}
+    department = {"_id": ObjectId(), "name": "HR", "notification_email": DEPT_EMAIL}
+    assert await svc.create_department_arrival(harness.db, make_settings(), visit, department, None,
+                                               session=None) is None
+
+
 async def test_a_refused_recipient_is_not_retried(harness, settings, guard, directory):
     await check_in(guard, directory)
     with FakeSMTP(mode="reject", port=SMTP_PORT):

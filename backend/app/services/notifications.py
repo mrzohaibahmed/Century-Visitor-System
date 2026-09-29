@@ -1,5 +1,5 @@
 """
-Notifications (Phase 6A): "your visitor has arrived", for the visit's host.
+Notifications (Phase 6A): "your visitor has arrived", for the visit's host and the visited department.
 
 Flow
     check-in transaction ── visit + audit + notification (all or nothing)
@@ -8,10 +8,14 @@ Flow
                                            │           Admin/Guard user); hosts themselves never log in
                                            └── e-mail: to the host's address, sent AFTER the check-in by
                                                        the background sender (EmailWorker)
+    check-in transaction ── department notification (e-mail only): to the visited department's
+                            "Notification email", for listed and unlisted hosts alike; skipped when it is
+                            the host's own address
 
 - The notification is written in the check-in transaction, so it exists exactly when the visit does:
   never for a check-in that failed, never lost if the API stops right after the check-in.
-- One notification per visit: event_key "HOST_VISITOR_ARRIVAL:<visit id>" is unique in the database.
+- One notification per visit and kind: event_key "HOST_VISITOR_ARRIVAL:<visit id>" (and
+  "DEPARTMENT_VISITOR_ARRIVAL:<visit id>") is unique in the database.
 - The check-in never waits for e-mail. The `notifications` collection is the e-mail queue:
   PENDING -> SENDING (claimed atomically, so several API processes never send the same e-mail)
   -> SENT, or back to PENDING for a retry (after 1, 5, 15 and 60 minutes), or FAILED after
@@ -40,6 +44,7 @@ from app.services.auth import AuthContext
 log = logging.getLogger(__name__)
 
 HOST_ARRIVAL = "HOST_VISITOR_ARRIVAL"
+DEPARTMENT_ARRIVAL = "DEPARTMENT_VISITOR_ARRIVAL"       # e-mail only, to the department's address
 RETRY_DELAYS = (timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=15), timedelta(minutes=60))
 MAX_ATTEMPTS = len(RETRY_DELAYS) + 1            # 5 attempts over about 81 minutes, then FAILED
 LEASE = timedelta(minutes=2)                     # longer than one SMTP attempt can take
@@ -80,6 +85,34 @@ async def create_host_arrival(db: AsyncDatabase, settings: Settings, visit: dict
                  "gate_name": snap.get("gate_name"), "department_name": snap.get("department_name"),
                  "reason_code": visit.get("reason_code"), "check_in_at": visit["check_in_at"]},
         "created_at": now, "read_at": None, "email": email,
+    }
+    doc["_id"] = (await db.notifications.insert_one(doc, session=session)).inserted_id
+    return doc
+
+
+async def create_department_arrival(db: AsyncDatabase, settings: Settings, visit: dict, department: dict,
+                                    host: dict | None, session: AsyncClientSession) -> dict | None:
+    """Called inside the check-in transaction for every visit, listed host or not. E-mail only, to the
+    visited department's notification address. Returns None when there is nothing to send: no address,
+    e-mail switched off, or the same address as the host's (who is e-mailed already)."""
+    address = department.get("notification_email")
+    if not address:
+        return None
+    if host and (host.get("email") or "").strip().lower() == address.strip().lower():
+        return None
+    if not await email_settings.active(db, settings, session=session):
+        return None
+
+    now = visit["check_in_at"]
+    snap = visit["snapshot"]
+    doc = {
+        "event_key": f"{DEPARTMENT_ARRIVAL}:{visit['_id']}", "type": DEPARTMENT_ARRIVAL, "recipient_user_id": None,
+        "visit_id": visit["_id"], "visitor_id": visit["visitor_id"], "host_id": visit.get("host_id"),
+        "data": {"visitor_name": snap["visitor_name"], "host_name": snap.get("host_name"),
+                 "gate_name": snap.get("gate_name"), "department_name": snap.get("department_name"),
+                 "reason_code": visit.get("reason_code"), "check_in_at": visit["check_in_at"]},
+        "created_at": now, "read_at": None,
+        "email": {"status": "PENDING", "to": address, "attempts": 0, "next_attempt_at": now},
     }
     doc["_id"] = (await db.notifications.insert_one(doc, session=session)).inserted_id
     return doc
@@ -168,7 +201,9 @@ async def dispatch_due(db: AsyncDatabase, settings: Settings, *, send=email_svc.
                 raise email_svc.EmailError(unusable.lower(), permanent=False, reason=unusable)
             if config is None:                        # switched off since the e-mail was queued
                 raise email_svc.EmailError("email_disabled", permanent=True, reason="EMAIL_NOT_CONFIGURED")
-            message = email_svc.host_arrival_message(settings, config, doc["email"]["to"], doc["data"])
+            build = (email_svc.department_arrival_message if doc["type"] == DEPARTMENT_ARRIVAL
+                     else email_svc.host_arrival_message)
+            message = build(settings, config, doc["email"]["to"], doc["data"])
             await asyncio.wait_for(asyncio.to_thread(send, config, message),
                                    timeout=config.timeout_seconds + 10)
         except Exception as error:                   # noqa: BLE001 - one bad message never stops the queue

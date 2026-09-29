@@ -60,7 +60,7 @@ export function LoginForm({ next, notice }: { next: string; notice?: string }) {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
       />
-      <Button type="submit" loading={submitting} disabled={!ready} className="w-full">
+      <Button type="submit" variant="gold" size="lg" loading={submitting} disabled={!ready} className="w-full">
         {submitting ? "Logging in…" : "Log in"}
       </Button>
     </form>

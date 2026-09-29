@@ -6,7 +6,7 @@ Validators check the essentials (required fields, types, enums) as a last line
 of defence; full validation happens in the API's Pydantic models. Each index
 names the query or constraint it exists for.
 
-Notifications (Phase 6A): host-arrival notifications; the collection is also the queue
+Notifications (Phase 6A): host- and department-arrival notifications; the collection is also the queue
 of emails still to send (see services/notifications.py).
 
 Photos (Phase 4): the image files live in a private folder on the API server
@@ -43,7 +43,7 @@ OPTIONAL_TEXT = {"bsonType": ["string", "null"]}
 BOOL = {"bsonType": "bool"}
 SHA256_HEX = {"bsonType": "string", "pattern": "^[0-9a-f]{64}$"}
 PHOTO_TYPES = ["image/jpeg"]           # every upload is re-encoded to JPEG
-NOTIFICATION_TYPES = ["HOST_VISITOR_ARRIVAL"]
+NOTIFICATION_TYPES = ["HOST_VISITOR_ARRIVAL", "DEPARTMENT_VISITOR_ARRIVAL"]
 # NONE: nobody to e-mail (host without address) or e-mail switched off (no SMTP server configured).
 EMAIL_STATES = ["NONE", "PENDING", "SENDING", "SENT", "FAILED"]
 
@@ -257,7 +257,8 @@ COLLECTIONS: list[CollectionSpec] = [
     CollectionSpec(
         "notifications",
         _schema(["event_key", "type", "created_at", "data", "email"], {
-            # One notification per event, enforced by a unique index: "HOST_VISITOR_ARRIVAL:<visit id>".
+            # One notification per event, enforced by a unique index: "HOST_VISITOR_ARRIVAL:<visit id>",
+            # "DEPARTMENT_VISITOR_ARRIVAL:<visit id>" (e-mail only, to departments.notification_email).
             "event_key": TEXT,
             "type": {"enum": NOTIFICATION_TYPES},
             "recipient_user_id": OPTIONAL_OBJECT_ID,        # in-app recipient (host's linked app account)

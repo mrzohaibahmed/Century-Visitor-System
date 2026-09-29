@@ -37,7 +37,7 @@ const CONFIG: Record<DirectoryKind, { singular: string; fields: Field[] }> = {
     fields: [
       { name: "name", label: "Name", required: true },
       { name: "notification_email", label: "Notification email", type: "email",
-        hint: "Optional. Used for visitor notifications in a later phase." },
+        hint: "Optional. Receives an e-mail whenever a visitor checks in to this department." },
     ],
   },
   hosts: {

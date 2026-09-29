@@ -22,7 +22,7 @@ async def check_in(body: CheckInRequest, request: Request,
     visit = await svc.check_in(database.db, settings, ctx, request_meta(request), body)
     worker = getattr(request.app.state, "email_worker", None)
     if worker is not None:
-        worker.wake()                  # send the host's e-mail now; the check-in does not wait for it
+        worker.wake()                  # send the host's and department's e-mails now; the check-in does not wait for it
     return VisitOut.from_doc(visit)
 
 

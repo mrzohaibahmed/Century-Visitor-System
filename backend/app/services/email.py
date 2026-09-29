@@ -1,5 +1,5 @@
 """
-E-mail to hosts: the host-arrival message and its delivery over SMTP.
+E-mail to hosts and departments: the arrival messages and their delivery over SMTP.
 
 Standard library only (smtplib / email). Blocking: call send() via asyncio.to_thread.
 Generic SMTP for any provider: only host, port, security, user name and password decide how mail is
@@ -118,17 +118,18 @@ def verification_message(settings: Settings, config: SmtpConfig, to: str) -> Ema
     return message
 
 
-def host_arrival_message(settings: Settings, config: SmtpConfig, to: str, data: dict) -> EmailMessage:
+def _arrival_message(settings: Settings, config: SmtpConfig, to: str, data: dict, *, greeting: str,
+                     visiting: str, extra_rows: tuple = ()) -> EmailMessage:
     visitor = data.get("visitor_name") or "Your visitor"
-    rows = [("Visitor", visitor), ("Arrived", _local(data["check_in_at"], settings)),
+    rows = [("Visitor", visitor), *extra_rows, ("Arrived", _local(data["check_in_at"], settings)),
             ("Gate", data.get("gate_name")), ("Department", data.get("department_name")),
             ("Reason", REASON_LABELS.get(data.get("reason_code") or "", None))]
     rows = [(label, value) for label, value in rows if value]
     org = settings.organization_name
 
     text = "\n".join([
-        f"Dear {data.get('host_name') or 'colleague'},", "",
-        f"{visitor} has arrived at the gate to visit you.", "",
+        f"Dear {greeting},", "",
+        f"{visitor} has arrived at the gate to visit {visiting}.", "",
         *[f"{label}: {value}" for label, value in rows], "",
         f"{org} visitor management. This message was sent automatically; please do not reply.",
     ])
@@ -137,7 +138,7 @@ def host_arrival_message(settings: Settings, config: SmtpConfig, to: str, data: 
                     f'<td style="padding:4px 0;font-weight:600;color:#111827">{e(str(value))}</td></tr>'
                     for label, value in rows)
     body = _template("host_arrival.html").substitute(
-        org_upper=e(org.upper()), org=e(org), host_name=e(data.get("host_name") or "colleague"),
+        org_upper=e(org.upper()), org=e(org), greeting=e(greeting), visiting=e(visiting),
         visitor=e(visitor), rows=table)
 
     message = EmailMessage()
@@ -146,6 +147,20 @@ def host_arrival_message(settings: Settings, config: SmtpConfig, to: str, data: 
     message.set_content(text)
     message.add_alternative(body, subtype="html")
     return message
+
+
+def host_arrival_message(settings: Settings, config: SmtpConfig, to: str, data: dict) -> EmailMessage:
+    return _arrival_message(settings, config, to, data, greeting=data.get("host_name") or "colleague",
+                            visiting="you")
+
+
+def department_arrival_message(settings: Settings, config: SmtpConfig, to: str, data: dict) -> EmailMessage:
+    """To the department's notification address: names the host being visited (listed or not)."""
+    department = data.get("department_name")
+    host = data.get("host_name")
+    return _arrival_message(settings, config, to, data,
+                            greeting=f"{department} team" if department else "colleagues",
+                            visiting=host or "your department", extra_rows=(("Host", host),))
 
 
 def _safe_code(error: Exception) -> str:

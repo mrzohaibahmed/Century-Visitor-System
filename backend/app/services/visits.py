@@ -127,6 +127,7 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
         if host is not None:
             # Same transaction: the notification exists exactly when the visit does. E-mail is sent later.
             await notifications_svc.create_host_arrival(db, settings, visit, host, session=s)
+        await notifications_svc.create_department_arrival(db, settings, visit, department, host, session=s)
 
     try:
         await run_in_transaction(db, work)

@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  Host-arrival e-mail (services/email.py). The dollar placeholders are filled with HTML-escaped values;
+  Arrival e-mail to a host or a department (services/email.py). The dollar placeholders are filled with HTML-escaped values;
   the rows placeholder is a pre-built, escaped table. Inline styles only: many mail programs ignore style blocks.
 -->
 <html>
@@ -15,8 +15,8 @@
         </tr>
         <tr>
           <td style="padding:24px">
-            <p style="margin:0 0 12px">Dear ${host_name},</p>
-            <p style="margin:0 0 16px;font-size:16px"><strong>${visitor}</strong> has arrived at the gate to visit you.</p>
+            <p style="margin:0 0 12px">Dear ${greeting},</p>
+            <p style="margin:0 0 16px;font-size:16px"><strong>${visitor}</strong> has arrived at the gate to visit ${visiting}.</p>
             <table role="presentation" cellpadding="0" cellspacing="0" style="font-size:14px">${rows}</table>
           </td>
         </tr>

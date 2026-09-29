@@ -180,6 +180,11 @@ When a visitor checks in for a **registered host** (a host from the directory):
   visit number or any internal id).
 - A host without a linked account and without an e-mail address, and a host typed in by hand at the gate
   (not in the directory), get nothing. Those visits stay flagged as "host not listed" for review.
+- **Department e-mail:** if the visited department has a **Notification email** (set on the **Departments**
+  page), that address also receives an arrival e-mail ("Dear HR team, Ali Khan has arrived at the gate to
+  visit Sara Ahmed"), for every check-in to that department, including hosts typed in by hand. It is a
+  separate e-mail, not a copy, and is skipped when the address is the host's own. It never appears under
+  the bell.
 
 **Reliability.** The notification is written in the same database transaction as the check-in, so it
 exists exactly when the visit does and is never created for a failed check-in. The check-in never waits for
@@ -196,8 +201,8 @@ slow or refusing only affects the e-mail's delivery state, never the gate.
 
 Retries after a temporary problem: 1, 5, 15 and 60 minutes later (5 attempts in about 81 minutes), then
 `FAILED`. Only a short error code is kept (e.g. `SMTPRecipientsRefused 550`, `ConnectionRefusedError`).
-**No duplicates:** each visit has exactly one notification (a unique key `HOST_VISITOR_ARRIVAL:<visit id>`
-in the database), and each e-mail is claimed by one sender at a time. If the service stops in the middle of
+**No duplicates:** each visit has at most one host notification and one department e-mail (unique keys
+`HOST_VISITOR_ARRIVAL:<visit id>` and `DEPARTMENT_VISITOR_ARRIVAL:<visit id>` in the database), and each e-mail is claimed by one sender at a time. If the service stops in the middle of
 sending, that e-mail is marked `FAILED` ("interrupted") rather than sent a second time.
 
 **Configuration.** Generic SMTP, for any provider (Gmail / Google Workspace, Microsoft 365, Yahoo, Zoho,
