@@ -33,6 +33,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/directory/departments", label: "Departments", roles: ["ADMIN"], group: "admin" },
   { href: "/directory/gates", label: "Gates", roles: ["ADMIN"], group: "admin" },
   { href: "/gate-cameras", label: "Gate cameras", roles: ["ADMIN"], group: "admin" },
+  { href: "/settings/email", label: "Email settings", roles: ["ADMIN"], group: "admin" },
   { href: "/users", label: "Users", roles: ["ADMIN"], group: "admin" },
 ];
 

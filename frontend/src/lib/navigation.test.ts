@@ -9,6 +9,12 @@ describe("navigation", () => {
     expect(navItemsFor("GUARD").some((i) => i.group === "admin")).toBe(false);
   });
 
+  it("lists Email settings for administrators only", () => {
+    expect(navItemsFor("ADMIN").find((i) => i.href === "/settings/email")).toMatchObject({ label: "Email settings", group: "admin" });
+    expect(navItemsFor("GUARD").some((i) => i.href.startsWith("/settings"))).toBe(false);
+    expect(sectionTitle("/settings/email")).toBe("Email settings");
+  });
+
   it("names the page in the top bar", () => {
     expect(sectionTitle("/gate-cameras")).toBe("Gate cameras");
   });
