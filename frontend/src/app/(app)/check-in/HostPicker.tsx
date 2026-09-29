@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
@@ -20,6 +20,10 @@ export function HostPicker({ value, onChange, error }: {
   const [q, setQ] = useState("");
   const [matches, setMatches] = useState<Host[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  // The button that was used (a match, or Change) disappears with the view: keep focus in the picker.
+  const container = useRef<HTMLDivElement>(null);
+  const moveFocus = useRef(false);
 
   useEffect(() => {
     if (value) return;
@@ -30,11 +34,22 @@ export function HostPicker({ value, onChange, error }: {
         .catch((e) => { if (!controller.signal.aborted) setLoadError(errorMessage(e)); });
     }, q ? 250 : 0);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [q, value]);
+  }, [q, value, attempt]);
+
+  useEffect(() => {
+    if (!moveFocus.current) return;
+    moveFocus.current = false;
+    container.current?.querySelector<HTMLElement>(value ? "button" : "input")?.focus();
+  }, [value]);
+
+  function choose(host: Host | null) {
+    moveFocus.current = true;
+    onChange(host);
+  }
 
   if (value) {
     return (
-      <div>
+      <div ref={container}>
         <p className="mb-1.5 text-sm font-medium text-ink">Host (person being visited)</p>
         <div className="flex min-h-14 items-center gap-3 rounded-xl border border-brand-200 bg-brand-50/60 py-2 pl-3 pr-2">
           <Avatar name={value.name} size="sm" />
@@ -42,7 +57,7 @@ export function HostPicker({ value, onChange, error }: {
             <p className="truncate font-semibold text-ink" data-testid="selected-host">{value.name}</p>
             {value.department_name && <p className="truncate text-sm text-ink-muted">{value.department_name}</p>}
           </div>
-          <Button type="button" variant="ghost" onClick={() => onChange(null)}>Change</Button>
+          <Button type="button" variant="ghost" onClick={() => choose(null)}>Change</Button>
         </div>
       </div>
     );
@@ -50,9 +65,14 @@ export function HostPicker({ value, onChange, error }: {
 
   const shown = matches?.slice(0, SHOWN) ?? [];
   return (
-    <div>
+    <div ref={container}>
       <TextField label="Host (person being visited)" value={q} onChange={(e) => setQ(e.target.value)} size="lg"
                  placeholder="Start typing a name" autoComplete="off" error={error ?? loadError ?? undefined} />
+      {loadError && (
+        <Button type="button" variant="secondary" className="mt-2" onClick={() => { setLoadError(null); setAttempt((n) => n + 1); }}>
+          Search again
+        </Button>
+      )}
       {matches === null && !loadError && (
         <div role="status" className="mt-2 space-y-2 rounded-xl border border-border p-3">
           <span className="sr-only">Loading hosts…</span>
@@ -71,12 +91,15 @@ export function HostPicker({ value, onChange, error }: {
           )}
           {shown.map((h) => (
             <li key={h.id}>
-              <button type="button" onClick={() => onChange(h)}
+              <button type="button" onClick={() => choose(h)}
                       className="flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left transition-colors hover:bg-surface-subtle
                         focus-visible:outline-offset-[-3px]">
                 <Avatar name={h.name} size="sm" />
-                <span className="min-w-0 flex-1 truncate font-medium text-ink">{h.name}</span>
-                <span className="shrink-0 text-sm text-ink-muted">{h.department_name ?? ""}</span>
+                {/* Stacked, so a long department never squeezes the name out on a phone. */}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-ink">{h.name}</span>
+                  {h.department_name && <span className="block truncate text-sm text-ink-muted">{h.department_name}</span>}
+                </span>
               </button>
             </li>
           ))}

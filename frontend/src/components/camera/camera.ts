@@ -6,7 +6,7 @@
  * at all, so production needs HTTPS (Phase 7).
  */
 
-export type CameraProblem = "insecure" | "unsupported" | "denied" | "no_camera" | "in_use" | "failed";
+export type CameraProblem = "insecure" | "unsupported" | "denied" | "no_camera" | "in_use" | "disconnected" | "failed";
 
 export const CAMERA_MESSAGES: Record<CameraProblem, string> = {
   insecure: "The camera only works when this system is opened over HTTPS. Ask the administrator.",
@@ -14,6 +14,7 @@ export const CAMERA_MESSAGES: Record<CameraProblem, string> = {
   denied: "Camera access was refused. Click the camera icon in the address bar, allow the camera, then try again.",
   no_camera: "No camera was found. Check that the webcam is plugged in.",
   in_use: "The camera is being used by another program. Close that program, then try again.",
+  disconnected: "The camera stopped working. Check that the webcam is plugged in, then try again.",
   failed: "The camera could not be started. Try again, or continue without it.",
 };
 

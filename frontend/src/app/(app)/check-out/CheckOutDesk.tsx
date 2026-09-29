@@ -487,7 +487,7 @@ function ReissueBadge({ visit, onClose }: { visit: Visit; onClose: () => void })
     return (
       <div className="space-y-4">
         <Alert tone="ok">New badge ready. The previous badge no longer works.</Alert>
-        <BadgePreview issued={issued} visitId={visit.id} />
+        <BadgePreview issued={issued} visitId={visit.id} photoId={visit.photo_id} />
         <div className="flex justify-end"><Button variant="secondary" size="lg" onClick={onClose}>Close</Button></div>
       </div>
     );

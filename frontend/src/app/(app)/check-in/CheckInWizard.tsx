@@ -1,7 +1,8 @@
 "use client";
 
 import {
-  ArrowLeft, ArrowRight, Camera, Check, ClipboardCheck, ClipboardList, IdCard, Pencil, Printer, RotateCcw, Search, UserPlus, Users,
+  ArrowLeft, ArrowRight, Camera, Check, ClipboardCheck, ClipboardList, IdCard, LogOut, Pencil, Printer, RotateCcw, Search,
+  ShieldAlert, ShieldX, TriangleAlert, UserPlus, Users,
 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
@@ -34,7 +35,7 @@ import {
   type VisitorWithStatus,
 } from "@/lib/api/visitors";
 import { checkIn, checkOut, reasonLabel, type Visit, VISIT_REASONS, type VisitReason } from "@/lib/api/visits";
-import { formatDateTime, formatTime, parseList } from "@/lib/format";
+import { formatDateTime, parseList } from "@/lib/format";
 
 import { type DraftErrors, EMPTY_DRAFT, effectiveDepartmentId, toCheckIn, validateDraft, type VisitDraft } from "./draft";
 import { HostPicker } from "./HostPicker";
@@ -91,8 +92,23 @@ export function CheckInWizard() {
     }
   }
 
+  // The button that moved the wizard on disappears with its step: put focus (and, on a phone, the
+  // scroll position) on the new step's heading. Identify and register focus their first field instead.
+  const container = useRef<HTMLDivElement>(null);
+  const shownStep = useRef(step.kind);
+  useEffect(() => {
+    if (shownStep.current === step.kind) return;
+    shownStep.current = step.kind;
+    if (step.kind === "identify" || step.kind === "register") return;
+    const heading = container.current?.querySelector<HTMLElement>("h2");
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus();
+    }
+  }, [step.kind]);
+
   return (
-    <div className="space-y-6">
+    <div ref={container} className="space-y-6">
       <Stepper steps={STEP_TITLES} current={stepIndex(step)} label="Check-in steps" />
 
       {step.kind === "identify" && (
@@ -119,9 +135,10 @@ export function CheckInWizard() {
       )}
       {step.kind === "review" && (
         <ReviewStep visitor={step.visitor} draft={draft} photoId={step.photoId}
-                    onBack={() => setStep({ kind: "photo", visitor: step.visitor })}
-                    // The upload already made this photo the visitor's current one on the server, so after
-                    // editing the details the photo step offers to keep it instead of asking for a retake.
+                    // The upload already made this photo the visitor's current one on the server, so going
+                    // back (directly, or through the details) offers to keep it instead of asking for a retake.
+                    onBack={() => setStep({ kind: "photo",
+                      visitor: { ...step.visitor, photo_id: step.photoId ?? step.visitor.photo_id } })}
                     onEditDetails={() => setStep({ kind: "details",
                       visitor: { ...step.visitor, photo_id: step.photoId ?? step.visitor.photo_id } })}
                     onDenied={(reason) => setStep({ kind: "blocked", name: step.visitor.full_name, reason })}
@@ -166,7 +183,7 @@ function IdentifyStep({ idType, idNumber, onType, onNumber, onFound, onNotRegist
     <Card title="Who is visiting?" description="Enter the ID number from the visitor's identity document."
           icon={<IdCard />} divided={false}>
       <form onSubmit={onSubmit} noValidate className="space-y-6">
-        {error && <Alert tone="danger">{error}</Alert>}
+        {error && <Alert tone="danger" title="The visitor could not be looked up">{error}</Alert>}
         <IdentityInput type={idType} number={idNumber} onType={onType} onNumber={onNumber} error={fieldError}
                        size="lg" autoFocus />
         <div className="flex justify-end">
@@ -226,7 +243,7 @@ function RegisterStep({ idType, idNumber, onBack, onRegistered }: {
     <Card title="New visitor" description="This ID number is not registered yet. Add the visitor's details."
           icon={<UserPlus />} divided={false}>
       <form onSubmit={onSubmit} noValidate className="space-y-6">
-        {error && <Alert tone="danger">{error}</Alert>}
+        {error && <Alert tone="danger" title="The visitor was not registered">{error}</Alert>}
         <div className="flex items-center gap-3 rounded-xl border border-border bg-surface-subtle px-4 py-3">
           <IdCard aria-hidden="true" className="size-5 shrink-0 text-ink-muted" />
           <p className="min-w-0">
@@ -240,7 +257,8 @@ function RegisterStep({ idType, idNumber, onBack, onRegistered }: {
         <TextField label="Phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} error={errors.phone}
                    size="lg" inputMode="tel" autoComplete="off" />
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
-          <Button type="button" variant="secondary" size="lg" onClick={onBack}>
+          {/* Not while registering: the result would move the wizard on from wherever Back led. */}
+          <Button type="button" variant="secondary" size="lg" onClick={onBack} disabled={saving}>
             <ArrowLeft aria-hidden="true" />
             Back
           </Button>
@@ -252,18 +270,36 @@ function RegisterStep({ idType, idNumber, onBack, onRegistered }: {
 }
 
 // ---------------------------------------------------------------- stops
+/** A watchlist match (at lookup, or refused by the server at confirmation): a hard stop, never a way on. */
 function BlockedStep({ name, reason, onDone }: { name: string; reason: string; onDone: () => void }) {
   return (
-    <Card title="Entry not permitted">
-      <div className="space-y-4" data-testid="entry-denied">
-        <Alert tone="danger">
-          <p className="font-semibold">{name} is on the watchlist and must not be admitted.</p>
-          {reason && <p className="mt-1">Reason: {reason}</p>}
-        </Alert>
-        <p className="text-sm text-ink-muted">Follow the security procedure and inform your supervisor. This attempt has been logged.</p>
-        <div className="flex justify-end"><Button onClick={onDone}>Done</Button></div>
+    <section role="alert" aria-labelledby="entry-denied-heading" data-testid="entry-denied"
+             className="overflow-hidden rounded-2xl border-2 border-danger/60 bg-surface shadow-card">
+      <div className="flex flex-col items-center gap-3 bg-danger-bg px-6 py-6 text-center sm:flex-row sm:text-left">
+        <span aria-hidden="true" className="flex size-14 shrink-0 items-center justify-center rounded-full bg-danger-solid text-white">
+          <ShieldX className="size-7" />
+        </span>
+        <div className="min-w-0">
+          <h2 id="entry-denied-heading" className="text-title text-danger">Entry not permitted</h2>
+          <p className="mt-1 text-base font-semibold break-words text-ink">{name} is on the watchlist and must not be admitted.</p>
+        </div>
       </div>
-    </Card>
+      <div className="space-y-5 px-6 py-5">
+        {reason && (
+          <div>
+            <p className="text-sm text-ink-muted">Reason</p>
+            <p className="mt-0.5 text-base font-medium break-words text-ink">{reason}</p>
+          </div>
+        )}
+        <div className="flex gap-3 rounded-xl border border-border bg-surface-subtle px-4 py-3">
+          <ShieldAlert aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-warn" />
+          <p className="text-sm text-ink">Follow the security procedure and inform your supervisor. This attempt has been logged.</p>
+        </div>
+        <div className="flex border-t border-border pt-5 sm:justify-end">
+          <Button variant="secondary" size="lg" onClick={onDone} className="w-full sm:w-auto">Done</Button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -290,19 +326,26 @@ function InsideStep({ visitor, onCancel, onCheckedOut }: {
   }
 
   return (
-    <Card title="Already inside">
-      <div className="space-y-4">
-        {error && <Alert tone="danger">{error}</Alert>}
+    <Card title="Already inside" description="This visitor has not been checked out from an earlier visit."
+          icon={<TriangleAlert />} divided={false}>
+      <div className="space-y-5">
+        {error && <Alert tone="danger" title="The previous visit was not checked out">{error}</Alert>}
+        <VisitorSummary visitor={visitor} />
         <Alert tone="warn">
           {visitor.full_name} is already checked in (visit <strong>{active.visit_number}</strong>, since{" "}
-          {formatTime(active.check_in_at)}{active.gate_name ? ` at ${active.gate_name}` : ""}).
+          {/* With the date: a visit left open can be days old. */}
+          {formatDateTime(active.check_in_at)}{active.gate_name ? ` at ${active.gate_name}` : ""}).
         </Alert>
         <p className="text-sm text-ink-muted">
           If they left without checking out, check that visit out first, then record the new visit.
         </p>
-        <div className="flex justify-between gap-2">
-          <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-          <Button onClick={() => void checkOutNow()} loading={saving}>Check out previous visit and continue</Button>
+        <div className="flex flex-col-reverse gap-3 border-t border-border pt-5 sm:flex-row sm:justify-between">
+          {/* Not while checking out: the result would move the wizard on from the restarted identify step. */}
+          <Button variant="secondary" size="lg" onClick={onCancel} disabled={saving}>Cancel</Button>
+          <Button size="lg" onClick={() => void checkOutNow()} loading={saving}>
+            {!saving && <LogOut aria-hidden="true" />}
+            Check out previous visit and continue
+          </Button>
         </div>
       </div>
     </Card>
@@ -329,7 +372,8 @@ function VisitorSummary({ visitor }: { visitor: Visitor }) {
 function FieldGroup({ legend, children }: { legend: string; children: React.ReactNode }) {
   return (
     <div className="border-t border-border pt-6">
-      <fieldset className="space-y-5">
+      {/* min-w-0: a fieldset is at least as wide as its content, so a long host name would widen the page. */}
+      <fieldset className="min-w-0 space-y-5">
         <legend className="text-sm font-semibold text-ink">{legend}</legend>
         {children}
       </fieldset>
@@ -345,6 +389,8 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
   onNext: () => void;
 }) {
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentsFailed, setDepartmentsFailed] = useState(false);
+  const [departmentsAttempt, setDepartmentsAttempt] = useState(0);
   const [errors, setErrors] = useState<DraftErrors>({});
   const set = (changes: Partial<VisitDraft>) => {
     const next = { ...draft, ...changes };
@@ -358,9 +404,11 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
 
   useEffect(() => {
     const controller = new AbortController();
-    listDepartments(false, controller.signal).then(setDepartments).catch(() => {});
+    listDepartments(false, controller.signal)
+      .then((list) => { setDepartments(list); setDepartmentsFailed(false); })
+      .catch(() => { if (!controller.signal.aborted) setDepartmentsFailed(true); });
     return () => controller.abort();
-  }, []);
+  }, [departmentsAttempt]);
 
   function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -392,6 +440,15 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
             <option value="">{hostDepartment ? `${hostDepartment} (host's department)` : "Choose a department"}</option>
             {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </SelectField>
+          {departmentsFailed && (
+            <div className="flex flex-col gap-3 rounded-xl border border-warn/25 bg-warn-bg px-4 py-3 sm:flex-row sm:items-center">
+              <p role="status" className="flex-1 text-sm text-warn">The list of departments could not be loaded.</p>
+              <Button type="button" variant="secondary" onClick={() => setDepartmentsAttempt((n) => n + 1)}>
+                <RotateCcw aria-hidden="true" />
+                Load again
+              </Button>
+            </div>
+          )}
         </FieldGroup>
         <FieldGroup legend="Purpose">
           <SelectField label="Reason for visit" value={draft.reason} error={errors.reason} size="lg"
@@ -439,12 +496,18 @@ function ReviewStep({ visitor, draft, photoId, onBack, onEditDetails, onDenied, 
   const [saving, setSaving] = useState(false);
   const [departments, setDepartments] = useState<Department[]>([]);
   const visitorHeading = useId();
+  const errorBox = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     listDepartments(false, controller.signal).then(setDepartments).catch(() => {});
     return () => controller.abort();
   }, []);
+
+  // The error sits above the details; on a phone Confirm is far below it, so bring it into view.
+  useEffect(() => {
+    if (error) errorBox.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [error]);
 
   async function confirm() {
     setError(null);
@@ -495,10 +558,12 @@ function ReviewStep({ visitor, draft, photoId, onBack, onEditDetails, onDenied, 
           icon={<ClipboardCheck />} divided={false}>
       <div className="space-y-6">
         {error && (
-          <Alert tone="danger" title="The visitor was not checked in">
-            <p>{error}</p>
-            {problems.length > 0 && <ul className="mt-1 list-disc pl-5">{problems.map((p) => <li key={p}>{p}</li>)}</ul>}
-          </Alert>
+          <div ref={errorBox} className="scroll-mt-24">
+            <Alert tone="danger" title="The visitor was not checked in">
+              <p>{error}</p>
+              {problems.length > 0 && <ul className="mt-1 list-disc pl-5">{problems.map((p) => <li key={p}>{p}</li>)}</ul>}
+            </Alert>
+          </div>
         )}
 
         <section aria-labelledby={visitorHeading} className="flex flex-col items-center gap-4 rounded-xl border border-border
@@ -644,12 +709,19 @@ export function PhotoStep({ visitor, capturedPhotoId = null, onCaptured, onBack,
   onNext: (photoId: string | null) => void;
 }) {
   const [retaking, setRetaking] = useState(!visitor.photo_id);
+  // While a photo is saving, Back / Continue without would be overtaken by the upload moving on to review.
+  const [uploading, setUploading] = useState(false);
   const thisVisit = visitor.photo_id != null && visitor.photo_id === capturedPhotoId;
 
   async function upload(photo: Blob) {
-    const { id } = await uploadVisitorPhoto(visitor.id, photo);
-    onCaptured?.(id);
-    onNext(id);
+    setUploading(true);
+    try {
+      const { id } = await uploadVisitorPhoto(visitor.id, photo);
+      onCaptured?.(id);
+      onNext(id);
+    } finally {
+      setUploading(false);
+    }
   }
 
   return (
@@ -680,11 +752,11 @@ export function PhotoStep({ visitor, capturedPhotoId = null, onCaptured, onBack,
           <CameraCapture onConfirm={upload} />
         )}
         <div className="flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:justify-between">
-          <Button variant="secondary" size="lg" onClick={onBack}>
+          <Button variant="secondary" size="lg" onClick={onBack} disabled={uploading}>
             <ArrowLeft aria-hidden="true" />
             Back
           </Button>
-          <Button variant="ghost" size="lg" onClick={() => onNext(null)}>Continue without a photo</Button>
+          <Button variant="ghost" size="lg" onClick={() => onNext(null)} disabled={uploading}>Continue without a photo</Button>
         </div>
       </div>
     </Card>
@@ -738,7 +810,7 @@ function PassCard({ visit }: { visit: Visit }) {
           <Skeleton className="h-[86mm] w-[54mm] rounded-[3mm]" />
         </div>
       )}
-      {issued && <BadgePreview issued={issued} visitId={visit.id} prominent />}
+      {issued && <BadgePreview issued={issued} visitId={visit.id} photoId={visit.photo_id} prominent />}
       <p className="text-sm text-ink-muted">Give the badge to the visitor. Its QR code is used at check-out.</p>
     </section>
   );

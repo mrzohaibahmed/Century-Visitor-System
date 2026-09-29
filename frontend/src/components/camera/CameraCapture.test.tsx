@@ -112,6 +112,18 @@ describe("CameraCapture", () => {
     expect(await screen.findByTestId("captured-photo")).toBeTruthy();
   });
 
+  it("explains a camera that stops while live, instead of leaving a frozen preview to capture", async () => {
+    const camera = installCamera();
+    render(<CameraCapture onConfirm={vi.fn()} />);
+    await startCamera();
+    act(() => (camera.tracks[0] as unknown as { onended: () => void }).onended());     // webcam unplugged
+    expect(await screen.findByText(CAMERA_MESSAGES.disconnected)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Take photo" })).toBeNull();
+    expect(camera.tracks[0].stopped).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Try the camera again" }));
+    expect(await screen.findByRole("button", { name: "Take photo" })).toBeTruthy();
+  });
+
   it("stops the camera when the component goes away", async () => {
     const camera = installCamera();
     const { unmount } = render(<CameraCapture onConfirm={vi.fn()} />);

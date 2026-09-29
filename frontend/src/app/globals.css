@@ -218,6 +218,14 @@ body {
  * Visitor badge (components/badge/VisitorBadge.tsx). BADGE SIZE: CR80 card,
  * 54 × 86 mm portrait. For other label stock change the two sizes below
  * (--badge-w / --badge-h and @page badge) and test on the real printer.
+ *
+ * Layout, top to bottom (content area 48 × 81.5 mm):
+ *   organisation + VISITOR band                 ~11 mm
+ *   photo 22 × 27.5 mm | name (≤ 3 lines; ≤ 4 smaller when long), visit number, gate
+ *   host / department / check-in                ~10 mm
+ *   QR code 26 × 26 mm (quiet zone included), footer (≤ 2 lines)
+ * Nothing may shrink and every text block is clamped, so long names or
+ * departments never push the QR code or the footer off the card.
  */
 .badge-card {
   --badge-w: 54mm;
@@ -228,7 +236,7 @@ body {
   align-items: center;
   width: var(--badge-w);
   height: var(--badge-h);
-  padding: 3mm 3mm 2mm;
+  padding: 2.5mm 3mm 2mm;
   overflow: hidden;
   background: #fff;
   color: #000;
@@ -237,31 +245,123 @@ body {
   text-align: center;
   line-height: 1.15;
 }
+.badge-card > * { flex-shrink: 0; }
 /* Fixed colours, not theme tokens: the preview must look like the white card in both themes. */
 .badge-screen .badge-card {
   border: 1px solid #dde3ea;
   border-radius: 3mm;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
 }
-.badge-org { font-size: 7pt; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.badge-org {
+  width: 100%;
+  font-size: 7pt;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .badge-band {
   width: 100%;
-  margin: 1.5mm 0;
-  padding: 0.8mm 0;
+  margin: 1.2mm 0 1.5mm;
+  padding: 0.6mm 0;
   background: #000;
   color: #fff;
   font-size: 11pt;
   font-weight: 800;
   letter-spacing: 0.2em;
 }
-.badge-name { font-size: 12pt; font-weight: 700; overflow-wrap: anywhere; max-height: 10mm; overflow: hidden; }
-.badge-number { margin-top: 0.8mm; font-family: var(--font-mono); font-size: 9pt; font-weight: 700; }
-.badge-facts { width: 100%; margin-top: 1.5mm; font-size: 6.5pt; text-align: left; }
+.badge-id {
+  display: grid;
+  grid-template-columns: 22mm minmax(0, 1fr);
+  column-gap: 2mm;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+}
+/* 4:5 portrait. object-fit: cover crops the stored (usually 16:9 landscape) photo instead of
+   stretching it; the crop is centred, a little above the middle, where the camera guide puts the face.
+   The browser scales the stored JPEG straight to printer resolution: no re-encoding on the way. */
+.badge-photo {
+  box-sizing: border-box;
+  width: 22mm;
+  height: 27.5mm;
+  border: 0.3mm solid #000;
+  border-radius: 1mm;
+  background: #e5e7eb;
+  object-fit: cover;
+  object-position: 50% 40%;
+}
+.badge-photo-none {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1mm;
+  border-style: dashed;
+  border-color: #666;
+  background: #fff;
+  color: #444;
+  font-size: 6pt;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: center;
+  text-transform: uppercase;
+}
+.badge-photo-none svg { width: 11mm; height: 11mm; stroke-width: 1.5; }
+.badge-who { min-width: 0; }
+.badge-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  font-size: 11pt;
+  font-weight: 700;
+  line-height: 1.1;
+  overflow-wrap: break-word;          /* whole words; only a word wider than the column is split */
+}
+/* Long names: one step smaller and one more line, rather than cutting the name short. */
+.badge-name[data-long] { -webkit-line-clamp: 4; font-size: 9.5pt; }
+.badge-number {
+  margin-top: 1.5mm;
+  font-family: var(--font-mono);
+  font-size: 8pt;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.badge-gate {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 0.8mm;
+  font-size: 7pt;
+  font-weight: 600;
+  color: #333;
+}
+.badge-facts {
+  width: 100%;
+  margin-top: 1.5mm;
+  padding-top: 0.8mm;
+  border-top: 0.25mm solid #000;
+  font-size: 7pt;
+  line-height: 1.25;
+  text-align: left;
+}
 .badge-facts div { display: flex; gap: 1.5mm; }
-.badge-facts dt { flex: 0 0 9mm; color: #444; }
-.badge-facts dd { flex: 1; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.badge-qr { width: 30mm; height: 30mm; margin-top: auto; image-rendering: pixelated; }
-.badge-foot { margin-top: 1mm; font-size: 5.5pt; color: #333; }
+.badge-facts dt { flex: 0 0 8mm; color: #444; }
+.badge-facts dd { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.badge-qr { width: 26mm; height: 26mm; margin-top: auto; image-rendering: pixelated; }
+.badge-foot {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 0.5mm;
+  font-size: 5.5pt;
+  color: #333;
+}
 
 /* The print copy lives in .badge-print-root directly under <body>; it is the only thing printed. */
 .badge-print-root { display: none; }

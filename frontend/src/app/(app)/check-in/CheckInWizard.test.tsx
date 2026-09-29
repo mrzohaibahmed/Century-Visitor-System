@@ -113,6 +113,84 @@ describe("CheckInWizard", () => {
     expect(screen.queryByRole("button", { name: /Review/ })).toBeNull();
   });
 
+  it("makes entry denied a hard stop that is announced and resets on Done", async () => {
+    api.lookupVisitor.mockResolvedValue({ ...CLEAR, screening: { status: "BLOCKED", reason: "Theft." } });
+    findVisitor();
+    const denied = await screen.findByRole("alert");
+    expect(denied.getAttribute("data-testid")).toBe("entry-denied");
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Entry not permitted" }));
+    expect(screen.queryByRole("button", { name: /Review|Confirm/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect((screen.getByLabelText("ID number") as HTMLInputElement).value).toBe("");
+  });
+
+  it("moves focus to the new step's heading", async () => {
+    api.lookupVisitor.mockResolvedValue(CLEAR);
+    findVisitor();
+    const heading = await screen.findByRole("heading", { name: "Visit details" });
+    expect(document.activeElement).toBe(heading);
+  });
+
+  it("checks out the earlier visit of a visitor still inside, and reports a failure without moving on", async () => {
+    api.lookupVisitor.mockResolvedValue({ ...CLEAR, visitor: { ...VISITOR, active_visit: {
+      id: "old", visit_number: "V-2026-000001", check_in_at: "2026-09-27T07:00:00Z", gate_name: "Main Gate" } } });
+    api.checkOut.mockRejectedValueOnce(new ApiError(0, "network_error", "Cannot reach the server.")).mockResolvedValue({});
+    findVisitor();
+    const checkOutFirst = await screen.findByRole("button", { name: "Check out previous visit and continue" });
+    fireEvent.click(checkOutFirst);
+    expect(await screen.findByText("The previous visit was not checked out")).toBeTruthy();
+    expect(screen.getByText("Already inside")).toBeTruthy();
+    fireEvent.click(checkOutFirst);
+    expect(await screen.findByRole("heading", { name: "Visit details" })).toBeTruthy();
+    expect(api.checkOut).toHaveBeenLastCalledWith("old");
+  });
+
+  it("cannot cancel an already-inside visitor while the previous visit is being checked out", async () => {
+    api.lookupVisitor.mockResolvedValue({ ...CLEAR, visitor: { ...VISITOR, active_visit: {
+      id: "old", visit_number: "V-2026-000001", check_in_at: "2026-09-27T07:00:00Z", gate_name: "Main Gate" } } });
+    api.checkOut.mockReturnValue(new Promise(() => {}));
+    findVisitor();
+    fireEvent.click(await screen.findByRole("button", { name: "Check out previous visit and continue" }));
+    expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("cannot go back from registration while the visitor is being registered", async () => {
+    api.lookupVisitor.mockRejectedValue(new ApiError(404, "not_found", "No visitor is registered with this ID number."));
+    api.createVisitor.mockReturnValue(new Promise(() => {}));
+    findVisitor();
+    fireEvent.change(await screen.findByLabelText("Full name"), { target: { value: "Ali Khan" } });
+    fireEvent.click(screen.getByRole("button", { name: "Register and continue" }));
+    expect((screen.getByRole("button", { name: "Back" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("titles a lookup failure and keeps the ID number for another try", async () => {
+    api.lookupVisitor.mockRejectedValueOnce(new ApiError(0, "network_error", "Cannot reach the server.")).mockResolvedValue(CLEAR);
+    findVisitor();
+    expect(await screen.findByText("The visitor could not be looked up")).toBeTruthy();
+    expect((screen.getByLabelText("ID number") as HTMLInputElement).value).not.toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Find visitor" }));
+    expect(await screen.findByRole("heading", { name: "Visit details" })).toBeTruthy();
+  });
+
+  it("says when the departments cannot be loaded, and loads them again on request", async () => {
+    api.lookupVisitor.mockResolvedValue(CLEAR);
+    api.listDepartments.mockRejectedValueOnce(new ApiError(0, "network_error", "Cannot reach the server."));
+    findVisitor();
+    expect(await screen.findByText("The list of departments could not be loaded.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Load again" }));
+    await waitFor(() => expect(screen.queryByText("The list of departments could not be loaded.")).toBeNull());
+    expect(screen.getByRole("option", { name: "HR" })).toBeTruthy();
+  });
+
+  it("keeps keyboard focus in the host picker when a host is chosen or changed", async () => {
+    api.lookupVisitor.mockResolvedValue(CLEAR);
+    findVisitor();
+    fireEvent.click(await screen.findByRole("button", { name: /Sara Ahmed/ }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Change" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    expect(document.activeElement).toBe(screen.getByLabelText("Host (person being visited)"));
+  });
+
   it("warns when the visitor is already inside", async () => {
     api.lookupVisitor.mockResolvedValue({ ...CLEAR, visitor: { ...VISITOR, active_visit: {
       id: "old", visit_number: "V-2026-000001", check_in_at: "2026-09-27T07:00:00Z", gate_name: "Main Gate" } } });
@@ -214,6 +292,17 @@ describe("CheckInWizard photo, pass and badge", () => {
     expect(api.checkIn).toHaveBeenCalledWith(expect.objectContaining({ photo_id: "p1" }));
   });
 
+  it("holds Back and Continue without a photo while the photo is saving", async () => {
+    installCamera();
+    api.uploadVisitorPhoto.mockReturnValue(new Promise(() => {}));
+    await toPhotoStep();
+    fireEvent.click(screen.getByRole("button", { name: "Start camera" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Take photo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this photo" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Back" }) as HTMLButtonElement).disabled).toBe(true));
+    expect((screen.getByRole("button", { name: "Continue without a photo" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("offers the photo just taken again after editing the details from review", async () => {
     installCamera();
     api.uploadVisitorPhoto.mockResolvedValue({ id: "p1", captured_at: "", width: 640, height: 480 });
@@ -227,6 +316,23 @@ describe("CheckInWizard photo, pass and badge", () => {
     expect(await screen.findByText("Photo captured for this visit.")).toBeTruthy();
     expect(screen.queryByText(/Photo from an earlier visit/)).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Keep this photo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm check-in" }));
+    await waitFor(() => expect(api.checkIn).toHaveBeenCalledWith(expect.objectContaining({ photo_id: "p1" })));
+    expect(api.uploadVisitorPhoto).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers the photo just taken again when going back from review, without a second upload", async () => {
+    installCamera();
+    api.uploadVisitorPhoto.mockResolvedValue({ id: "p1", captured_at: "", width: 640, height: 480 });
+    api.checkIn.mockResolvedValue({ ...VISIT, photo_id: "p1" });
+    await toPhotoStep();
+    fireEvent.click(screen.getByRole("button", { name: "Start camera" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Take photo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this photo" }));
+    await screen.findByRole("button", { name: "Confirm check-in" });                 // on review now
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByText("Photo captured for this visit.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Keep this photo" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm check-in" }));
     await waitFor(() => expect(api.checkIn).toHaveBeenCalledWith(expect.objectContaining({ photo_id: "p1" })));
     expect(api.uploadVisitorPhoto).toHaveBeenCalledTimes(1);

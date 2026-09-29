@@ -67,6 +67,15 @@ export function CameraCapture({ onConfirm, confirmLabel = "Use this photo" }: {
       const stream = await openCamera("user");
       if (!mounted.current) return stopCamera(stream);          // left the page while the browser was asking
       streamRef.current = stream;
+      // Unplugged (or taken by the system) while live: say so instead of showing a frozen preview.
+      // Not fired when the camera is released on purpose.
+      stream.getTracks().forEach((track) => {
+        track.onended = () => {
+          if (streamRef.current !== stream) return;
+          release();
+          if (mounted.current) setState({ kind: "problem", problem: "disconnected" });
+        };
+      });
       const video = videoRef.current;
       if (video) {
         video.srcObject = stream;
