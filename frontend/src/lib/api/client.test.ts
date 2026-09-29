@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, apiRequest, setSessionExpiredHandler } from "./client";
+import { ApiError, apiBlob, apiRequest, setSessionExpiredHandler } from "./client";
 
 function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
@@ -103,5 +103,25 @@ describe("apiRequest", () => {
     mockFetch(jsonResponse(403, { error: { code: "forbidden", message: "No.", request_id: "r" } }));
     await expect(apiRequest("/users")).rejects.toBeInstanceOf(ApiError);
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe("apiBlob", () => {
+  it("returns a binary answer with its headers, sending the CSRF token", async () => {
+    document.cookie = "cg_csrf=tok123";
+    const picture = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+    const fetchMock = mockFetch(new Response(picture, { status: 200, headers: { "content-type": "image/jpeg", "x-photo-width": "1024" } }));
+    const { blob, headers } = await apiBlob("/gate-cameras/g1/test-photo", { method: "POST" });
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(picture);
+    expect(headers.get("x-photo-width")).toBe("1024");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/gate-cameras/g1/test-photo");
+    expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("tok123");
+  });
+
+  it("fails with the same safe ApiError as JSON requests", async () => {
+    mockFetch(jsonResponse(502, { error: { code: "camera_timeout", message: "The camera did not answer in time." } }));
+    const error = await apiBlob("/gate-cameras/g1/test-photo", { method: "POST" }).catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 502, code: "camera_timeout", message: "The camera did not answer in time." });
   });
 });

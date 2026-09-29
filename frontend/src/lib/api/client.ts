@@ -93,8 +93,24 @@ export function readCookie(name: string): string | null {
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const response = await send(path, options, "application/json");
+  const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
+  return (isJson ? await response.json().catch(() => null) : null) as T;
+}
+
+/**
+ * A binary answer (e.g. a camera test picture) with its headers, kept in memory by the caller.
+ * Failures are the same ApiError as apiRequest (the error envelope is JSON).
+ */
+export async function apiBlob(path: string, options: RequestOptions = {}): Promise<{ blob: Blob; headers: Headers }> {
+  const response = await send(path, options, "image/*, application/json");
+  return { blob: await response.blob(), headers: response.headers };
+}
+
+/** The request itself: returns the response when it succeeded (or its status is accepted), else throws. */
+async function send(path: string, options: RequestOptions, accept: string): Promise<Response> {
   const method = options.method ?? "GET";
-  const headers: Record<string, string> = { Accept: "application/json" };
+  const headers: Record<string, string> = { Accept: accept };
   let body: string | Blob | undefined;
   if (options.rawBody !== undefined) {
     headers["Content-Type"] = options.rawBody.type || "application/octet-stream";
@@ -123,12 +139,11 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     throw new ApiError(0, "network_error", "Cannot reach the server. Check the network connection.");
   }
 
+  if (response.ok || options.acceptStatuses?.includes(response.status)) {
+    return response;
+  }
   const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
   const payload: unknown = isJson ? await response.json().catch(() => null) : null;
-
-  if (response.ok || options.acceptStatuses?.includes(response.status)) {
-    return payload as T;
-  }
 
   const envelope = (payload as { error?: { code?: string; message?: string; request_id?: string;
     details?: ApiErrorDetail[] } } | null)?.error;

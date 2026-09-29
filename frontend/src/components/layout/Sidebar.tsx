@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Bell, Building2, Contact, DoorClosed, History, LayoutDashboard, LogIn, LogOut, type LucideIcon, ShieldAlert,
+  Bell, Building2, Cctv, Contact, DoorClosed, History, LayoutDashboard, LogIn, LogOut, type LucideIcon, ShieldAlert,
   ShieldCheck, UserCog, Users,
 } from "lucide-react";
 import Link from "next/link";
@@ -23,6 +23,7 @@ const ICONS: Record<string, LucideIcon> = {
   "/directory/hosts": Contact,
   "/directory/departments": Building2,
   "/directory/gates": DoorClosed,
+  "/gate-cameras": Cctv,
   "/users": UserCog,
 };
 
