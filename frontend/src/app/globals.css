@@ -184,6 +184,18 @@ body {
   }
 }
 
+/*
+ * Human-readable visitor data (names, hosts, departments, gates, reasons,
+ * belongings, statuses) is shown in capitals. Presentation only: the stored
+ * value, form values, search and screen-reader text keep their original case.
+ * Never put it on technical values (emails, usernames, IDs, visit numbers,
+ * URLs): those keep their exact form. For text built into a sentence, see
+ * caps() in lib/format.ts.
+ */
+@utility caps {
+  text-transform: uppercase;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -221,7 +233,7 @@ body {
  *
  * Layout, top to bottom (content area 48 × 81.5 mm):
  *   organisation + VISITOR band                 ~11 mm
- *   photo 22 × 27.5 mm | name (≤ 3 lines; ≤ 4 smaller when long), visit number, gate
+ *   photo 22 × 27.5 mm | name (11 pt, ≤ 3 lines; down to 8 pt, ≤ 4 lines, so words stay whole), visit number, gate
  *   host / department / check-in                ~10 mm
  *   QR code 26 × 26 mm (quiet zone included), footer (≤ 2 lines)
  * Nothing may shrink and every text block is clamped, so long names or
@@ -244,6 +256,7 @@ body {
   font-family: var(--font-system);
   text-align: center;
   line-height: 1.15;
+  text-transform: uppercase;          /* all printed text in capitals (the QR is an image: unaffected) */
 }
 .badge-card > * { flex-shrink: 0; }
 /* Fixed colours, not theme tokens: the preview must look like the white card in both themes. */
@@ -316,13 +329,13 @@ body {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
-  font-size: 11pt;
+  font-size: 11pt;                    /* VisitorBadge.tsx sets the size that fits (fitName) */
   font-weight: 700;
   line-height: 1.1;
   overflow-wrap: break-word;          /* whole words; only a word wider than the column is split */
 }
-/* Long names: one step smaller and one more line, rather than cutting the name short. */
-.badge-name[data-long] { -webkit-line-clamp: 4; font-size: 9.5pt; }
+/* Smaller than 11 pt (long names or long words): one more line, rather than cutting the name short. */
+.badge-name[data-small] { -webkit-line-clamp: 4; }
 .badge-number {
   margin-top: 1.5mm;
   font-family: var(--font-mono);

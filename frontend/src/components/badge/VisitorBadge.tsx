@@ -2,7 +2,7 @@
 
 import { Printer, UserRound } from "lucide-react";
 import QRCode from "qrcode";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 
 import { Alert } from "@/components/ui/Alert";
@@ -42,14 +42,33 @@ export function useQrDataUrl(text: string | null): string | null {
 
 type BadgePhoto = { url: string } | "none" | "failed";
 
-/** Names longer than this are printed one size smaller (see .badge-name[data-long]). */
-const LONG_NAME = 24;
+/** Name sizes (pt), largest first. Below the first, the name may take one more line (.badge-name[data-small]). */
+const NAME_SIZES = [11, 10, 9, 8];
 
-function BadgeCard({ issued, qr, photo, onPhotoError, onScreen = false }: {
+/**
+ * The largest name size at which every word fits the column whole (capitals are wide: at 11 pt
+ * "MUHAMMAD" does not) and the name fits its lines. Measured on the on-screen card, which has the
+ * same size in mm as the printed one. A word too long even at the smallest size is split there.
+ */
+function fitName(el: HTMLElement): number {
+  const fits = (pt: number) => {
+    el.style.fontSize = `${pt}pt`;
+    const lines = el.scrollHeight / (parseFloat(getComputedStyle(el).lineHeight) || 1);
+    return el.scrollWidth <= el.clientWidth && Math.round(lines) <= (pt === NAME_SIZES[0] ? 3 : 4);
+  };
+  el.style.display = "block";              // no line clamp while measuring: count every line
+  el.style.overflowWrap = "normal";        // a word too wide overflows sideways instead of breaking
+  const size = NAME_SIZES.find(fits) ?? NAME_SIZES[NAME_SIZES.length - 1];
+  el.style.display = el.style.overflowWrap = el.style.fontSize = "";
+  return size;
+}
+
+function BadgeCard({ issued, qr, photo, onPhotoError, nameSize, onScreen = false }: {
   issued: IssuedPass;
   qr: string | null;
   photo: BadgePhoto;
   onPhotoError: () => void;
+  nameSize: number;
   onScreen?: boolean;
 }) {
   const b = issued.badge;
@@ -70,7 +89,7 @@ function BadgeCard({ issued, qr, photo, onPhotoError, onScreen = false }: {
           </div>
         )}
         <div className="badge-who">
-          <p className="badge-name" data-long={b.visitor_name.length > LONG_NAME ? "" : undefined}
+          <p className="badge-name" style={{ fontSize: `${nameSize}pt` }} data-small={nameSize < NAME_SIZES[0] ? "" : undefined}
              data-testid={id("badge-name")}>{b.visitor_name}</p>
           <p className="badge-number" data-testid={id("badge-visit-number")}>{b.visit_number}</p>
           {b.gate_name && <p className="badge-gate">{b.gate_name}</p>}
@@ -114,9 +133,17 @@ export function BadgePreview({ issued, visitId, photoId, prominent = false }: {
   const [printRoot, setPrintRoot] = useState<HTMLElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [failedPhotoId, setFailedPhotoId] = useState<string | null>(null);
+  const [nameSize, setNameSize] = useState(NAME_SIZES[0]);
   const printArea = useRef<HTMLDivElement>(null);
+  const screenCard = useRef<HTMLDivElement>(null);
   const photo: BadgePhoto = !photoId ? "none" : failedPhotoId === photoId ? "failed" : { url: photoUrl(photoId) };
   const onPhotoError = () => setFailedPhotoId(photoId);
+
+  useLayoutEffect(() => {
+    // Before paint, so the name never shows at a size it does not fit.
+    const name = screenCard.current?.querySelector<HTMLElement>(".badge-name");
+    if (name) setNameSize(fitName(name));
+  }, [issued.badge.visitor_name]);
 
   useEffect(() => {
     // Print badge is the next step: focus it once the QR is ready (it is disabled until then, so
@@ -154,7 +181,9 @@ export function BadgePreview({ issued, visitId, photoId, prominent = false }: {
     <div className="space-y-3">
       {error && <Alert tone="danger">{error}</Alert>}
       <div className="flex justify-center rounded-lg bg-canvas p-4">
-        <div className="badge-screen"><BadgeCard issued={issued} qr={qr} photo={photo} onPhotoError={onPhotoError} onScreen /></div>
+        <div ref={screenCard} className="badge-screen">
+          <BadgeCard issued={issued} qr={qr} photo={photo} onPhotoError={onPhotoError} nameSize={nameSize} onScreen />
+        </div>
       </div>
       <div ref={printArea} className="flex justify-center">
         <Button onClick={() => void print()} disabled={!qr} size={prominent ? "lg" : "md"}
@@ -163,7 +192,7 @@ export function BadgePreview({ issued, visitId, photoId, prominent = false }: {
           Print badge
         </Button>
       </div>
-      {printRoot && createPortal(<BadgeCard issued={issued} qr={qr} photo={photo} onPhotoError={onPhotoError} />, printRoot)}
+      {printRoot && createPortal(<BadgeCard issued={issued} qr={qr} photo={photo} onPhotoError={onPhotoError} nameSize={nameSize} />, printRoot)}
     </div>
   );
 }

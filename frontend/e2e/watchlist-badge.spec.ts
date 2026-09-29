@@ -146,6 +146,7 @@ test("guard checks a visitor in with a photo, a pass and a printed badge", async
   // Pass and badge: gate information and a QR code; no ID number anywhere on it.
   const badge = page.getByTestId("badge-card");
   await expect(page.getByTestId("badge-name")).toHaveText(VISITOR.name);
+  await expect(page.getByTestId("badge-name")).toHaveText(VISITOR.name.toUpperCase(), { useInnerText: true });   // printed in capitals
   await expect(page.getByTestId("badge-visit-number")).toHaveText(visitNumber);
   await expect(badge).toContainText("Sara Ahmed");
   await expect(badge).not.toContainText("35202");

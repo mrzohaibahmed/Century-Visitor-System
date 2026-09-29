@@ -54,8 +54,8 @@ export function HostPicker({ value, onChange, error }: {
         <div className="flex min-h-14 items-center gap-3 rounded-xl border border-brand-200 bg-brand-50/60 py-2 pl-3 pr-2">
           <Avatar name={value.name} size="sm" />
           <div className="min-w-0 flex-1">
-            <p className="truncate font-semibold text-ink" data-testid="selected-host">{value.name}</p>
-            {value.department_name && <p className="truncate text-sm text-ink-muted">{value.department_name}</p>}
+            <p className="caps truncate font-semibold text-ink" data-testid="selected-host">{value.name}</p>
+            {value.department_name && <p className="caps truncate text-sm text-ink-muted">{value.department_name}</p>}
           </div>
           <Button type="button" variant="ghost" onClick={() => choose(null)}>Change</Button>
         </div>
@@ -96,7 +96,7 @@ export function HostPicker({ value, onChange, error }: {
                         focus-visible:outline-offset-[-3px]">
                 <Avatar name={h.name} size="sm" />
                 {/* Stacked, so a long department never squeezes the name out on a phone. */}
-                <span className="min-w-0 flex-1">
+                <span className="caps min-w-0 flex-1">
                   <span className="block truncate font-medium text-ink">{h.name}</span>
                   {h.department_name && <span className="block truncate text-sm text-ink-muted">{h.department_name}</span>}
                 </span>

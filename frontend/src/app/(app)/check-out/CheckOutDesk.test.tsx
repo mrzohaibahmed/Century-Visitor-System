@@ -54,7 +54,9 @@ describe("CheckOutDesk", () => {
     render(<CheckOutDesk />);
     expect(await screen.findByText("Ali Khan")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Check out Ali Khan (V-2026-000042)" }));
-    expect(screen.getByText(/Belongings recorded at entry: laptop/)).toBeTruthy();
+    const belongings = screen.getByText("laptop");
+    expect(belongings.parentElement?.textContent).toMatch(/Belongings recorded at entry: laptop\./);
+    expect(belongings.classList.contains("caps")).toBe(true);                    // shown in capitals
     // jsdom has no <dialog>.showModal(), so the modal's content counts as hidden.
     fireEvent.click(screen.getByRole("button", { name: "Confirm check-out", hidden: true }));
     expect(await screen.findByText(/checked out\. Time inside: 1 h 00 min/)).toBeTruthy();

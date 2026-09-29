@@ -21,6 +21,7 @@ import {
   updateEntry,
 } from "@/lib/api/directory";
 import { listUsers } from "@/lib/api/users";
+import { caps } from "@/lib/format";
 import type { User } from "@/lib/api/auth";
 
 type Entry = Gate | Department | Host;
@@ -61,11 +62,20 @@ function valueOf(entry: Entry | null, field: string): string {
   return typeof value === "string" ? value : "";
 }
 
-function secondary(kind: DirectoryKind, e: Entry): string {
-  if (kind === "gates") return (e as Gate).location ?? "";
+/** The second column. Location and department are shown in capitals; emails, phones and user names keep their form. */
+function secondary(kind: DirectoryKind, e: Entry): React.ReactNode {
+  if (kind === "gates") return (e as Gate).location ? <span className="caps">{(e as Gate).location}</span> : "";
   if (kind === "departments") return (e as Department).notification_email ?? "";
   const h = e as Host;
-  return [h.department_name, h.email, h.phone, h.linked_user && `App: ${h.linked_user.name}`].filter(Boolean).join(" · ");
+  const rest = [h.email, h.phone, h.linked_user && `App: ${h.linked_user.name}`].filter(Boolean).join(" · ");
+  if (!h.department_name && !rest) return "";
+  return (
+    <>
+      {h.department_name && <span className="caps">{h.department_name}</span>}
+      {h.department_name && rest && " · "}
+      {rest}
+    </>
+  );
 }
 
 export function DirectoryManager({ kind }: { kind: DirectoryKind }) {
@@ -126,7 +136,7 @@ export function DirectoryManager({ kind }: { kind: DirectoryKind }) {
             )}
             {shown.map((e) => (
               <tr key={e.id}>
-                <td className="px-4 py-3 font-medium text-ink">{e.name}</td>
+                <td className="caps px-4 py-3 font-medium text-ink">{e.name}</td>
                 <td className="px-4 py-3 text-ink-muted">{secondary(kind, e) || "—"}</td>
                 <td className="px-4 py-3">
                   {e.is_active ? <StatusBadge tone="ok">Active</StatusBadge> : <StatusBadge tone="neutral">Inactive</StatusBadge>}
@@ -147,7 +157,7 @@ export function DirectoryManager({ kind }: { kind: DirectoryKind }) {
                      onCancel={() => setEditing(null)}
                      onDone={(saved, created) => {
                        setEditing(null);
-                       setNotice(`${saved.name} ${created ? "added" : "updated"}.`);
+                       setNotice(`${caps(saved.name)} ${created ? "added" : "updated"}.`);
                        void reload();
                      }} />
         )}
@@ -212,14 +222,15 @@ export function EntryForm({ kind, entry, departments, users = [], onDone, onCanc
     <form onSubmit={onSubmit} noValidate className="space-y-4">
       {error && <Alert tone="danger">{errors._form ?? error}</Alert>}
       {fields.map((f) => f.type === "department" ? (
-        <SelectField key={f.name} label={f.label} value={values[f.name]} error={errors[f.name]}
+        <SelectField key={f.name} label={f.label} value={values[f.name]} error={errors[f.name]} caps
                      onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}>
           <option value="">{entry ? "(unchanged)" : "None"}</option>
           {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
         </SelectField>
       ) : (
         <TextField key={f.name} label={f.label} type={f.type ?? "text"} value={values[f.name]} error={errors[f.name]}
-                   hint={f.hint} onChange={(e) => setValues({ ...values, [f.name]: e.target.value })} />
+                   hint={f.hint} caps={f.name === "name" || f.name === "location"}
+                   onChange={(e) => setValues({ ...values, [f.name]: e.target.value })} />
       ))}
       {kind === "hosts" && (
         <SelectField label="Linked app account" value={linkedUser} error={errors.linked_user_id}

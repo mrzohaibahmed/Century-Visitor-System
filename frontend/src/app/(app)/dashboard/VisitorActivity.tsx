@@ -23,16 +23,16 @@ function VisitStatus({ visit, now }: { visit: Visit; now: number }) {
 function VisitorName({ visit }: { visit: Visit }) {
   const name = visit.visitor.name ?? "Unknown visitor";
   return visit.visitor.id
-    ? <Link href={`/visitors/${visit.visitor.id}`} className="font-semibold text-ink hover:text-brand-700 hover:underline">{name}</Link>
-    : <span className="font-semibold text-ink">{name}</span>;
+    ? <Link href={`/visitors/${visit.visitor.id}`} className="caps font-semibold text-ink hover:text-brand-700 hover:underline">{name}</Link>
+    : <span className="caps font-semibold text-ink">{name}</span>;
 }
 
 function Host({ visit }: { visit: Visit }) {
   return (
     <>
-      <span className="text-ink">{visit.host.name ?? "—"}</span>
+      <span className="caps text-ink">{visit.host.name ?? "—"}</span>
       {visit.host_unlisted && <span className="ml-1.5 text-xs font-medium text-warn">(not listed)</span>}
-      {visit.department.name && <span className="block text-xs text-ink-muted">{visit.department.name}</span>}
+      {visit.department.name && <span className="caps block text-xs text-ink-muted">{visit.department.name}</span>}
     </>
   );
 }
@@ -99,7 +99,7 @@ export function VisitorActivity({ today, now, loadedAt, refreshing, onRefresh }:
           <div className="relative hidden overflow-x-auto md:block">
             <table className="w-full text-left text-sm">
               <caption className="sr-only">Today&apos;s visits, newest first</caption>
-              <thead className="border-b border-border text-xs font-medium text-ink-muted">
+              <thead className="border-b border-border text-xs font-medium uppercase tracking-wide text-ink-muted">
                 <tr>
                   <th scope="col" className="px-6 py-3 font-medium">Visitor</th>
                   <th scope="col" className="px-4 py-3 font-medium">Host</th>
@@ -123,7 +123,7 @@ export function VisitorActivity({ today, now, loadedAt, refreshing, onRefresh }:
                     <td className="px-4 py-3"><Host visit={v} /></td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <span className="text-ink tabular-nums">{formatTime(v.check_in_at)}</span>
-                      <span className="block text-xs text-ink-muted">{v.gate.name}</span>
+                      <span className="caps block text-xs text-ink-muted">{v.gate.name}</span>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <span className="text-ink tabular-nums">{formatTime(v.check_out_at)}</span>
@@ -154,7 +154,7 @@ export function VisitorActivity({ today, now, loadedAt, refreshing, onRefresh }:
                   <p className="text-sm"><Host visit={v} /></p>
                   <p className="text-sm text-ink-muted tabular-nums">
                     In {formatTime(v.check_in_at)}
-                    {v.check_out_at ? ` · Out ${formatTime(v.check_out_at)}` : ""} · {v.gate.name}
+                    {v.check_out_at ? ` · Out ${formatTime(v.check_out_at)}` : ""} · <span className="caps">{v.gate.name}</span>
                   </p>
                 </div>
               </li>

@@ -9,7 +9,7 @@ const TONES: Record<Tone, string> = {
 
 export function StatusBadge({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm font-semibold ${TONES[tone]}`}>
+    <span className={`caps inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm font-semibold ${TONES[tone]}`}>
       <span aria-hidden="true" className="size-2 rounded-full bg-current" />
       {children}
     </span>

@@ -10,14 +10,14 @@ import { VisitStatusBadge } from "./VisitStatusBadge";
 
 function VisitorName({ visit }: { visit: Visit }) {
   return visit.visitor.id
-    ? <Link href={`/visitors/${visit.visitor.id}`} className="font-medium text-brand-700 hover:underline">{visit.visitor.name}</Link>
-    : <span className="font-medium">{visit.visitor.name}</span>;
+    ? <Link href={`/visitors/${visit.visitor.id}`} className="caps font-medium text-brand-700 hover:underline">{visit.visitor.name}</Link>
+    : <span className="caps font-medium">{visit.visitor.name}</span>;
 }
 
 function Host({ visit }: { visit: Visit }) {
   return (
     <>
-      {visit.host.name}
+      <span className="caps">{visit.host.name}</span>
       {visit.host_unlisted && <span className="ml-1 text-xs text-warn">(not listed)</span>}
     </>
   );
@@ -62,7 +62,7 @@ export function VisitTable({ visits, loading, empty = "No visits found.", showVi
         <>
           <div className="relative hidden overflow-x-auto lg:block">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-border text-xs text-ink-muted">
+              <thead className="border-b border-border text-xs uppercase tracking-wide text-ink-muted">
                 <tr>
                   <th scope="col" className="px-5 py-3 font-medium">Visit</th>
                   {showVisitor && <th scope="col" className="px-4 py-3 font-medium">Visitor</th>}
@@ -80,12 +80,12 @@ export function VisitTable({ visits, loading, empty = "No visits found.", showVi
                     {showVisitor && <td className="px-4 py-3"><VisitorName visit={v} /></td>}
                     <td className="px-4 py-3 text-ink">
                       <Host visit={v} />
-                      <span className="block text-xs text-ink-muted">{v.department.name ?? ""}</span>
+                      <span className="caps block text-xs text-ink-muted">{v.department.name ?? ""}</span>
                     </td>
-                    <td className="px-4 py-3 text-ink">{reasonLabel(v.reason_code)}</td>
+                    <td className="caps px-4 py-3 text-ink">{reasonLabel(v.reason_code)}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-ink">
                       {formatDateTime(v.check_in_at)}
-                      <span className="block text-xs text-ink-muted">{v.gate.name}</span>
+                      <span className="caps block text-xs text-ink-muted">{v.gate.name}</span>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-ink">
                       {v.check_out_at ? formatDateTime(v.check_out_at) : "—"}
@@ -112,12 +112,12 @@ export function VisitTable({ visits, loading, empty = "No visits found.", showVi
                 </div>
                 <p className="text-sm text-ink">
                   <Host visit={v} />
-                  {v.department.name && <span className="text-ink-muted"> · {v.department.name}</span>}
-                  <span className="text-ink-muted"> · {reasonLabel(v.reason_code)}</span>
+                  {v.department.name && <span className="caps text-ink-muted"> · {v.department.name}</span>}
+                  <span className="caps text-ink-muted"> · {reasonLabel(v.reason_code)}</span>
                 </p>
                 <dl className="grid grid-cols-2 gap-3 text-sm">
                   <div className="min-w-0">
-                    <dt className="text-xs text-ink-muted">In · {v.gate.name}</dt>
+                    <dt className="text-xs text-ink-muted">In · <span className="caps">{v.gate.name}</span></dt>
                     <dd className="text-ink">{formatDateTime(v.check_in_at)}</dd>
                   </div>
                   <div className="min-w-0">

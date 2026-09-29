@@ -19,7 +19,7 @@ import { errorMessage } from "@/lib/api/client";
 import { checkOutWithPass, type IssuedPass, issuePass, looksLikePass, resolvePass, type ScanResult } from "@/lib/api/passes";
 import { IDENTITY_LABELS, type IdentityType } from "@/lib/api/visitors";
 import { activeVisits, checkOut, checkOutBy, type CheckOutResult, type Visit, VISIT_NUMBER_PATTERN } from "@/lib/api/visits";
-import { formatDuration, formatTime } from "@/lib/format";
+import { caps, formatDuration, formatTime } from "@/lib/format";
 
 import { isLongStay } from "../dashboard/useDashboardData";
 
@@ -35,11 +35,11 @@ export function checkOutTarget(value: string, idType: IdentityType) {
 
 function resultMessage({ visit, already_checked_out }: CheckOutResult): { tone: "ok" | "warn"; text: string } {
   if (already_checked_out) {
-    return { tone: "warn", text: `${visit.visitor.name} (${visit.visit_number}) was already checked out at ${formatTime(visit.check_out_at)}.` };
+    return { tone: "warn", text: `${caps(visit.visitor.name)} (${visit.visit_number}) was already checked out at ${formatTime(visit.check_out_at)}.` };
   }
   return {
     tone: "ok",
-    text: `${visit.visitor.name} (${visit.visit_number}) checked out. Time inside: ${formatDuration(visit.check_in_at, visit.check_out_at)}.`,
+    text: `${caps(visit.visitor.name)} (${visit.visit_number}) checked out. Time inside: ${formatDuration(visit.check_in_at, visit.check_out_at)}.`,
   };
 }
 
@@ -206,10 +206,10 @@ export function CheckOutDesk() {
                     <div className="col-span-2 flex min-w-0 items-start gap-3 md:col-span-1">
                       <Avatar name={v.visitor.name ?? ""} size="sm" />
                       <div className="min-w-0">
-                        <p className="truncate font-semibold text-ink">{v.visitor.name}</p>
+                        <p className="caps truncate font-semibold text-ink">{v.visitor.name}</p>
                         <p className="font-mono text-xs text-ink-muted">{v.visit_number}</p>
                         <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-muted">
-                          <span>In <span className="text-ink tabular-nums">{formatTime(v.check_in_at)}</span> · {v.gate.name}</span>
+                          <span>In <span className="text-ink tabular-nums">{formatTime(v.check_in_at)}</span> · <span className="caps">{v.gate.name}</span></span>
                           <span aria-hidden="true">·</span>
                           <span className="tabular-nums">{formatDuration(v.check_in_at)}</span>
                           {now !== null && isLongStay(v, now) && <StatusBadge tone="warn">Long stay</StatusBadge>}
@@ -217,9 +217,9 @@ export function CheckOutDesk() {
                       </div>
                     </div>
                     <div className="col-start-2 min-w-0 text-sm md:col-start-auto">
-                      <span className="text-ink">{v.host.name}</span>
+                      <span className="caps text-ink">{v.host.name}</span>
                       {v.host_unlisted && <span className="ml-1 text-xs font-medium text-warn">(not listed)</span>}
-                      {v.department.name && <span className="block truncate text-xs text-ink-muted">{v.department.name}</span>}
+                      {v.department.name && <span className="caps block truncate text-xs text-ink-muted">{v.department.name}</span>}
                     </div>
                     <div className="col-span-2 grid grid-cols-2 gap-2 md:col-span-1 md:flex md:justify-end">
                       <Button variant="ghost" aria-label={`Reprint badge for ${v.visitor.name} (${v.visit_number})`}
@@ -275,7 +275,7 @@ function CheckedOut({ result, onNext }: { result: CheckOutResult; onNext: () => 
         <h2 id="checked-out-heading" className="text-heading text-ink">Checked out</h2>
         <p className="text-ink">{resultMessage(result).text}</p>
         <p className="mt-0.5 text-sm text-ink-muted tabular-nums">
-          In {formatTime(visit.check_in_at)} · Out {formatTime(visit.check_out_at)} · {(visit.checkout_gate ?? visit.gate).name}
+          In {formatTime(visit.check_in_at)} · Out {formatTime(visit.check_out_at)} · <span className="caps">{(visit.checkout_gate ?? visit.gate).name}</span>
         </p>
       </div>
       <Button size="lg" onClick={onNext} className="shrink-0">
@@ -369,7 +369,7 @@ function ConfirmActions({ saving, onConfirm, onCancel }: { saving: boolean; onCo
 
 function Belongings({ items }: { items: string[] }) {
   return items.length > 0
-    ? <Alert tone="info" title="Check their belongings">Belongings recorded at entry: {items.join(", ")}.</Alert>
+    ? <Alert tone="info" title="Check their belongings">Belongings recorded at entry: <span className="caps">{items.join(", ")}</span>.</Alert>
     : null;
 }
 
@@ -411,12 +411,12 @@ function VisitSummary({ visit }: { visit: Visit }) {
         <VisitorPhoto photoId={visit.photo_id} name={visit.visitor.name} className="size-24" />
       </div>
       <dl className="min-w-0 space-y-1 text-sm">
-        <div><dt className="sr-only">Visitor</dt><dd className="text-heading break-words text-ink" data-testid="scanned-visitor">{visit.visitor.name}</dd></div>
+        <div><dt className="sr-only">Visitor</dt><dd className="caps text-heading break-words text-ink" data-testid="scanned-visitor">{visit.visitor.name}</dd></div>
         <div><dt className="sr-only">Visit</dt><dd className="font-mono text-ink-muted">{visit.visit_number}</dd></div>
-        <div><dt className="inline text-ink-muted">Visiting: </dt><dd className="inline text-ink">{visit.host.name}{visit.department.name ? ` (${visit.department.name})` : ""}</dd></div>
+        <div><dt className="inline text-ink-muted">Visiting: </dt><dd className="caps inline text-ink">{visit.host.name}{visit.department.name ? ` (${visit.department.name})` : ""}</dd></div>
         <div>
           <dt className="inline text-ink-muted">Inside since: </dt>
-          <dd className="inline text-ink tabular-nums">{formatTime(visit.check_in_at)} · {visit.gate.name} · {formatDuration(visit.check_in_at, visit.check_out_at)}</dd>
+          <dd className="inline text-ink tabular-nums">{formatTime(visit.check_in_at)} · <span className="caps">{visit.gate.name}</span> · {formatDuration(visit.check_in_at, visit.check_out_at)}</dd>
         </div>
       </dl>
     </div>

@@ -1,5 +1,13 @@
 /** Display helpers shared by the visit screens. Times are shown in the browser's time zone. */
 
+/**
+ * Human-readable visitor data inside a sentence (toasts, notices), in capitals like the `caps`
+ * CSS utility (globals.css). Only for names and labels: never for emails, IDs or visit numbers.
+ */
+export function caps(text: string | null | undefined): string {
+  return (text ?? "").toLocaleUpperCase();
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });

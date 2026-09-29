@@ -125,7 +125,7 @@ function VisitorRow({ visitor: v }: { visitor: Visitor }) {
         <span className="col-span-2 flex min-w-0 items-center gap-3 md:col-span-1">
           <Avatar name={v.full_name} size="sm" />
           <span className="min-w-0">
-            <span className="block truncate font-semibold text-ink">{v.full_name}</span>
+            <span className="caps block truncate font-semibold text-ink">{v.full_name}</span>
             <span className="block text-xs text-ink-muted">Registered {formatDateTime(v.created_at)}</span>
           </span>
         </span>

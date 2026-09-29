@@ -22,9 +22,11 @@ describe("NotificationList", () => {
       .mockResolvedValueOnce({ items: [arrival("n2", "Alia Noor")], next_cursor: null, unread_count: 2 })
       .mockResolvedValue({ items: [arrival("n1", "Ali Khan")], next_cursor: null, unread_count: 2 });
     render(<NotificationList />);
-    expect(await screen.findByText("Ali Khan has arrived to visit Sara Ahmed.")).toBeTruthy();
+    const name = await screen.findByText("Ali Khan");
+    expect(name.parentElement?.textContent).toBe("Ali Khan has arrived to visit Sara Ahmed.");
+    expect(name.classList.contains("caps")).toBe(true);                          // names shown in capitals
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-    expect(await screen.findByText("Alia Noor has arrived to visit Sara Ahmed.")).toBeTruthy();
+    expect((await screen.findByText("Alia Noor")).parentElement?.textContent).toBe("Alia Noor has arrived to visit Sara Ahmed.");
     expect(api.list).toHaveBeenLastCalledWith({ cursor: "c1", unreadOnly: false });
     fireEvent.click(screen.getByLabelText("Unread only"));
     await waitFor(() => expect(api.list).toHaveBeenLastCalledWith({ cursor: null, unreadOnly: true }));

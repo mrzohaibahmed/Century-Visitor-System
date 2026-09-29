@@ -53,10 +53,10 @@ export function LongStayAlerts({ longStays, error, now }: {
                 <Clock aria-hidden="true" className="size-5 shrink-0 text-warn" />
                 <div className="min-w-0 flex-1">
                   {v.visitor.id
-                    ? <Link href={`/visitors/${v.visitor.id}`} className="font-semibold text-ink hover:text-brand-700 hover:underline">{v.visitor.name}</Link>
-                    : <span className="font-semibold text-ink">{v.visitor.name}</span>}
+                    ? <Link href={`/visitors/${v.visitor.id}`} className="caps font-semibold text-ink hover:text-brand-700 hover:underline">{v.visitor.name}</Link>
+                    : <span className="caps font-semibold text-ink">{v.visitor.name}</span>}
                   <span className="block truncate text-sm text-ink-muted">
-                    <span className="font-mono">{v.visit_number}</span> · visiting {v.host.name ?? "—"}
+                    <span className="font-mono">{v.visit_number}</span> · visiting <span className="caps">{v.host.name ?? "—"}</span>
                   </span>
                 </div>
                 <span className="shrink-0 text-sm font-semibold whitespace-nowrap text-warn tabular-nums">

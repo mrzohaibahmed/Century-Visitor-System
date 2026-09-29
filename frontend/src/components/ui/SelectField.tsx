@@ -2,8 +2,9 @@ import { useId } from "react";
 
 import { type ControlSize, controlClasses, describedBy, FieldMessage } from "./Field";
 
-export function SelectField({ label, hint, error, size, className = "", children, ...props }:
-  Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "size"> & { label: string; hint?: string; error?: string; size?: ControlSize }) {
+/** `caps`: the options are human-readable visitor data, shown in capitals (see `caps` in globals.css). */
+export function SelectField({ label, hint, error, size, caps = false, className = "", children, ...props }:
+  Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "size"> & { label: string; hint?: string; error?: string; size?: ControlSize; caps?: boolean }) {
   const id = useId();
   return (
     <div className={className}>
@@ -13,7 +14,7 @@ export function SelectField({ label, hint, error, size, className = "", children
         {...props}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy(id, hint, error)}
-        className={controlClasses({ error, size })}
+        className={`${controlClasses({ error, size })}${caps ? " caps" : ""}`}
       >
         {children}
       </select>

@@ -36,6 +36,16 @@ test("admin sets up a gate, a department and a host", async ({ page }) => {
   }, "Sara Ahmed");
   await expect(page.getByRole("row", { name: /Sara Ahmed/ })).toContainText("Human Resources");
 
+  // Names and departments read in capitals; an e-mail address keeps its exact form.
+  await addEntry(page, "hosts", "host", async (d) => {
+    await d.getByLabel("Full name").fill("Omar Farooq");
+    await d.getByLabel("Department").selectOption({ label: "Human Resources" });
+    await d.getByLabel("Email").fill("omar.farooq@example.com");
+  }, "Omar Farooq");
+  const omar = page.getByRole("row", { name: /Omar Farooq/i });
+  await expect(omar).toContainText("OMAR FAROOQ", { useInnerText: true });
+  await expect(omar).toContainText("HUMAN RESOURCES · omar.farooq@example.com", { useInnerText: true });
+
   // With exactly one gate, the session is assigned to it automatically.
   await page.reload();
   await expect(page.getByTestId("current-gate")).toHaveText("Main Gate");
@@ -55,7 +65,8 @@ test("a new visitor is registered and checked in", async ({ page }) => {
   await page.getByLabel("Phone (optional)").fill("0300-1112223");
   await page.getByRole("button", { name: "Register and continue" }).click();
 
-  await expect(page.getByTestId("visitor-name")).toHaveText(VISITOR);
+  await expect(page.getByTestId("visitor-name")).toHaveText(VISITOR);                               // stored as typed
+  await expect(page.getByTestId("visitor-name")).toHaveText(VISITOR.toUpperCase(), { useInnerText: true }); // shown in capitals
   await page.getByLabel("Host (person being visited)").fill("sar");
   await page.getByRole("button", { name: /Sara Ahmed/ }).click();
   await expect(page.getByTestId("selected-host")).toHaveText("Sara Ahmed");
@@ -112,6 +123,12 @@ test("the visit appears in the history and on the visitor's record", async ({ pa
   await page.getByRole("link", { name: new RegExp(VISITOR) }).click();
   await expect(page.getByRole("heading", { name: VISITOR })).toBeVisible();
   await expect(page.getByTestId("visit-row")).toContainText(visitNumber);
+
+  // Capitals are display only: a lower-case name search still finds the visitor.
+  await page.goto("/visitors");
+  await page.getByLabel("Search visitors").fill(VISITOR.split(" ")[0].toLowerCase());
+  await page.getByRole("button", { name: "Search" }).click();
+  await expect(page.getByRole("link", { name: new RegExp(VISITOR) })).toContainText(VISITOR.toUpperCase(), { useInnerText: true });
 });
 
 test("with several gates the user must choose one", async ({ page }) => {

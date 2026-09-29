@@ -253,7 +253,7 @@ function RegisterStep({ idType, idNumber, onBack, onRegistered }: {
         </div>
         {(errors.identity || errors._form) && <Alert tone="danger">{errors.identity || errors._form}</Alert>}
         <TextField label="Full name" value={name} onChange={(e) => setName(e.target.value)} error={errors.full_name}
-                   size="lg" autoComplete="off" autoFocus />
+                   size="lg" autoComplete="off" autoFocus caps />
         <TextField label="Phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} error={errors.phone}
                    size="lg" inputMode="tel" autoComplete="off" />
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
@@ -281,7 +281,7 @@ function BlockedStep({ name, reason, onDone }: { name: string; reason: string; o
         </span>
         <div className="min-w-0">
           <h2 id="entry-denied-heading" className="text-title text-danger">Entry not permitted</h2>
-          <p className="mt-1 text-base font-semibold break-words text-ink">{name} is on the watchlist and must not be admitted.</p>
+          <p className="mt-1 text-base font-semibold break-words text-ink"><span className="caps">{name}</span> is on the watchlist and must not be admitted.</p>
         </div>
       </div>
       <div className="space-y-5 px-6 py-5">
@@ -332,9 +332,9 @@ function InsideStep({ visitor, onCancel, onCheckedOut }: {
         {error && <Alert tone="danger" title="The previous visit was not checked out">{error}</Alert>}
         <VisitorSummary visitor={visitor} />
         <Alert tone="warn">
-          {visitor.full_name} is already checked in (visit <strong>{active.visit_number}</strong>, since{" "}
+          <span className="caps">{visitor.full_name}</span> is already checked in (visit <strong>{active.visit_number}</strong>, since{" "}
           {/* With the date: a visit left open can be days old. */}
-          {formatDateTime(active.check_in_at)}{active.gate_name ? ` at ${active.gate_name}` : ""}).
+          {formatDateTime(active.check_in_at)}{active.gate_name && <> at <span className="caps">{active.gate_name}</span></>}).
         </Alert>
         <p className="text-sm text-ink-muted">
           If they left without checking out, check that visit out first, then record the new visit.
@@ -358,7 +358,7 @@ function VisitorSummary({ visitor }: { visitor: Visitor }) {
     <div className="flex items-center gap-3 rounded-xl border border-border bg-surface-subtle px-4 py-3">
       <Avatar name={visitor.full_name} />
       <div className="min-w-0">
-        <p className="truncate text-base font-semibold text-ink" data-testid="visitor-name">{visitor.full_name}</p>
+        <p className="caps truncate text-base font-semibold text-ink" data-testid="visitor-name">{visitor.full_name}</p>
         <p className="text-sm text-ink-muted">
           {visitor.identity && `${IDENTITY_LABELS[visitor.identity.type]} ${visitor.identity.number}`}
           {visitor.phone && ` · ${visitor.phone}`}
@@ -426,7 +426,7 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
           <div className="space-y-2">
             {draft.unlistedHost ? (
               <TextField label="Name of the person being visited" value={draft.unlistedHostName} autoComplete="off"
-                         size="lg" onChange={(e) => set({ unlistedHostName: e.target.value })} error={errors.host}
+                         size="lg" caps onChange={(e) => set({ unlistedHostName: e.target.value })} error={errors.host}
                          hint="The visit is flagged so an administrator can add this person to the directory." />
             ) : (
               <HostPicker value={draft.host} onChange={(host) => set({ host, departmentId: "" })} error={errors.host} />
@@ -434,7 +434,7 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
             <Checkbox label="The host is not in the list" checked={draft.unlistedHost}
                       onChange={(e) => set({ unlistedHost: e.target.checked, host: null, departmentId: "" })} />
           </div>
-          <SelectField label="Department" value={draft.departmentId} error={errors.department} size="lg"
+          <SelectField label="Department" value={draft.departmentId} error={errors.department} size="lg" caps
                        hint={hostDepartment ? "Taken from the host. Change it only if the visit is for another department." : undefined}
                        onChange={(e) => set({ departmentId: e.target.value })}>
             <option value="">{hostDepartment ? `${hostDepartment} (host's department)` : "Choose a department"}</option>
@@ -451,21 +451,21 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
           )}
         </FieldGroup>
         <FieldGroup legend="Purpose">
-          <SelectField label="Reason for visit" value={draft.reason} error={errors.reason} size="lg"
+          <SelectField label="Reason for visit" value={draft.reason} error={errors.reason} size="lg" caps
                        onChange={(e) => set({ reason: e.target.value as VisitReason | "" })}>
             <option value="">Choose a reason</option>
             {VISIT_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
           </SelectField>
           {draft.reason === "OTHER" && (
             <TextField label="Describe the reason" value={draft.reasonNote} maxLength={200} error={errors.reasonNote}
-                       size="lg" onChange={(e) => set({ reasonNote: e.target.value })} />
+                       size="lg" caps onChange={(e) => set({ reasonNote: e.target.value })} />
           )}
         </FieldGroup>
         <FieldGroup legend="Also record (optional)">
           <div className="grid gap-5 sm:grid-cols-2">
-            <TextField label="Vehicle registration (optional)" value={draft.vehicle} autoComplete="off" size="lg"
+            <TextField label="Vehicle registration (optional)" value={draft.vehicle} autoComplete="off" size="lg" caps
                        onChange={(e) => set({ vehicle: e.target.value })} placeholder="LEA-1234" />
-            <TextField label="Belongings (optional)" value={draft.belongings} error={errors.belongings} size="lg"
+            <TextField label="Belongings (optional)" value={draft.belongings} error={errors.belongings} size="lg" caps
                        onChange={(e) => set({ belongings: e.target.value })} hint="Separate items with commas." />
           </div>
         </FieldGroup>
@@ -537,17 +537,17 @@ function ReviewStep({ visitor, draft, photoId, onBack, onEditDetails, onDenied, 
         {draft.unlistedHostName.trim()}
         <StatusBadge tone="warn">Not in directory</StatusBadge>
       </span>
-    ) : draft.host?.name },
-    { label: "Department", value: departmentName },
-    { label: "Reason", value: draft.reason ? reasonLabel(draft.reason) : "—" },
-    ...(note ? [{ label: "Reason details", value: note }] : []),
+    ) : draft.host?.name, caps: true },
+    { label: "Department", value: departmentName, caps: true },
+    { label: "Reason", value: draft.reason ? reasonLabel(draft.reason) : "—", caps: true },
+    ...(note ? [{ label: "Reason details", value: note, caps: true }] : []),
   ];
   const extra = [
     ...(vehicle ? [{ label: "Vehicle", value: <span className="font-mono">{vehicle}</span> }] : []),
     ...(belongings.length ? [{ label: "Belongings", value: (
       <ul className="flex flex-wrap gap-2">
         {belongings.map((b, i) => (
-          <li key={`${b}-${i}`} className="rounded-lg bg-canvas px-2.5 py-1 text-sm font-medium text-ink">{b}</li>
+          <li key={`${b}-${i}`} className="caps rounded-lg bg-canvas px-2.5 py-1 text-sm font-medium text-ink">{b}</li>
         ))}
       </ul>
     ) }] : []),
@@ -572,7 +572,7 @@ function ReviewStep({ visitor, draft, photoId, onBack, onEditDetails, onDenied, 
             <VisitorPhoto photoId={photoId} name={visitor.full_name} className="size-32" />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 id={visitorHeading} className="text-heading break-words text-ink">{visitor.full_name}</h3>
+            <h3 id={visitorHeading} className="caps text-heading break-words text-ink">{visitor.full_name}</h3>
             <p className="mt-1 text-base text-ink-muted">
               {visitor.identity ? `${IDENTITY_LABELS[visitor.identity.type]} ${visitor.identity.number}` : "No ID recorded"}
             </p>
@@ -640,11 +640,11 @@ function DoneStep({ visit, onNext }: { visit: Visit; onNext: () => void }) {
         {visit.host.name}
         <StatusBadge tone="warn">Not in directory</StatusBadge>
       </span>
-    ) : visit.host.name },
-    ...(visit.department.name ? [{ label: "Department", value: visit.department.name }] : []),
-    { label: "Reason", value: reasonLabel(visit.reason_code) },
+    ) : visit.host.name, caps: true },
+    ...(visit.department.name ? [{ label: "Department", value: visit.department.name, caps: true }] : []),
+    { label: "Reason", value: reasonLabel(visit.reason_code), caps: true },
     { label: "Checked in", value: formatDateTime(visit.check_in_at) },
-    { label: "Gate", value: visit.gate.name },
+    { label: "Gate", value: visit.gate.name, caps: true },
   ];
 
   return (
@@ -658,7 +658,7 @@ function DoneStep({ visit, onNext }: { visit: Visit; onNext: () => void }) {
         </span>
         <div className="min-w-0">
           <h2 id={headingId} className="text-title text-ink">Check-in complete</h2>
-          <p className="mt-1 text-base text-ink-muted">{visit.visitor.name} has been checked in.</p>
+          <p className="mt-1 text-base text-ink-muted"><span className="caps">{visit.visitor.name}</span> has been checked in.</p>
         </div>
       </div>
 
@@ -672,7 +672,7 @@ function DoneStep({ visit, onNext }: { visit: Visit; onNext: () => void }) {
                 <VisitorPhoto photoId={visit.photo_id} name={visit.visitor.name} className="size-14" />
               </div>
             ) : <Avatar name={visit.visitor.name ?? ""} />}
-            <p className="text-heading min-w-0 break-words text-ink">{visit.visitor.name}</p>
+            <p className="caps text-heading min-w-0 break-words text-ink">{visit.visitor.name}</p>
           </div>
           <div>
             <p className="text-sm text-ink-muted">Visit number</p>

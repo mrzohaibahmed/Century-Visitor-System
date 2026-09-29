@@ -23,7 +23,7 @@ import {
   type WatchlistEntry,
   type WatchlistStatus,
 } from "@/lib/api/watchlist";
-import { formatDateTime, isoDay } from "@/lib/format";
+import { caps, formatDateTime, isoDay } from "@/lib/format";
 
 type Filters = { q: string; status: WatchlistStatus | "" };
 type Action = { kind: "new" } | { kind: "edit" | "expire" | "disable"; entry: WatchlistEntry };
@@ -99,7 +99,7 @@ export function WatchlistManager() {
             {list.items.map((e) => (
               <tr key={e.id} data-testid="watchlist-row" className="align-top">
                 <td className="px-4 py-3">
-                  <p className="font-medium text-ink">{e.name ?? "—"}</p>
+                  <p className="caps font-medium text-ink">{e.name ?? "—"}</p>
                   <p className="font-mono text-xs text-ink-muted">{IDENTITY_LABELS[e.identity.type]} {e.identity.number}</p>
                 </td>
                 <td className="max-w-xs px-4 py-3 text-ink">
@@ -145,8 +145,8 @@ export function WatchlistManager() {
         {action?.kind === "new" && (
           <AddEntryForm onCancel={() => setAction(null)}
                         onDone={(created) => created.inside_visit_number
-                          ? done(`${created.name ?? "The person"} added to the watchlist. They are INSIDE now (visit ${created.inside_visit_number}): inform security.`, "warn")
-                          : done(`${created.name ?? created.identity.number} added to the watchlist.`)} />
+                          ? done(`${created.name ? caps(created.name) : "The person"} added to the watchlist. They are INSIDE now (visit ${created.inside_visit_number}): inform security.`, "warn")
+                          : done(`${created.name ? caps(created.name) : created.identity.number} added to the watchlist.`)} />
         )}
         {action?.kind === "edit" && (
           <EditEntryForm entry={action.entry} onCancel={() => setAction(null)} onDone={() => done("Watchlist entry updated.")} />
@@ -205,7 +205,7 @@ export function AddEntryForm({ onDone, onCancel }: {
     <form onSubmit={onSubmit} noValidate className="space-y-4">
       <FormError error={error} />
       <IdentityInput type={idType} number={idNumber} onType={setIdType} onNumber={setIdNumber} error={errors.identity} autoFocus />
-      <TextField label="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} error={errors.name}
+      <TextField label="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} error={errors.name} caps
                  hint="Filled in from the visitor record if this person is registered." autoComplete="off" />
       <ReasonField value={reason} onChange={setReason} error={errors.reason} />
       <TextField label="Ends on (optional)" type="date" value={until} min={isoDay()} onChange={(e) => setUntil(e.target.value)}
@@ -277,7 +277,7 @@ export function EditEntryForm({ entry, onDone, onCancel }: {
         <span className="font-mono font-semibold text-ink">{entry.identity.number}</span>
       </p>
       <p className="text-xs text-ink-muted">The ID number cannot be changed. If it is wrong, disable this entry and add a new one.</p>
-      <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} error={errors.name} autoComplete="off" />
+      <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} error={errors.name} autoComplete="off" caps />
       <ReasonField value={reason} onChange={setReason} error={errors.reason} />
       <TextField label="Ends on" type="date" value={until} min={isoDay()} onChange={(e) => setUntil(e.target.value)}
                  error={errors.expires_at} hint="Clear the date for no end date." />
@@ -320,7 +320,7 @@ export function EndEntryForm({ kind, entry, onDone, onCancel }: {
     <form onSubmit={confirm} noValidate className="space-y-4">
       <FormError error={error} />
       <p className="text-sm text-ink">
-        <strong>{entry.name ?? entry.identity.number}</strong> ({IDENTITY_LABELS[entry.identity.type]} {entry.identity.number})
+        <strong className={entry.name ? "caps" : undefined}>{entry.name ?? entry.identity.number}</strong> ({IDENTITY_LABELS[entry.identity.type]} {entry.identity.number})
         will no longer be blocked at the gate.{" "}
         {kind === "expire" ? "The entry is kept, marked as expired now." : "The entry is kept, marked as disabled, and can no longer be edited."}
       </p>

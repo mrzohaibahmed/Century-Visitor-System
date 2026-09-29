@@ -110,7 +110,7 @@ export function VisitorDetail({ id }: { id: string }) {
       : <span className="text-ink-muted">No ID recorded</span> },
     ...(visitor.phone ? [{ label: "Phone", value: visitor.phone }] : []),
     ...(active ? [{ label: "Current visit", value: (
-      <>Inside since {formatTime(active.check_in_at)}{active.gate_name ? ` at ${active.gate_name}` : ""}
+      <>Inside since {formatTime(active.check_in_at)}{active.gate_name && <> at <span className="caps">{active.gate_name}</span></>}
         <span className="font-mono text-ink-muted"> ({active.visit_number})</span></>
     ) }] : []),
     { label: "Registered", value: formatDateTime(visitor.created_at) },
@@ -126,7 +126,7 @@ export function VisitorDetail({ id }: { id: string }) {
           <VisitorPhoto photoId={visitor.photo_id} name={visitor.full_name} className="size-24 sm:size-28" />
         </div>
         <div className="min-w-0 flex-1">
-          <h1 className="text-title break-words text-ink">{visitor.full_name}</h1>
+          <h1 className="caps text-title break-words text-ink">{visitor.full_name}</h1>
           {visitor.identity && (
             <p className="mt-1 text-ink-muted">
               {IDENTITY_LABELS[visitor.identity.type]} <span className="font-mono break-all text-ink">{visitor.identity.number}</span>
@@ -229,7 +229,7 @@ export function EditVisitorForm({ visitor, onDone, onCancel }: {
   return (
     <form onSubmit={onSubmit} noValidate className="space-y-5">
       {(error || errors._form) && <Alert tone="danger">{error || errors._form}</Alert>}
-      <TextField label="Full name" value={name} onChange={(e) => setName(e.target.value)} error={errors.full_name} />
+      <TextField label="Full name" value={name} onChange={(e) => setName(e.target.value)} error={errors.full_name} caps />
       <IdentityInput type={idType} number={idNumber} onType={setIdType} onNumber={setIdNumber} error={errors.identity} />
       <TextField label="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} error={errors.phone} inputMode="tel" />
       <p className="text-sm text-ink-muted">Changes are logged. Past visits keep the name recorded at the time.</p>
