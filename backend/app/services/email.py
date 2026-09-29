@@ -2,9 +2,12 @@
 E-mail to hosts: the host-arrival message and its delivery over SMTP.
 
 Standard library only (smtplib / email). Blocking: call send() via asyncio.to_thread.
-The SMTP password comes from settings (server environment) and is never logged or stored.
+Generic SMTP for any provider: only host, port, security, user name and password decide how mail is
+sent (services/email_settings.py picks them: the settings saved by an administrator, or the server
+environment). The SMTP password is never logged, and never stored unencrypted.
 Errors are reduced to a short, safe code ("SMTPConnectError", "SMTPRecipientsRefused 550",
-"TimeoutError"): SMTP replies can contain server details and are not kept.
+"TimeoutError") plus an application-level `reason` (EMAIL_AUTHENTICATION_FAILED, ...): SMTP replies
+can contain server details and are not kept.
 
 Content: visitor name, arrival time, gate, department and reason. Never the ID number, phone,
 visit/database ids, QR token or anything about the session.
@@ -12,13 +15,17 @@ visit/database ids, QR token or anything about the session.
 import html
 import smtplib
 import ssl
+from dataclasses import dataclass, field
 from datetime import datetime
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid, parseaddr
 from functools import cache
 from pathlib import Path
 from string import Template
+from typing import Literal
 from zoneinfo import ZoneInfo
+
+from pydantic import SecretStr
 
 from app.core.config import Settings
 
@@ -33,20 +40,85 @@ def _template(name: str) -> Template:
     return Template((Path(__file__).parent / "templates" / name).read_text(encoding="utf-8"))
 
 
-class EmailError(Exception):
-    """Delivery failed. `code` is safe to store and log."""
+@dataclass(frozen=True)
+class SmtpConfig:
+    """How to send mail, from any SMTP provider. `password` never shows in repr."""
 
-    def __init__(self, code: str, permanent: bool):
+    host: str
+    port: int
+    security: Literal["starttls", "ssl", "none"]
+    username: str | None
+    password: SecretStr | None = field(repr=False)
+    sender: str                         # the From header, e.g. "Century Gate VMS <vms@example.com>"
+    reply_to: str | None
+    timeout_seconds: int
+    source: Literal["database", "environment"]
+
+
+def config_from_environment(settings: Settings) -> SmtpConfig | None:
+    """The CG_SMTP_* settings (used when no administrator settings are saved), or None when unset."""
+    if not settings.smtp_host:
+        return None
+    return SmtpConfig(host=settings.smtp_host, port=settings.smtp_port, security=settings.smtp_security,
+                      username=settings.smtp_username or None, password=settings.smtp_password,
+                      sender=settings.smtp_from or "", reply_to=None,
+                      timeout_seconds=settings.smtp_timeout_seconds, source="environment")
+
+
+# Application-level reasons: safe to show to an administrator (never an SMTP reply or a secret).
+REASON_MESSAGES = {
+    "EMAIL_NOT_CONFIGURED": "E-mail is not set up, or it is switched off.",
+    "EMAIL_CREDENTIALS_UNREADABLE": "The saved SMTP password cannot be read (the server key has changed). "
+                                    "Enter the password again.",
+    "EMAIL_CONNECTION_FAILED": "The mail server cannot be reached. Check the host name and the port.",
+    "EMAIL_CONNECTION_TIMEOUT": "The mail server did not answer in time.",
+    "EMAIL_AUTHENTICATION_FAILED": "The mail server refused the user name or password.",
+    "EMAIL_TLS_FAILED": "The secure connection to the mail server failed. Check the security setting "
+                        "(STARTTLS or SSL/TLS) and the port.",
+    "EMAIL_INVALID_RESPONSE": "The mail server sent an unexpected answer. Check the host name and the port.",
+    "EMAIL_RECIPIENT_REFUSED": "The mail server refused the recipient address.",
+    "EMAIL_SEND_FAILED": "The mail server did not accept the message.",
+}
+
+
+class EmailError(Exception):
+    """Delivery failed. `code` is safe to store and log (kept as before for the notification queue);
+    `reason` is the application-level reason (a key of REASON_MESSAGES)."""
+
+    def __init__(self, code: str, permanent: bool, reason: str = "EMAIL_SEND_FAILED"):
         super().__init__(code)
         self.code = code
         self.permanent = permanent
+        self.reason = reason
 
 
 def _local(moment: datetime, settings: Settings) -> str:
     return moment.astimezone(ZoneInfo(settings.timezone)).strftime("%d %b %Y, %H:%M")
 
 
-def host_arrival_message(settings: Settings, to: str, data: dict) -> EmailMessage:
+def _headers(message: EmailMessage, config: SmtpConfig, to: str) -> EmailMessage:
+    message["From"] = config.sender
+    message["To"] = to
+    if config.reply_to:
+        message["Reply-To"] = config.reply_to
+    message["Date"] = formatdate(localtime=True)
+    domain = parseaddr(config.sender or "")[1].rpartition("@")[2] or None
+    message["Message-ID"] = make_msgid(domain=domain)
+    return message
+
+
+def verification_message(settings: Settings, config: SmtpConfig, to: str) -> EmailMessage:
+    """The administrator's test e-mail: proves that these SMTP settings deliver mail."""
+    org = settings.organization_name
+    message = EmailMessage()
+    message["Subject"] = f"{org} visitor management: test e-mail"
+    _headers(message, config, to)
+    message.set_content(f"This is a test e-mail from the {org} visitor management system.\n\n"
+                        "E-mail to hosts is working with these settings. No action is needed.")
+    return message
+
+
+def host_arrival_message(settings: Settings, config: SmtpConfig, to: str, data: dict) -> EmailMessage:
     visitor = data.get("visitor_name") or "Your visitor"
     rows = [("Visitor", visitor), ("Arrived", _local(data["check_in_at"], settings)),
             ("Gate", data.get("gate_name")), ("Department", data.get("department_name")),
@@ -70,11 +142,7 @@ def host_arrival_message(settings: Settings, to: str, data: dict) -> EmailMessag
 
     message = EmailMessage()
     message["Subject"] = f"Visitor arrived: {visitor}"
-    message["From"] = settings.smtp_from
-    message["To"] = to
-    message["Date"] = formatdate(localtime=True)
-    domain = parseaddr(settings.smtp_from or "")[1].rpartition("@")[2] or None
-    message["Message-ID"] = make_msgid(domain=domain)
+    _headers(message, config, to)
     message.set_content(text)
     message.add_alternative(body, subtype="html")
     return message
@@ -98,22 +166,58 @@ def _is_permanent(error: Exception) -> bool:
     return False
 
 
-def send(settings: Settings, message: EmailMessage) -> None:
-    """Delivers one message. Raises EmailError(code, permanent) on failure."""
+def _timed_out(error: BaseException | None) -> bool:
+    """smtplib reports a reply that never came as SMTPServerDisconnected("... timed out"), with the
+    TimeoutError only as the exception's context: look along the chain."""
+    seen = 0
+    while error is not None and seen < 5:
+        if isinstance(error, TimeoutError):
+            return True
+        error, seen = error.__cause__ or error.__context__, seen + 1
+    return False
+
+
+def _reason(error: Exception, phase: str) -> str:
+    """The application-level reason for a failure in `phase` (connect, tls, login or send)."""
+    if _timed_out(error):
+        return "EMAIL_CONNECTION_TIMEOUT"
+    if isinstance(error, ssl.SSLError) or (phase == "tls" and isinstance(error, smtplib.SMTPException)):
+        return "EMAIL_TLS_FAILED"                    # incl. a certificate that is not trusted, or no STARTTLS
+    if isinstance(error, smtplib.SMTPAuthenticationError) or phase == "login":
+        return "EMAIL_AUTHENTICATION_FAILED"         # incl. a server that offers no login
+    if isinstance(error, smtplib.SMTPRecipientsRefused):
+        return "EMAIL_RECIPIENT_REFUSED"
+    if isinstance(error, (smtplib.SMTPConnectError, smtplib.SMTPHeloError)):
+        return "EMAIL_INVALID_RESPONSE"
+    if isinstance(error, OSError) or phase == "connect":
+        return "EMAIL_CONNECTION_FAILED"             # refused, unreachable, unknown host, closed
+    return "EMAIL_SEND_FAILED"
+
+
+def send(config: SmtpConfig, message: EmailMessage) -> None:
+    """Delivers one message with these SMTP settings (any provider).
+    Raises EmailError(code, permanent, reason) on failure; never with a password or an SMTP reply."""
     context = ssl.create_default_context()          # certificate and host name are always checked
-    timeout = settings.smtp_timeout_seconds
+    timeout = config.timeout_seconds
+    phase = "connect"
     try:
-        if settings.smtp_security == "ssl":
-            server = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=timeout, context=context)
+        if config.security == "ssl":                 # SSL/TLS from the first byte (usually port 465)
+            server = smtplib.SMTP_SSL(config.host, config.port, timeout=timeout, context=context)
         else:
-            server = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=timeout)
+            server = smtplib.SMTP(config.host, config.port, timeout=timeout)
         with server:
             server.ehlo()
-            if settings.smtp_security == "starttls":
+            if config.security == "starttls":        # plain connection upgraded to TLS (usually port 587)
+                phase = "tls"
                 server.starttls(context=context)
                 server.ehlo()
-            if settings.smtp_username:
-                server.login(settings.smtp_username, settings.smtp_password.get_secret_value())
+            if config.username:
+                phase = "login"
+                server.login(config.username, config.password.get_secret_value() if config.password else "")
+            phase = "send"
             server.send_message(message)
     except (smtplib.SMTPException, OSError) as error:        # OSError: refused, unreachable, TLS, timeout
-        raise EmailError(_safe_code(error), _is_permanent(error)) from None
+        raise EmailError(_safe_code(error), _is_permanent(error), _reason(error, phase)) from None
+    except UnicodeError:                                     # smtplib logs in with ASCII only (e.g. "é" in a password)
+        raise EmailError("UnicodeEncodeError", False,
+                         "EMAIL_AUTHENTICATION_FAILED" if phase == "login" else "EMAIL_SEND_FAILED") from None

@@ -60,6 +60,10 @@ class AuditAction(StrEnum):
     GATE_CAMERA_UPDATED = "GATE_CAMERA_UPDATED"
     GATE_CAMERA_REMOVED = "GATE_CAMERA_REMOVED"
     GATE_CAMERA_TESTED = "GATE_CAMERA_TESTED"
+    # E-mail (SMTP) settings. Never with the SMTP password: only whether it was changed or removed.
+    EMAIL_SETTINGS_UPDATED = "EMAIL_SETTINGS_UPDATED"
+    EMAIL_SETTINGS_REMOVED = "EMAIL_SETTINGS_REMOVED"
+    EMAIL_TEST_SENT = "EMAIL_TEST_SENT"
 
 
 def actor_from_user(user: dict | None) -> dict:

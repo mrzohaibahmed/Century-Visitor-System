@@ -200,12 +200,29 @@ Retries after a temporary problem: 1, 5, 15 and 60 minutes later (5 attempts in 
 in the database), and each e-mail is claimed by one sender at a time. If the service stops in the middle of
 sending, that e-mail is marked `FAILED` ("interrupted") rather than sent a second time.
 
-**Configuration** (server environment, `backend\.env`): `CG_SMTP_HOST`, `CG_SMTP_PORT` (587),
-`CG_SMTP_SECURITY` (`starttls`, `ssl` or `none`), `CG_SMTP_USERNAME`, `CG_SMTP_PASSWORD`, `CG_SMTP_FROM`.
-Empty `CG_SMTP_HOST` switches e-mail off. The certificate of the mail server is always checked. The API
-refuses to start with a sender address missing, a username without a password, or (in production) a login
-over an unencrypted connection. The password is never logged or stored in the database. There are no SMTP
-settings in the web interface.
+**Configuration.** Generic SMTP, for any provider (Gmail / Google Workspace, Microsoft 365, Yahoo, Zoho,
+cPanel webmail, a company mail server...): host, port, security, user name, password, sender. Only these
+values decide how mail is sent; there is no provider-specific code. Which settings are used, decided at
+every e-mail (no restart needed):
+
+1. **Settings saved by an administrator** (API `GET/PUT/DELETE /api/v1/settings/email`; the screen comes
+   in a later step). They win over the environment, even when switched off (then no e-mail is sent).
+   The SMTP password is encrypted with `CG_SECRETS_KEY` (AES-256-GCM, like camera passwords) and never
+   returned, logged or audited; changing the host, port, security or user name requires entering it again.
+   `DELETE` removes the saved settings and password, so the environment applies again.
+   `POST /api/v1/settings/email/test` sends one test e-mail with the settings in use (administrators only,
+   one at a time) and returns a safe reason on failure (e.g. `EMAIL_AUTHENTICATION_FAILED`, `EMAIL_TLS_FAILED`).
+2. Otherwise the **server environment** (`backend\.env`), as before: `CG_SMTP_HOST`, `CG_SMTP_PORT` (587),
+   `CG_SMTP_SECURITY` (`starttls`, `ssl` or `none`), `CG_SMTP_USERNAME`, `CG_SMTP_PASSWORD`, `CG_SMTP_FROM`.
+   The API refuses to start with a sender address missing, a username without a password, or (in
+   production) a login over an unencrypted connection.
+3. Otherwise e-mail is off.
+
+Security `starttls` upgrades a plain connection (usually port 587); `ssl` is TLS from the start (usually
+465); `none` is for an internal relay without login only (refused with a login in production). The
+certificate of the mail server is always checked. `CG_SMTP_TIMEOUT_SECONDS` applies to both. The SMTP
+password never appears in logs, and never unencrypted in the database. Providers that need an app password
+(e.g. Gmail with 2-step verification) work by entering that app password; the VMS does no OAuth.
 
 **Retention:** notifications are kept, like visits; nothing is deleted automatically. A retention period is
 to be decided together with the other retention rules (proposal: 12 months).

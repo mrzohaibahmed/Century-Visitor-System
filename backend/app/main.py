@@ -38,9 +38,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  APP_VERSION, settings.environment, settings.mongo_db)
         # Prepare the timing-equaliser hash now, so the first unknown-user login is not slower.
         warm_up = asyncio.create_task(asyncio.to_thread(burn_verify_time, "warm-up"))
-        # Host e-mails (Phase 6A): sent in the background, never during a request.
+        # Host e-mails (Phase 6A): sent in the background, never during a request. Always running, so
+        # SMTP settings saved later by an administrator work without a restart; with e-mail off it
+        # finds nothing to send.
         app.state.email_worker, sender = None, None
-        if settings.email_enabled and settings.email_worker:
+        if settings.email_worker:
             app.state.email_worker = EmailWorker(app.state.database.db, settings)
             sender = asyncio.create_task(app.state.email_worker.run())
         try:

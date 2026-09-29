@@ -34,6 +34,7 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.pagination import decode_cursor, encode_cursor
 from app.services import email as email_svc
+from app.services import email_settings
 from app.services.auth import AuthContext
 
 log = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ async def create_host_arrival(db: AsyncDatabase, settings: Settings, visit: dict
         return None
 
     now = visit["check_in_at"]
-    if address and settings.email_enabled:
+    if address and await email_settings.active(db, settings, session=session):
         email = {"status": "PENDING", "to": address, "attempts": 0, "next_attempt_at": now}
     else:
         email = {"status": "NONE", "to": None, "attempts": 0,
@@ -135,8 +136,12 @@ async def _finish(db: AsyncDatabase, doc: dict, fields: dict) -> None:
 
 
 async def dispatch_due(db: AsyncDatabase, settings: Settings, *, send=email_svc.send, limit: int = 20) -> int:
-    """Sends the e-mails that are due, one at a time. Returns how many were attempted."""
+    """Sends the e-mails that are due, one at a time, with the SMTP settings in use now (saved by an
+    administrator, else the server environment). Returns how many were attempted."""
     attempted = 0
+    config: email_svc.SmtpConfig | None = None
+    unusable: str | None = None
+    loaded = False
     while attempted < limit:
         now = datetime.now(UTC)
         await db.notifications.update_many(
@@ -152,10 +157,20 @@ async def dispatch_due(db: AsyncDatabase, settings: Settings, *, send=email_svc.
             return attempted
         attempted += 1
         attempt = doc["email"]["attempts"]
+        if not loaded:                                # once per pass, only when something is due
+            loaded = True
+            try:
+                config = await email_settings.effective(db, settings)
+            except email_settings.SmtpUnusable as e:
+                unusable = e.reason
         try:
-            message = email_svc.host_arrival_message(settings, doc["email"]["to"], doc["data"])
-            await asyncio.wait_for(asyncio.to_thread(send, settings, message),
-                                   timeout=settings.smtp_timeout_seconds + 10)
+            if unusable:                              # e.g. the server key changed: may be fixed; retried
+                raise email_svc.EmailError(unusable.lower(), permanent=False, reason=unusable)
+            if config is None:                        # switched off since the e-mail was queued
+                raise email_svc.EmailError("email_disabled", permanent=True, reason="EMAIL_NOT_CONFIGURED")
+            message = email_svc.host_arrival_message(settings, config, doc["email"]["to"], doc["data"])
+            await asyncio.wait_for(asyncio.to_thread(send, config, message),
+                                   timeout=config.timeout_seconds + 10)
         except Exception as error:                   # noqa: BLE001 - one bad message never stops the queue
             code = error.code if isinstance(error, email_svc.EmailError) else type(error).__name__
             permanent = isinstance(error, email_svc.EmailError) and error.permanent
@@ -187,8 +202,8 @@ class EmailWorker:
         self._wake.set()
 
     async def run(self) -> None:
-        log.info("E-mail sender started (SMTP %s:%d, %s)", self._settings.smtp_host, self._settings.smtp_port,
-                 self._settings.smtp_security)
+        # The SMTP settings are read at every pass (they can be changed by an administrator).
+        log.info("E-mail sender started")
         while True:
             try:
                 await dispatch_due(self._db, self._settings)
