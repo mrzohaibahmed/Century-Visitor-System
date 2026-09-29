@@ -8,6 +8,7 @@ Operator commands (run on the server, never exposed over HTTP):
     python -m app.cli restore-check   on a RESTORED COPY only: verify-data + access rules (refuses production)
     python -m app.cli dev-first-admin DEVELOPMENT only: admin / admin1234 when no account exists yet
                                       (must be changed at the first login; start-dev.bat runs it)
+    python -m app.cli generate-secrets-key   prints a new key for CG_SECRETS_KEY (nothing is changed)
 
 create-admin is the only way to create the first administrator: there is no
 web "first-run" page, because such a page would be reachable by anyone on the
@@ -160,11 +161,16 @@ def main() -> int:
     sub.add_parser("verify-data", help="read-only integrity check of the database and the photo folder")
     sub.add_parser("restore-check", help="checks a restored copy (never production)")
     sub.add_parser("dev-first-admin", help="development only: admin / admin1234 if no account exists")
+    sub.add_parser("generate-secrets-key", help="print a new random key for CG_SECRETS_KEY")
     admin = sub.add_parser("create-admin", help="create an administrator account")
     admin.add_argument("--username", required=True)
     admin.add_argument("--display-name", default="Administrator")
     admin.add_argument("--password-stdin", action="store_true", help="read the password from standard input")
     args = parser.parse_args()
+    if args.command == "generate-secrets-key":            # needs no configuration: it may be the first step
+        from app.core.secrets import generate_key
+        print(generate_key())
+        return 0
     try:
         configure_logging(get_settings().log_level)
     except ValidationError as e:

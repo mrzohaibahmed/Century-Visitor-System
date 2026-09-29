@@ -210,6 +210,33 @@ settings in the web interface.
 **Retention:** notifications are kept, like visits; nothing is deleted automatically. A retention period is
 to be decided together with the other retention rules (proposal: 12 months).
 
+## Gate cameras (Hikvision, in progress)
+
+A Hikvision IP camera per gate can take the visitor's photo instead of the webcam. The **server** talks to
+the camera (ISAPI over HTTP/HTTPS, Digest login, one still JPEG); gate PCs never do. Done so far: the camera
+client and the administrators' settings API. Not yet: the admin screen and the check-in photo step (the
+webcam works as before).
+
+- **Settings:** `GET/PUT/DELETE /api/v1/gate-cameras[/{gate id}]`, administrators only: address, HTTP or
+  HTTPS, port, channel (e.g. `101`), camera user name and password, timeout (1–30 s, default 5). Stored per
+  gate in the `settings` collection (`gate_camera:<gate id>`); the gate itself is unchanged.
+- **Password:** encrypted with AES-256-GCM before it is stored; the key is `CG_SECRETS_KEY` in the server
+  environment (`python -m app.cli generate-secrets-key`). It is never returned, logged or audited (the audit
+  only records that it changed). Without `CG_SECRETS_KEY` camera passwords cannot be saved; with a different
+  key, saved passwords show as unreadable and must be entered again. **Back the key up separately from the
+  database.** Changing the address, connection, port or user name requires entering the password again.
+- **Tests:** `POST .../{gate id}/test` (reachable, login accepted, model and firmware) and
+  `POST .../{gate id}/test-photo` (one picture, checked and scaled like a visitor photo, returned and never
+  stored). One test per camera at a time: Hikvision locks the account after repeated failed logins, and a
+  wrong password costs exactly one attempt.
+- **Camera account:** create a dedicated camera user that may only view live video / take snapshots; do
+  not use the camera's `admin` account.
+- **HTTPS:** the certificate is always checked. A camera with its factory self-signed certificate is refused
+  (`CAMERA_CERTIFICATE_UNTRUSTED`); until trusting a camera certificate is supported, use HTTP on a camera
+  network that only the server can reach.
+- **Not yet verified on a real camera.** The paths `/ISAPI/System/deviceInfo` and
+  `/ISAPI/Streaming/channels/<channel>/picture` must be confirmed on the installed model.
+
 ## Production operations (Phase 7A)
 
 This part is for the administrator who installs and runs the system on the gate server. It assumes no
@@ -321,6 +348,9 @@ ordinary user logged on to the server can neither read the data nor change the a
 16. **Prove the backups**: run `backup.ps1` and then `restore-test.ps1` by hand once and check both say PASSED.
 
 ### Configuration reference
+
+Gate cameras: `CG_SECRETS_KEY` (see "Gate cameras" above) is a secret like `CG_MONGO_URI`; keep a copy of it
+with the other secrets, not with the database backups.
 
 `C:\CenturyGateVMS\app\backend\.env` (template: `deploy\windows\api.env.template`) holds the only secret the
 application uses at runtime (`CG_MONGO_URI`). The API **refuses to start in production** if:

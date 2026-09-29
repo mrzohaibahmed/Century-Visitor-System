@@ -56,6 +56,10 @@ class AuditAction(StrEnum):
     PASS_REVOKED = "PASS_REVOKED"              # noqa: S105 - visitor pass, not a password
     PASS_REJECTED = "PASS_REJECTED"            # noqa: S105 - a scanned pass was invalid, replaced or expired
     BADGE_PRINT_REQUESTED = "BADGE_PRINT_REQUESTED"
+    # Gate cameras. Never with the camera password: only whether it was changed.
+    GATE_CAMERA_UPDATED = "GATE_CAMERA_UPDATED"
+    GATE_CAMERA_REMOVED = "GATE_CAMERA_REMOVED"
+    GATE_CAMERA_TESTED = "GATE_CAMERA_TESTED"
 
 
 def actor_from_user(user: dict | None) -> dict:

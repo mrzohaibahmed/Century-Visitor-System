@@ -14,6 +14,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pymongo.errors import ConfigurationError, InvalidURI
 from pymongo.uri_parser import parse_uri
 
+from app.core.secrets import parse_key
+
 API_DIR = Path(__file__).resolve().parents[2]
 
 # The desktop application's database. The web application must never use it.
@@ -90,6 +92,13 @@ class Settings(BaseSettings):
     # The background sender inside the API process (tests switch it off and drive it directly).
     email_worker: bool = True
 
+    # --- Secrets kept in the database (gate camera passwords) ----------------------------
+    # AES-256-GCM key (base64, 32 bytes): python -m app.cli generate-secrets-key. Only here, in the
+    # server environment; never in the database, the repository or a backup of the database alone.
+    # Unset: camera passwords cannot be saved (everything else works). Changing it makes saved
+    # camera passwords unreadable: they must then be entered again.
+    secrets_key: SecretStr | None = None
+
     @field_validator("mongo_db")
     @classmethod
     def _not_the_legacy_database(cls, value: str) -> str:
@@ -148,6 +157,18 @@ class Settings(BaseSettings):
                 raise ValueError(f"CG_MONGO_URI must not use {insecure} in production: "
                                  "the database certificate has to be validated.")
         return self
+
+    @field_validator("secrets_key")
+    @classmethod
+    def _valid_secrets_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None or not value.get_secret_value().strip():
+            return None
+        parse_key(value.get_secret_value())                 # raises with a message that has no key in it
+        return value
+
+    @property
+    def secrets_key_bytes(self) -> bytes | None:
+        return parse_key(self.secrets_key.get_secret_value()) if self.secrets_key else None
 
     @model_validator(mode="after")
     def _smtp_settings(self):

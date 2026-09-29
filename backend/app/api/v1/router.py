@@ -1,6 +1,18 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, directory, health, notifications, passes, photos, users, visitors, visits, watchlist
+from app.api.v1 import (
+    auth,
+    directory,
+    gate_cameras,
+    health,
+    notifications,
+    passes,
+    photos,
+    users,
+    visitors,
+    visits,
+    watchlist,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -16,3 +28,4 @@ api_router.include_router(photos.router)
 api_router.include_router(passes.visit_passes)
 api_router.include_router(passes.scans)
 api_router.include_router(notifications.router)
+api_router.include_router(gate_cameras.router)
