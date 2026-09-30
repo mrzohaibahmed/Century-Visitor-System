@@ -28,6 +28,15 @@ export function formatDuration(fromIso: string, toIso?: string | null, now: Date
   return `${Math.floor(hours / 24)} d ${hours % 24} h`;
 }
 
+/** "45 min", "2 h 05 min", "3 d 4 h" for a number of minutes computed by the server; "—" if unknown. */
+export function formatMinutes(minutes: number | null | undefined): string {
+  if (minutes === null || minutes === undefined) return "—";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h ${String(minutes % 60).padStart(2, "0")} min`;
+  return `${Math.floor(hours / 24)} d ${hours % 24} h`;
+}
+
 /** YYYY-MM-DD for a date in the browser's time zone (for <input type="date">). */
 export function isoDay(date: Date = new Date()): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");

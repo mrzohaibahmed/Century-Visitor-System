@@ -28,6 +28,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/visitors", label: "Visitors", roles: EVERYONE, group: "front-desk" },
   { href: "/visits", label: "Visit history", roles: EVERYONE, group: "front-desk" },
   { href: "/notifications", label: "Notifications", roles: EVERYONE, group: "front-desk" },
+  { href: "/reports", label: "Reports", roles: ["ADMIN"], group: "admin" },
   { href: "/watchlist", label: "Watchlist", roles: ["ADMIN"], group: "admin" },
   { href: "/directory/hosts", label: "Hosts", roles: ["ADMIN"], group: "admin" },
   { href: "/directory/departments", label: "Departments", roles: ["ADMIN"], group: "admin" },

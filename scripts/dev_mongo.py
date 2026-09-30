@@ -93,7 +93,9 @@ def start():
             flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
         subprocess.Popen(  # noqa: S603 - fixed arguments, local mongod binary
             [mongod, "--dbpath", str(DATA_DIR), "--port", str(PORT), "--bind_ip", HOST,
-             "--replSet", REPLICA_SET, "--logpath", str(LOG_FILE), "--logappend"],
+             "--replSet", REPLICA_SET, "--logpath", str(LOG_FILE), "--logappend",
+             # Development only: a small cache, so mongod survives a busy PC (default: ~half the RAM).
+             "--wiredTigerCacheSizeGB", "0.5"],
             creationflags=flags, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             close_fds=True,
         )

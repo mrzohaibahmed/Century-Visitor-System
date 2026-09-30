@@ -64,6 +64,9 @@ class AuditAction(StrEnum):
     EMAIL_SETTINGS_UPDATED = "EMAIL_SETTINGS_UPDATED"
     EMAIL_SETTINGS_REMOVED = "EMAIL_SETTINGS_REMOVED"
     EMAIL_TEST_SENT = "EMAIL_TEST_SENT"
+    # Reports. Only which report, format, range, the NAMES of the filters used and the row count;
+    # never filter values (a search may be an ID number) and never report contents.
+    REPORT_EXPORTED = "REPORT_EXPORTED"
 
 
 def actor_from_user(user: dict | None) -> dict:

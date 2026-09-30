@@ -13,10 +13,14 @@ from pydantic import BaseModel, Field
 
 from app.core.identity import mask_sensitive
 from app.core.timeutil import DayRange, RangePreset
+from app.db.schema import DENIAL_SOURCES
 
-__all__ = ["CountByDepartment", "CountByHour", "CountByStatus", "OverviewOut", "OverviewSeries", "OverviewTotals",
-           "RangePreset", "ReportRangeOut", "ReportRef", "SeriesPoint", "VisitReportPage", "VisitReportRow",
-           "VisitReportSort"]
+__all__ = ["CountByDepartment", "CountByHour", "CountByStatus", "DenialPage", "DenialRow", "DenialSource",
+           "DepartmentPage", "DepartmentRow", "GuardPage", "GuardRow", "HostPage", "HostRow", "InsidePage",
+           "InsideSort", "OverviewOut", "OverviewSeries", "OverviewTotals", "RangePreset", "ReportRangeOut",
+           "ReportRef", "SeriesPoint",
+           "VisitReportPage", "VisitReportRow", "VisitReportSort", "VisitorSummaryPage", "VisitorSummaryRow",
+           "VisitorSummarySort"]
 
 
 class VisitReportSort(StrEnum):
@@ -150,3 +154,156 @@ class OverviewOut(BaseModel):
     generated_at: datetime
     totals: OverviewTotals
     series: OverviewSeries
+
+
+# ------------------------------------------------------------------------------------------ visitor summary
+class VisitorSummarySort(StrEnum):
+    LAST_VISIT_DESC = "last_visit_desc"      # most recent visitor first (default)
+    VISITS_DESC = "visits_desc"              # most frequent visitor first
+
+
+class VisitorSummaryRow(BaseModel):
+    """One visitor's visits that CHECKED IN within the range; `inside_now` is the current state."""
+
+    visitor: ReportRef
+    id_type: str | None
+    id_number: str | None              # masked
+    phone: str | None                  # masked
+    visits: int
+    completed_visits: int
+    first_visit_at: datetime           # within the range
+    last_visit_at: datetime            # within the range
+    avg_duration_minutes: int | None   # completed visits only; None if none completed
+    inside_now: bool
+
+    @classmethod
+    def from_group(cls, g: dict, visitor: dict | None, inside_now: bool) -> "VisitorSummaryRow":
+        ident = (visitor or {}).get("identity") or {}
+        return cls(
+            visitor=ReportRef(id=str(g["_id"]), name=(visitor or {}).get("full_name") or g.get("name")),
+            id_type=ident.get("type"), id_number=mask_sensitive(ident.get("number")),
+            phone=mask_sensitive((visitor or {}).get("phone")), visits=g["visits"],
+            completed_visits=g["completed"], first_visit_at=g["first"], last_visit_at=g["last"],
+            avg_duration_minutes=round(g["avg_ms"] / 60000) if g.get("avg_ms") is not None else None,
+            inside_now=inside_now)
+
+
+class VisitorSummaryPage(BaseModel):
+    range: ReportRangeOut
+    items: list[VisitorSummaryRow]
+    total: int                          # visitors with at least one visit matching the filters
+    next_cursor: str | None = None
+
+
+# ------------------------------------------------------------------------------------------ hosts, departments
+class HostRow(BaseModel):
+    """A host visited within the range, per department recorded on the visits. An unlisted host (typed in
+    at the gate) has no id and is identified by the name typed."""
+
+    host: ReportRef
+    host_unlisted: bool
+    department: ReportRef
+    visits: int
+    completed_visits: int
+    inside_now: int = Field(description="Current state: this host's visitors inside right now, whatever the range.")
+
+
+class HostPage(BaseModel):
+    range: ReportRangeOut
+    items: list[HostRow]               # most visited first
+    total: int                          # rows before the limit
+    truncated: bool
+
+
+class DepartmentRow(BaseModel):
+    department: ReportRef
+    visits: int
+    completed_visits: int
+    unique_visitors: int
+    avg_duration_minutes: int | None   # completed visits only
+    inside_now: int = Field(description="Current state: visitors inside right now, whatever the range.")
+
+
+class DepartmentPage(BaseModel):
+    range: ReportRangeOut
+    items: list[DepartmentRow]
+    total: int
+    truncated: bool
+
+
+# ------------------------------------------------------------------------------------------ guards
+class GuardRef(BaseModel):
+    id: str | None                      # None: refusals whose operator was never recorded (old backfill)
+    name: str | None
+    role: str | None
+    is_active: bool | None
+
+
+class GuardRow(BaseModel):
+    """What one operator handled within the range. Operators come from the visits' checked_in_by /
+    checked_out_by and the denials' operator_id, all written from the session at the time."""
+
+    guard: GuardRef
+    check_ins: int                      # visits checked in within the range
+    check_outs: int                     # visits checked out within the range (by check-out time)
+    inside_now: int = Field(description="Current state: visitors this operator checked in who are inside now.")
+    denied_entries: int                 # refusals within the range
+    watchlist_matches: int              # of those, refusals for the watchlist
+
+
+class GuardPage(BaseModel):
+    range: ReportRangeOut
+    items: list[GuardRow]
+    total: int
+    truncated: bool
+
+
+# ------------------------------------------------------------------------------------------ currently inside
+class InsideSort(StrEnum):
+    CHECK_IN_ASC = "check_in_asc"            # longest inside first (default)
+    CHECK_IN_DESC = "check_in_desc"          # most recent arrivals first
+
+
+class InsidePage(BaseModel):
+    """Current state: every visit still checked in, whenever it started (no date range)."""
+
+    generated_at: datetime              # the moment the durations are measured to
+    items: list[VisitReportRow]
+    total: int
+    next_cursor: str | None = None
+
+
+# ------------------------------------------------------------------------------------------ denials
+DenialSource = StrEnum("DenialSource", {s.upper(): s for s in DENIAL_SOURCES})     # as in the collection
+
+
+class WatchlistRef(BaseModel):
+    id: str | None
+    reason: str | None                  # the watchlist entry's reason as it is now
+
+
+class DenialRow(BaseModel):
+    """One refused entry (entry_denials). Names are those recorded at the time; for older rebuilt records
+    (source audit_backfill) missing names are filled from the current records and listed in
+    `current_names`."""
+
+    id: str
+    at: datetime
+    reason: str
+    reason_code: str | None
+    source: str
+    visitor: ReportRef
+    identifier: str | None              # masked when recorded
+    watchlist: WatchlistRef
+    gate: ReportRef
+    operator: ReportRef
+    current_names: list[Literal["visitor", "gate", "operator"]]
+
+
+class DenialPage(BaseModel):
+    range: ReportRangeOut
+    denied_entries: int                 # the whole range, as in the overview
+    watchlist_matches: int              # the whole range, as in the overview
+    total: int                          # rows matching the filters
+    items: list[DenialRow]
+    next_cursor: str | None = None

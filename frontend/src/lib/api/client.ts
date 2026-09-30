@@ -99,11 +99,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 }
 
 /**
- * A binary answer (e.g. a camera test picture) with its headers, kept in memory by the caller.
- * Failures are the same ApiError as apiRequest (the error envelope is JSON).
+ * A binary answer (e.g. a camera test picture, a report file) with its headers, kept in memory by the
+ * caller. Failures are the same ApiError as apiRequest (the error envelope is JSON).
  */
-export async function apiBlob(path: string, options: RequestOptions = {}): Promise<{ blob: Blob; headers: Headers }> {
-  const response = await send(path, options, "image/*, application/json");
+export async function apiBlob(path: string, options: RequestOptions = {},
+                              accept = "image/*, application/json"): Promise<{ blob: Blob; headers: Headers }> {
+  const response = await send(path, options, accept);
   return { blob: await response.blob(), headers: response.headers };
 }
 
