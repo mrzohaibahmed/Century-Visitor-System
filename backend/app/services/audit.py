@@ -84,7 +84,8 @@ async def record(
     changes: dict | None = None,
     metadata: dict | None = None,
     session: AsyncClientSession | None = None,
-) -> None:
+) -> dict:
+    """Inserts the entry and returns it, with its `_id` and `timestamp` (callers may ignore it)."""
     entry = {
         "timestamp": datetime.now(UTC),
         "action": str(action),
@@ -98,4 +99,5 @@ async def record(
         entry["changes"] = changes
     if metadata:
         entry["metadata"] = metadata
-    await db.audit_logs.insert_one(entry, session=session)
+    await db.audit_logs.insert_one(entry, session=session)      # sets entry["_id"]
+    return entry

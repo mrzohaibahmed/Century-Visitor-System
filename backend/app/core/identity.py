@@ -53,6 +53,17 @@ def mask_identity(number: str) -> str:
     return "*" * max(len(number) - 4, 0) + number[-4:]
 
 
+def mask_sensitive(value: str | None) -> str | None:
+    """For reports and exports (ID numbers and phone numbers): mask_identity(), but never showing more
+    than half of a short value, so a 3-character "other ID" is not shown in full. None stays None."""
+    if not value:
+        return value
+    if len(value) >= 8:
+        return mask_identity(value)
+    visible = len(value) // 2
+    return "*" * (len(value) - visible) + (value[-visible:] if visible else "")
+
+
 def normalize_phone(raw: str | None) -> str | None:
     """Digits only (a leading + is kept). None if empty. Raises ValueError if implausible."""
     if raw is None or not raw.strip():

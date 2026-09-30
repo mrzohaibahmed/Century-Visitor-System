@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
-SCHEMA_VERSION = 4   # v4 (Phase 6A): notifications; hosts.linked_user_id
+SCHEMA_VERSION = 6   # v6 (Reports): entry_denials (refused entries, for reporting)
+# v5 (Reports): visit indexes for the guard and gate filters; department e-mail type
+# v4 (Phase 6A): notifications; hosts.linked_user_id
 # v3 (Phase 4): photos, pass lifecycle, watchlist management
 # v2 (Phase 3): visit history filter indexes; reason/check-out enums
 
@@ -44,6 +46,10 @@ BOOL = {"bsonType": "bool"}
 SHA256_HEX = {"bsonType": "string", "pattern": "^[0-9a-f]{64}$"}
 PHOTO_TYPES = ["image/jpeg"]           # every upload is re-encoded to JPEG
 NOTIFICATION_TYPES = ["HOST_VISITOR_ARRIVAL", "DEPARTMENT_VISITOR_ARRIVAL"]
+DENIAL_REASONS = ["WATCHLIST"]
+# check_in: refused by POST /visits; lookup: BLOCKED at the check-in lookup; audit_backfill: rebuilt from a
+# WATCHLIST_MATCH audit entry (python -m app.cli backfill-entry-denials).
+DENIAL_SOURCES = ["check_in", "lookup", "audit_backfill"]
 # NONE: nobody to e-mail (host without address) or e-mail switched off (no SMTP server configured).
 EMAIL_STATES = ["NONE", "PENDING", "SENDING", "SENT", "FAILED"]
 
@@ -160,6 +166,12 @@ COLLECTIONS: list[CollectionSpec] = [
             IndexModel([("department_id", ASCENDING), ("check_in_at", DESCENDING)], name="department_history"),
             # v3: a scanned pass that was replaced ("this badge is no longer valid").
             IndexModel([("pass.revoked_token_hashes", ASCENDING)], name="pass_revoked_tokens"),
+            # v5 (Reports): the visit report's guard filter ("checked in OR out by", within the check-in
+            # range) uses one index per $or branch; both bounded by check_in_at, so counts are index-only.
+            IndexModel([("checked_in_by", ASCENDING), ("check_in_at", DESCENDING)], name="checked_in_by_history"),
+            IndexModel([("checked_out_by", ASCENDING), ("check_in_at", DESCENDING)], name="checked_out_by_history"),
+            # v5: gate filter (reports; also used by the visit history's gate filter, unindexed until now).
+            IndexModel([("gate_id", ASCENDING), ("check_in_at", DESCENDING)], name="gate_history"),
         ],
     ),
     CollectionSpec(
@@ -282,6 +294,28 @@ COLLECTIONS: list[CollectionSpec] = [
                        name="recipient_unread"),
             IndexModel([("email.status", ASCENDING), ("email.next_attempt_at", ASCENDING)],   # e-mails due
                        name="email_due"),
+        ],
+    ),
+    CollectionSpec(
+        "entry_denials",
+        # v6: one document per refused entry (reporting). Written after the audit entries, never instead of
+        # them; append-only. ID numbers are stored masked only; no phone, photo, pass or request payload.
+        _schema(["at", "reason", "source", "source_audit_id"], {
+            "at": DATE,                                     # = the WATCHLIST_MATCH audit entry's timestamp
+            "reason": {"enum": DENIAL_REASONS},
+            "source": {"enum": DENIAL_SOURCES},
+            "source_audit_id": OBJECT_ID,                   # the WATCHLIST_MATCH audit entry (dedup key)
+            "visitor_id": OPTIONAL_OBJECT_ID, "visitor_name": OPTIONAL_TEXT,
+            "identifier_masked": OPTIONAL_TEXT,
+            "watchlist_id": OPTIONAL_OBJECT_ID,
+            "gate_id": OPTIONAL_OBJECT_ID, "gate_name": OPTIONAL_TEXT,
+            "operator_id": OPTIONAL_OBJECT_ID, "operator_username": OPTIONAL_TEXT, "operator_name": OPTIONAL_TEXT,
+            "reason_code": {"enum": [*VISIT_REASONS, None]},
+        }),
+        [
+            # Exactly one denial per WATCHLIST_MATCH: runtime writes and any number of backfill runs agree.
+            IndexModel([("source_audit_id", ASCENDING)], name="source_audit_id_unique", unique=True),
+            IndexModel([("at", DESCENDING), ("_id", DESCENDING)], name="newest_first"),    # counts, security report
         ],
     ),
     CollectionSpec("settings"),        # heterogeneous small documents: "org" settings, "schema" version

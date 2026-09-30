@@ -9,6 +9,7 @@ from app.api.v1 import (
     notifications,
     passes,
     photos,
+    reports,
     users,
     visitors,
     visits,
@@ -32,3 +33,4 @@ api_router.include_router(notifications.router)
 api_router.include_router(gate_cameras.router)
 api_router.include_router(gate_cameras.session_router)
 api_router.include_router(email_settings.router)
+api_router.include_router(reports.router)

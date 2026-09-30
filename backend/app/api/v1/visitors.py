@@ -8,6 +8,7 @@ from app.db.client import Database
 from app.schemas.common import Page
 from app.schemas.visitors import ScreeningOut, VisitorCreate, VisitorLookupOut, VisitorOut, VisitorUpdate
 from app.schemas.visits import VisitOut
+from app.services import entry_denials as entry_denials_svc
 from app.services import visitors as svc
 from app.services import visits as visits_svc
 from app.services.auth import AuthContext
@@ -15,12 +16,15 @@ from app.services.auth import AuthContext
 router = APIRouter(prefix="/visitors", tags=["visitors"])
 
 
-async def _with_status(database: Database, doc: dict) -> VisitorLookupOut:
-    active = await svc.active_visit(database.db, doc["_id"])
-    ban = await svc.screening(database.db, doc)
+def _lookup_out(doc: dict, active: dict | None, ban: dict | None) -> VisitorLookupOut:
     return VisitorLookupOut(
         visitor=VisitorOut.from_doc(doc, active),
         screening=ScreeningOut(status="BLOCKED", reason=ban["reason"]) if ban else ScreeningOut(status="CLEAR"))
+
+
+async def _with_status(database: Database, doc: dict) -> VisitorLookupOut:
+    active = await svc.active_visit(database.db, doc["_id"])
+    return _lookup_out(doc, active, await svc.screening(database.db, doc))
 
 
 @router.get("", response_model=Page[VisitorOut])
@@ -35,9 +39,16 @@ async def search_visitors(q: str = Query(min_length=2, max_length=100), cursor: 
 async def lookup_visitor(request: Request, id_type: IdentityType, id_number: str = Query(max_length=60),
                          ctx: AuthContext = Depends(require(Permission.VISITOR_READ)),
                          database: Database = Depends(get_database)) -> VisitorLookupOut:
-    """Check-in step 1: is this person already registered, inside, or on the watchlist?"""
-    doc = await svc.lookup(database.db, ctx, request_meta(request), id_type, id_number)
-    return await _with_status(database, doc)
+    """Check-in step 1: is this person already registered, inside, or on the watchlist?
+    A BLOCKED answer refuses the entry at the gate, so it is audited and recorded as a denial (the answer
+    itself is unchanged). The visitor details view (GET /visitors/{id}) screens too but records nothing."""
+    meta = request_meta(request)
+    doc = await svc.lookup(database.db, ctx, meta, id_type, id_number)
+    active = await svc.active_visit(database.db, doc["_id"])
+    ban = await svc.screening(database.db, doc)
+    if ban:
+        await entry_denials_svc.record_blocked_lookup(database.db, ctx, meta, doc, ban)
+    return _lookup_out(doc, active, ban)
 
 
 @router.post("", response_model=VisitorOut, status_code=201)

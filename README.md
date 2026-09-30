@@ -55,6 +55,15 @@ copy .env.example .env
 The first administrator can only be created with `create-admin` on the server. There is no web
 "first-run" page, because it would be reachable by anyone on the network.
 
+**Refused entries (reports).** Every entry refused because of the watchlist (at check-in, or at the check-in
+lookup) is recorded in `entry_denials`, after its audit entries and never instead of them: if that reporting
+write fails, the visitor is still refused and the failure is logged. `python -m app.cli backfill-entry-denials`
+creates the missing records from the `WATCHLIST_MATCH` audit entries: run it once after upgrading to schema
+version 6 (for refusals recorded before), and again whenever the log reports "Entry denial not recorded". It is
+safe to run repeatedly and concurrently, never changes an existing record, and prints what it did (scanned,
+created, already present, incomplete). Older refusals keep only what the audit recorded: names and purpose are
+empty, and refusals at the lookup before version 6 were not recorded at all.
+
 - Health: http://127.0.0.1:8000/api/v1/health/live and `/api/v1/health/ready`
 - Interactive docs (development only): http://127.0.0.1:8000/api/docs
 - Tests: `.venv\Scripts\python -m pytest` (needs the development database running)

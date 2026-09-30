@@ -9,6 +9,7 @@ fail together. The business rules are enforced on the server:
   two gates checking in the same person at once cannot both succeed).
 Check-out is a single conditional update: atomic and idempotent.
 """
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 from bson import ObjectId
@@ -26,6 +27,7 @@ from app.db.transactions import run_in_transaction
 from app.schemas.visits import VISIT_NUMBER, CheckInRequest
 from app.services import audit
 from app.services import directory as directory_svc
+from app.services import entry_denials as entry_denials_svc
 from app.services import notifications as notifications_svc
 from app.services import photos as photos_svc
 from app.services import visitors as visitors_svc
@@ -70,12 +72,15 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
     ban = await visitors_svc.screening(db, visitor)
     if ban:
         ident = visitor["identity"]
-        await audit.record(db, AuditAction.WATCHLIST_MATCH, actor=actor, ip=meta.ip, resource_type="visitor",
-                           resource_id=visitor["_id"],
-                           metadata={"watchlist_id": ban["_id"], "gate_id": gate["_id"],
-                                     "identifier": f"{ident['type']}:{mask_identity(ident['number'])}"})
+        match = await audit.record(db, AuditAction.WATCHLIST_MATCH, actor=actor, ip=meta.ip, resource_type="visitor",
+                                   resource_id=visitor["_id"],
+                                   metadata={"watchlist_id": ban["_id"], "gate_id": gate["_id"],
+                                             "identifier": f"{ident['type']}:{mask_identity(ident['number'])}"})
         await audit.record(db, AuditAction.VISIT_CHECKED_IN, result="DENIED", actor=actor, ip=meta.ip,
                            resource_type="visitor", resource_id=visitor["_id"], metadata={"reason": "watchlist"})
+        # Reporting only, best effort and time-limited: it never raises, so the refusal below is unchanged.
+        await entry_denials_svc.record_check_in_denial(db, match=match, visitor=visitor, ban=ban, gate=gate,
+                                                       user=ctx.user, reason_code=body.reason_code)
         raise AppError(403, "entry_denied",
                        f"Entry not permitted: {ban['reason']} "
                        "Do not admit this visitor; inform the security supervisor.")
@@ -206,27 +211,76 @@ async def list_active(db: AsyncDatabase) -> tuple[list[dict], int]:
     return docs, total
 
 
+@dataclass(frozen=True)
+class VisitFilter:
+    """What a visit list is narrowed to. Shared by the visit history (GET /visits) and the reports, so
+    both filter the same way. Ids are already-validated ObjectIds; times are UTC (start included, end
+    excluded), usually from day_bounds_utc() or timeutil.resolve_range()."""
+
+    start: datetime | None = None
+    end: datetime | None = None
+    status: str | None = None
+    host_id: ObjectId | None = None
+    department_id: ObjectId | None = None
+    gate_id: ObjectId | None = None
+    visitor_id: ObjectId | None = None
+    guard_id: ObjectId | None = None        # the operator who checked the visit in OR out (reports)
+    reason_code: str | None = None          # the purpose of the visit (reports)
+    q: str | None = None                    # a visit number, or a visitor's name / ID number / phone
+
+
+TOO_BROAD = AppError(422, "search_too_broad", "Too many visitors match this search. Type more of the name, "
+                                              "or search by ID number, phone or visit number.")
+
+
+async def visit_query(db: AsyncDatabase, f: VisitFilter, *, max_visitor_matches: int | None = None) -> dict:
+    """The MongoDB filter for `f`. Every query starts from check_in_at (indexed) when a range is given.
+
+    `q`: a visit number is matched exactly; anything else finds visitors by name prefix, ID number or
+    phone (visitors.matching_ids). The visit history keeps its silent cap of 200 matching visitors;
+    reports pass max_visitor_matches and get "search_too_broad" instead of a quietly incomplete result.
+    """
+    query: dict = {}
+    if f.status:
+        query["status"] = f.status
+    if f.start or f.end:
+        query["check_in_at"] = {k: v for k, v in (("$gte", f.start), ("$lt", f.end)) if v}
+    for field, value in (("host_id", f.host_id), ("department_id", f.department_id), ("gate_id", f.gate_id),
+                         ("visitor_id", f.visitor_id)):
+        if value:
+            query[field] = value
+    if f.guard_id:
+        query["$or"] = [{"checked_in_by": f.guard_id}, {"checked_out_by": f.guard_id}]
+    if f.reason_code:
+        query["reason_code"] = f.reason_code
+    if f.q and f.q.strip():
+        term = f.q.strip().upper()
+        if VISIT_NUMBER.match(term):
+            query["visit_number"] = term
+        else:
+            if max_visitor_matches is None:
+                ids = await visitors_svc.matching_ids(db, f.q)
+            else:
+                ids = await visitors_svc.matching_ids(db, f.q, limit=max_visitor_matches + 1)
+                if len(ids) > max_visitor_matches:
+                    raise TOO_BROAD
+            if f.visitor_id:              # one visitor's visits, searched: both must hold
+                ids = [i for i in ids if i == f.visitor_id]
+            query["visitor_id"] = {"$in": ids}
+    return query
+
+
 async def list_visits(db: AsyncDatabase, settings: Settings, *, status: str | None, day_from: date | None,
                       day_to: date | None, host_id: str | None, department_id: str | None, gate_id: str | None,
                       visitor_id: str | None, q: str | None, cursor: str | None, limit: int
                       ) -> tuple[list[dict], str | None]:
     limit = max(1, min(limit, PAGE_LIMIT_MAX))
-    query: dict = {}
-    if status:
-        query["status"] = status
     start, end = day_bounds_utc(day_from, day_to, settings.timezone)
-    if start or end:
-        query["check_in_at"] = {k: v for k, v in (("$gte", start), ("$lt", end)) if v}
-    for field, value in (("host_id", host_id), ("department_id", department_id), ("gate_id", gate_id),
-                         ("visitor_id", visitor_id)):
-        if value:
-            query[field] = _oid(value)
-    if q and q.strip():
-        term = q.strip().upper()
-        if VISIT_NUMBER.match(term):
-            query["visit_number"] = term
-        else:
-            query["visitor_id"] = {"$in": await visitors_svc.matching_ids(db, q)}
+    # A malformed id is "not found" here (unchanged); the report endpoints validate ids before this point.
+    query = await visit_query(db, VisitFilter(
+        start=start, end=end, status=status, host_id=_oid(host_id) if host_id else None,
+        department_id=_oid(department_id) if department_id else None, gate_id=_oid(gate_id) if gate_id else None,
+        visitor_id=_oid(visitor_id) if visitor_id else None, q=q))
 
     if cursor:
         last_at, last_id = decode_cursor(cursor)

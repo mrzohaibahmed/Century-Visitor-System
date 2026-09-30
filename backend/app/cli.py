@@ -9,6 +9,9 @@ Operator commands (run on the server, never exposed over HTTP):
     python -m app.cli dev-first-admin DEVELOPMENT only: admin / admin1234 when no account exists yet
                                       (must be changed at the first login; start-dev.bat runs it)
     python -m app.cli generate-secrets-key   prints a new key for CG_SECRETS_KEY (nothing is changed)
+    python -m app.cli backfill-entry-denials creates the missing entry_denials documents from WATCHLIST_MATCH
+                                      audit entries; repeatable and safe to run concurrently (also repairs
+                                      a denial whose reporting write failed at the gate)
 
 create-admin is the only way to create the first administrator: there is no
 web "first-run" page, because such a page would be reachable by anyone on the
@@ -93,6 +96,18 @@ async def _restore_check() -> int:
     return 0 if report["ok"] else 1
 
 
+async def _backfill_entry_denials() -> int:
+    from app.services.entry_denials import backfill_from_audit
+    settings = get_settings()
+    database = Database(settings)
+    try:
+        report = await backfill_from_audit(database.db)
+    finally:
+        await database.close()
+    print(json.dumps({"database": settings.mongo_db, **report.as_dict()}, indent=2))
+    return 1 if report.failed else 0
+
+
 DEV_ADMIN_USERNAME = "admin"
 DEV_ADMIN_PASSWORD = "admin1234"         # noqa: S105 - documented development default, changed at first login
 
@@ -162,6 +177,8 @@ def main() -> int:
     sub.add_parser("restore-check", help="checks a restored copy (never production)")
     sub.add_parser("dev-first-admin", help="development only: admin / admin1234 if no account exists")
     sub.add_parser("generate-secrets-key", help="print a new random key for CG_SECRETS_KEY")
+    sub.add_parser("backfill-entry-denials",
+                   help="create missing entry_denials from WATCHLIST_MATCH audit entries (repeatable)")
     admin = sub.add_parser("create-admin", help="create an administrator account")
     admin.add_argument("--username", required=True)
     admin.add_argument("--display-name", default="Administrator")
@@ -193,7 +210,7 @@ def main() -> int:
             return 2
         return asyncio.run(_create_admin(args.username.strip(), args.display_name.strip(), password))
     commands = {"migrate": _migrate, "check": _check, "verify-data": _verify_data, "restore-check": _restore_check,
-                "dev-first-admin": _dev_first_admin}
+                "dev-first-admin": _dev_first_admin, "backfill-entry-denials": _backfill_entry_denials}
     return asyncio.run(commands[args.command]())
 
 

@@ -28,6 +28,7 @@ class Permission(StrEnum):
     DIRECTORY_READ = "directory:read"          # gates, departments, hosts (pickers)
     DIRECTORY_MANAGE = "directory:manage"
     WATCHLIST_MANAGE = "watchlist:manage"
+    REPORTS_VIEW = "reports:view"              # the Reports section (administrators only; guards keep their dashboard)
     REPORTS_EXPORT = "reports:export"
     USERS_MANAGE = "users:manage"
     AUDIT_READ = "audit:read"

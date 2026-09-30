@@ -263,6 +263,29 @@ async def test_history_pages_without_repeats(guard, directory):
     assert seen == list(reversed(ids))
 
 
+async def test_history_gate_filter_and_unmatched_searches(guard, directory):
+    v = await new_visitor(guard)
+    visit = (await check_in(guard, v["id"], directory)).json()
+
+    async def numbers(**params):
+        r = await guard.get("/api/v1/visits", params=params)
+        assert r.status_code == 200, r.text
+        return [i["visit_number"] for i in r.json()["items"]]
+
+    assert await numbers(gate_id=directory["gate"]["id"]) == [visit["visit_number"]]
+    assert await numbers(gate_id="0" * 24) == []
+    assert await numbers(q="V-2020-999999") == []                     # a visit number that does not exist
+    assert await numbers(q="nobody by this name") == []
+    assert await numbers(q="   ") == [visit["visit_number"]]           # blank search: no filter
+
+
+async def test_history_with_a_malformed_id_filter_is_404(guard, directory):
+    # Existing behaviour, kept as it is: a filter id that is not an ObjectId answers "not found".
+    for field in ("host_id", "department_id", "gate_id"):
+        r = await guard.get("/api/v1/visits", params={field: "not-an-id"})
+        assert r.status_code == 404 and r.json()["error"]["code"] == "not_found", field
+
+
 async def test_visitor_history(guard, directory):
     v = await new_visitor(guard)
     first = (await check_in(guard, v["id"], directory)).json()

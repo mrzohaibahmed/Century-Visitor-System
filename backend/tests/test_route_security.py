@@ -75,8 +75,9 @@ def test_admin_holds_every_permission():
 
 
 @pytest.mark.parametrize("permission", [
-    Permission.WATCHLIST_MANAGE, Permission.REPORTS_EXPORT, Permission.USERS_MANAGE, Permission.AUDIT_READ,
-    Permission.SETTINGS_MANAGE, Permission.DIRECTORY_MANAGE, Permission.VISITOR_EDIT, Permission.PHOTO_VIEW_ALL,
+    Permission.WATCHLIST_MANAGE, Permission.REPORTS_VIEW, Permission.REPORTS_EXPORT, Permission.USERS_MANAGE,
+    Permission.AUDIT_READ, Permission.SETTINGS_MANAGE, Permission.DIRECTORY_MANAGE, Permission.VISITOR_EDIT,
+    Permission.PHOTO_VIEW_ALL,
 ])
 def test_guard_lacks_admin_permissions(permission):
     assert has_permission(Role.GUARD, permission) is False
