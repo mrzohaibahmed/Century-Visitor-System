@@ -7,10 +7,12 @@ stream as CSV (see services/report_exports)."""
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import StrEnum
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.responses import FileResponse, StreamingResponse
 from pymongo.asynchronous.database import AsyncDatabase
+from starlette.background import BackgroundTask
 
 from app.api.deps import get_database, get_settings, request_meta, require
 from app.core.config import Settings
@@ -36,7 +38,7 @@ from app.schemas.reports import (
     VisitReportSort,
 )
 from app.schemas.visits import VisitReason, VisitStatus
-from app.services import audit
+from app.services import audit, report_pdf
 from app.services import report_exports as exports
 from app.services import reports as svc
 from app.services.audit import AuditAction, actor_from_user
@@ -49,7 +51,9 @@ EXPORT = [Depends(require(Permission.REPORTS_EXPORT))]      # in addition to rep
 
 
 class ExportFormat(StrEnum):
-    CSV = "csv"                      # XLSX and PDF: later steps
+    CSV = "csv"
+    XLSX = "xlsx"
+    PDF = "pdf"
 
 
 def _oid(value: str | None):
@@ -236,24 +240,51 @@ def _used(**values) -> list[str]:
 
 async def _export(db: AsyncDatabase, request: Request, ctx: AuthContext, *, report: str, fmt: ExportFormat,
                   columns: list, rows, rows_count: int, filters: list[str], name: str, tz_name: str,
-                  r: DayRange | None = None) -> StreamingResponse:
-    """Audits the export, then streams it. Everything that can fail with a clear message (filters, range,
-    size) has already been checked, so a started download is a complete file."""
+                  r: DayRange | None = None) -> StreamingResponse | FileResponse:
+    """Checks the size, audits the export and sends it. Everything that can fail with a clear message
+    (filters, range, size) has already been checked. CSV streams as it is written; XLSX is built in a
+    temporary file first (a zip cannot be streamed half-made), then sent and deleted; so is PDF."""
     exports.check_size(rows_count)
-    await audit.record(db, AuditAction.REPORT_EXPORTED, actor=actor_from_user(ctx.user), ip=request_meta(request).ip,
-                       resource_type="report", metadata={
-                           "report": report, "format": str(fmt), "rows": rows_count, "filters": filters,
-                           "range": {"preset": str(r.preset), "from": r.first_day.isoformat(),
-                                     "to": r.last_day.isoformat()} if r else None})
+    name = name.removesuffix(".csv") + f".{fmt}"          # the same server-made name, with this format's extension
+    path = None
+    if fmt is ExportFormat.XLSX:
+        path = await exports.xlsx_file(columns, rows, report=report, tz_name=tz_name, about=_about(
+            report, r, rows_count, filters, tz_name))
+    elif fmt is ExportFormat.PDF:                         # the font is checked first: 503 before anything is made
+        path = await report_pdf.pdf_file(columns, rows, report=report, tz_name=tz_name, about=_about(
+            report, r, rows_count, filters, tz_name))
+    try:
+        await audit.record(db, AuditAction.REPORT_EXPORTED, actor=actor_from_user(ctx.user),
+                           ip=request_meta(request).ip, resource_type="report", metadata={
+                               "report": report, "format": str(fmt), "rows": rows_count, "filters": filters,
+                               "range": {"preset": str(r.preset), "from": r.first_day.isoformat(),
+                                         "to": r.last_day.isoformat()} if r else None})
+    except BaseException:
+        if path:
+            exports.discard(path)
+        raise
+    headers = {"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store, private"}
+    if path:
+        media = report_pdf.PDF_TYPE if fmt is ExportFormat.PDF else exports.XLSX_TYPE
+        return FileResponse(path, media_type=media, headers=headers, background=BackgroundTask(exports.discard, path))
     return StreamingResponse(exports.csv_stream(columns, rows, tz_name), media_type="text/csv; charset=utf-8",
-                             headers={"Content-Disposition": f'attachment; filename="{name}"',
-                                      "Cache-Control": "no-store, private"})
+                             headers=headers)
+
+
+def _about(report: str, r: DayRange | None, rows: int, filters: list[str], tz_name: str) -> list[tuple[str, str]]:
+    """The workbook's "About" sheet: what the file contains. Filter NAMES only, never their values."""
+    period = ("Current state (no date range)" if r is None
+              else r.first_day.isoformat() if r.days == 1 else f"{r.first_day.isoformat()} to {r.last_day.isoformat()}")
+    generated = datetime.now(UTC).astimezone(ZoneInfo(tz_name)).strftime("%Y-%m-%d %H:%M")
+    return [("Report", exports.SHEET_TITLES.get(report, report)), ("Period", period), ("Time zone", tz_name),
+            ("Generated", generated), ("Rows", f"{rows:,}"), ("Filters used", ", ".join(filters) or "None"),
+            ("Privacy", "ID numbers and phone numbers are masked.")]
 
 
 @router.get("/visits/export", dependencies=EXPORT, response_class=StreamingResponse)
 async def export_visits(request: Request, ctx: AuthContext = Depends(view), p: VisitParams = Depends(visit_params),
                         format: ExportFormat = ExportFormat.CSV, database: Database = Depends(get_database),
-                        settings: Settings = Depends(get_settings)) -> StreamingResponse:
+                        settings: Settings = Depends(get_settings)) -> Response:
     """The visit report as a file: same filters, sort, masking and columns as the screen (no internal ids)."""
     f = p.filter
     total = await svc.count_visits(database.db, f)
@@ -268,7 +299,7 @@ async def export_visits(request: Request, ctx: AuthContext = Depends(view), p: V
 async def export_visitors(request: Request, ctx: AuthContext = Depends(view),
                           p: VisitorParams = Depends(visitor_params), format: ExportFormat = ExportFormat.CSV,
                           database: Database = Depends(get_database),
-                          settings: Settings = Depends(get_settings)) -> StreamingResponse:
+                          settings: Settings = Depends(get_settings)) -> Response:
     f = p.filter
     total = await svc.count_visitors(database.db, f)
     return await _export(database.db, request, ctx, report="visitors", fmt=format, columns=exports.VISITOR_COLUMNS,
@@ -280,7 +311,7 @@ async def export_visitors(request: Request, ctx: AuthContext = Depends(view),
 @router.get("/hosts/export", dependencies=EXPORT, response_class=StreamingResponse)
 async def export_hosts(request: Request, ctx: AuthContext = Depends(view), p: HostParams = Depends(host_params),
                        format: ExportFormat = ExportFormat.CSV, database: Database = Depends(get_database),
-                       settings: Settings = Depends(get_settings)) -> StreamingResponse:
+                       settings: Settings = Depends(get_settings)) -> Response:
     rows, total, _ = await svc.host_report(database.db, p.range, department_id=p.department_id, limit=None)
     return await _export(database.db, request, ctx, report="hosts", fmt=format, columns=exports.HOST_COLUMNS,
                          rows=exports.listed(rows), rows_count=total, r=p.range,
@@ -291,7 +322,7 @@ async def export_hosts(request: Request, ctx: AuthContext = Depends(view), p: Ho
 @router.get("/departments/export", dependencies=EXPORT, response_class=StreamingResponse)
 async def export_departments(request: Request, ctx: AuthContext = Depends(view), r: DayRange = Depends(report_range),
                              format: ExportFormat = ExportFormat.CSV, database: Database = Depends(get_database),
-                             settings: Settings = Depends(get_settings)) -> StreamingResponse:
+                             settings: Settings = Depends(get_settings)) -> Response:
     rows, total, _ = await svc.department_report(database.db, r, limit=None)
     return await _export(database.db, request, ctx, report="departments", fmt=format,
                          columns=exports.DEPARTMENT_COLUMNS, rows=exports.listed(rows), rows_count=total, r=r,
@@ -301,7 +332,7 @@ async def export_departments(request: Request, ctx: AuthContext = Depends(view),
 @router.get("/guards/export", dependencies=EXPORT, response_class=StreamingResponse)
 async def export_guards(request: Request, ctx: AuthContext = Depends(view), r: DayRange = Depends(report_range),
                         format: ExportFormat = ExportFormat.CSV, database: Database = Depends(get_database),
-                        settings: Settings = Depends(get_settings)) -> StreamingResponse:
+                        settings: Settings = Depends(get_settings)) -> Response:
     rows, total, _ = await svc.guard_report(database.db, r, limit=None)
     return await _export(database.db, request, ctx, report="guards", fmt=format, columns=exports.GUARD_COLUMNS,
                          rows=exports.listed(rows), rows_count=total, r=r, filters=[],
@@ -311,7 +342,7 @@ async def export_guards(request: Request, ctx: AuthContext = Depends(view), r: D
 @router.get("/inside/export", dependencies=EXPORT, response_class=StreamingResponse)
 async def export_inside(request: Request, ctx: AuthContext = Depends(view), p: InsideParams = Depends(inside_params),
                         format: ExportFormat = ExportFormat.CSV, database: Database = Depends(get_database),
-                        settings: Settings = Depends(get_settings)) -> StreamingResponse:
+                        settings: Settings = Depends(get_settings)) -> Response:
     """Everyone inside right now (current state; no date range)."""
     f = p.filter
     total = await svc.count_visits(database.db, f)
@@ -325,7 +356,7 @@ async def export_inside(request: Request, ctx: AuthContext = Depends(view), p: I
 @router.get("/denials/export", dependencies=EXPORT, response_class=StreamingResponse)
 async def export_denials(request: Request, ctx: AuthContext = Depends(view), p: DenialParams = Depends(denial_params),
                          format: ExportFormat = ExportFormat.CSV, database: Database = Depends(get_database),
-                         settings: Settings = Depends(get_settings)) -> StreamingResponse:
+                         settings: Settings = Depends(get_settings)) -> Response:
     """Refused entries (entry_denials only; never rebuilt from the audit trail)."""
     total = await svc.count_denials(database.db, p.range, **p.filters())
     return await _export(database.db, request, ctx, report="denials", fmt=format, columns=exports.DENIAL_COLUMNS,

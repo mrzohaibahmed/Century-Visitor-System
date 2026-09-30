@@ -210,26 +210,51 @@ export function getDenialReport(range: RangeChoice, filters: DenialFilters, curs
   return apiRequest(`/reports/denials${reportQuery(range, filters, { cursor, limit: PAGE })}`, { signal });
 }
 
-// ------------------------------------------------------------------------------------------ CSV export
+// ------------------------------------------------------------------------------------------ exports (CSV, XLSX)
 export type ExportReport = "visits" | "visitors" | "hosts" | "departments" | "guards" | "inside" | "denials";
+export type ExportFormat = "csv" | "xlsx" | "pdf";
+
+const EXPORT_TYPES: Record<ExportFormat, string> = {
+  csv: "text/csv",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pdf: "application/pdf",
+};
 
 /** The server's file name (Content-Disposition), or a fixed fallback. Never built from user input. */
-export function fileNameFrom(disposition: string | null, report: ExportReport): string {
+export function fileNameFrom(disposition: string | null, report: ExportReport, format: ExportFormat = "csv"): string {
   const match = /filename="([^"]+)"/.exec(disposition ?? "");
-  return match && /^[\w.-]+$/.test(match[1]) ? match[1] : `century-gate-${report}.csv`;
+  return match && /^[\w.-]+$/.test(match[1]) && match[1].endsWith(`.${format}`)
+    ? match[1] : `century-gate-${report}.${format}`;
+}
+
+/** The server-generated CSV for exactly these filters and range. */
+export function downloadReportCsv(report: ExportReport, range: RangeChoice | null, filters: object = {}): Promise<string> {
+  return downloadReport(report, "csv", range, filters);
+}
+
+/** The server-generated Excel workbook for exactly these filters and range. */
+export function downloadReportXlsx(report: ExportReport, range: RangeChoice | null, filters: object = {}): Promise<string> {
+  return downloadReport(report, "xlsx", range, filters);
+}
+
+/** The server-generated PDF for exactly these filters and range. */
+export function downloadReportPdf(report: ExportReport, range: RangeChoice | null, filters: object = {}): Promise<string> {
+  return downloadReport(report, "pdf", range, filters);
 }
 
 /**
- * Downloads the server-generated CSV for exactly these filters and range (the file is made by the API,
- * never here). Errors (e.g. too many rows) arrive as the usual ApiError.
+ * Downloads a report file for exactly these filters and range: the file is made by the API, never here.
+ * Errors (e.g. too many rows) arrive as the usual ApiError.
  */
-export async function downloadReportCsv(report: ExportReport, range: RangeChoice | null, filters: object = {}): Promise<string> {
-  const { blob, headers } = await apiBlob(`/reports/${report}/export${reportQuery(range, filters, { format: "csv" })}`,
-                                          {}, "text/csv, application/json");
-  if (!(headers.get("content-type") ?? "").startsWith("text/csv")) {
+export async function downloadReport(report: ExportReport, format: ExportFormat, range: RangeChoice | null,
+                                     filters: object = {}): Promise<string> {
+  const type = EXPORT_TYPES[format];
+  const { blob, headers } = await apiBlob(`/reports/${report}/export${reportQuery(range, filters, { format })}`,
+                                          {}, `${type}, application/json`);
+  if (!(headers.get("content-type") ?? "").startsWith(type)) {
     throw new ApiError(0, "unexpected_response", "The export could not be downloaded. Please try again.");
   }
-  const name = fileNameFrom(headers.get("content-disposition"), report);
+  const name = fileNameFrom(headers.get("content-disposition"), report, format);
   const url = URL.createObjectURL(blob);
   try {
     const link = document.createElement("a");

@@ -72,6 +72,52 @@ describe("CSV export", () => {
     await expect(reports.downloadReportCsv("visits", { range: "this_month" })).rejects.toMatchObject({ code: "export_too_large" });
   });
 
+  it("downloads the server's Excel workbook for the same range and filters", async () => {
+    const { click } = stubDownload();
+    client.apiBlob.mockResolvedValue({
+      blob: new Blob(["PK"]),
+      headers: new Headers({ "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             "content-disposition": 'attachment; filename="century-gate-visits-2026-09-30.xlsx"' }) });
+    const name = await reports.downloadReportXlsx("visits", { range: "yesterday" }, { status: "CHECKED_IN", q: "" });
+    expect(client.apiBlob).toHaveBeenCalledWith(
+      "/reports/visits/export?range=yesterday&status=CHECKED_IN&format=xlsx", {},
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/json");
+    expect(name).toBe("century-gate-visits-2026-09-30.xlsx");
+    expect(click).toHaveBeenCalledOnce();
+  });
+
+  it("downloads the server's PDF for the same range and filters", async () => {
+    const { click } = stubDownload();
+    client.apiBlob.mockResolvedValue({
+      blob: new Blob(["%PDF-"]),
+      headers: new Headers({ "content-type": "application/pdf",
+                             "content-disposition": 'attachment; filename="century-gate-denials-2026-09-30.pdf"' }) });
+    const name = await reports.downloadReportPdf("denials", { range: "today" }, { source: "lookup", gate_id: "" });
+    expect(client.apiBlob).toHaveBeenCalledWith("/reports/denials/export?range=today&source=lookup&format=pdf", {},
+                                                "application/pdf, application/json");
+    expect(name).toBe("century-gate-denials-2026-09-30.pdf");
+    expect(click).toHaveBeenCalledOnce();
+    expect(reports.fileNameFrom(null, "denials", "pdf")).toBe("century-gate-denials.pdf");
+  });
+
+  it("refuses a PDF download that is not a PDF", async () => {
+    stubDownload();
+    client.apiBlob.mockResolvedValue({ blob: new Blob(["{}"]), headers: new Headers({ "content-type": "application/json" }) });
+    await expect(reports.downloadReportPdf("visits", { range: "today" })).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("keeps each format's extension in the file name", () => {
+    expect(reports.fileNameFrom('attachment; filename="century-gate-hosts-2026-09-30.csv"', "hosts", "xlsx"))
+      .toBe("century-gate-hosts.xlsx");
+    expect(reports.fileNameFrom(null, "guards", "xlsx")).toBe("century-gate-guards.xlsx");
+  });
+
+  it("refuses an Excel download that is not a workbook", async () => {
+    stubDownload();
+    client.apiBlob.mockResolvedValue({ blob: new Blob(["a,b"]), headers: new Headers({ "content-type": "text/csv" }) });
+    await expect(reports.downloadReportXlsx("visits", { range: "today" })).rejects.toBeInstanceOf(ApiError);
+  });
+
   it("refuses an answer that is not a CSV file", async () => {
     stubDownload();
     client.apiBlob.mockResolvedValue({ blob: new Blob(["{}"]), headers: new Headers({ "content-type": "application/json" }) });

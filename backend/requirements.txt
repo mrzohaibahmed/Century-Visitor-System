@@ -10,3 +10,7 @@ argon2-cffi-bindings==26.1.0
 pillow==12.3.0          # visitor photos: validation and re-encoding (Phase 4)
 cryptography==50.0.1    # AES-256-GCM for gate camera passwords (app/core/secrets.py); same pin as deploy ops tools
 tzdata==2026.4          # IANA time zones on Windows (Asia/Karachi)
+XlsxWriter==3.2.9       # report exports as .xlsx (write-only, no dependencies, constant-memory rows)
+reportlab==5.0.1        # report exports as .pdf (drawn directly on the page canvas: fast, flat memory)
+charset-normalizer==3.5.2  # (reportlab dependency, pinned like the others)
+uharfbuzz==0.56.2       # text shaping for reportlab: Urdu / Arabic script letters joined and right-to-left

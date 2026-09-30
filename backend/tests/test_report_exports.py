@@ -101,8 +101,8 @@ async def test_a_one_day_file_name_and_no_request_text_in_it(admin):
 
 
 @pytest.mark.parametrize("params,status,code", [
-    ({"format": "xlsx"}, 422, "validation_error"),
-    ({"format": "pdf"}, 422, "validation_error"),
+    ({"format": "xls"}, 422, "validation_error"),                  # xlsx is supported since step 8
+    ({"format": "docx"}, 422, "validation_error"),                 # pdf is supported since step 9
     ({"range": "custom", "from": "2026-09-02", "to": "2026-09-01"}, 422, "invalid_range"),
     ({"host_id": "nope"}, 422, "validation_error"),
 ])

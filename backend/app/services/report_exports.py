@@ -1,5 +1,6 @@
 """
-Report exports (CSV). Administrators only: the routes require reports:view and reports:export.
+Report exports (CSV and XLSX). Administrators only: the routes require reports:view and reports:export.
+Both formats are written from the same columns and the same rows (see xlsx_file for the workbook).
 
 Same data as the report screens, never a second implementation: every export reads its rows from the
 same service function and the same row schema as the JSON report (so the same filters, date range,
@@ -19,8 +20,12 @@ The file:
 - formula injection: a text cell starting with = + - @, a tab or a carriage return gets a leading
   apostrophe, the usual (OWASP) mitigation, so a spreadsheet shows it as text and never runs it.
 """
+import asyncio
+import contextlib
 import csv
 import io
+import os
+import tempfile
 from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -225,6 +230,72 @@ async def csv_stream(columns: list[Column], rows: AsyncIterator, tz_name: str,
             buffer.seek(0)
             buffer.truncate()
     yield ((BOM if first else "") + buffer.getvalue()).encode("utf-8")
+
+
+# ------------------------------------------------------------------------------------------ XLSX
+XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_XLSX_DATETIME = "yyyy-mm-dd hh:mm"
+SHEET_TITLES = {"visits": "Visits", "visitors": "Visitors", "hosts": "Hosts", "departments": "Departments",
+                "guards": "Guards", "inside": "Currently inside", "denials": "Refused entries"}
+
+
+async def xlsx_file(columns: list[Column], rows: AsyncIterator, *, report: str, tz_name: str,
+                    about: list[tuple[str, str]]) -> str:
+    """Builds the workbook in a temporary file (returned; the caller deletes it once sent) from the SAME
+    columns and rows as the CSV. Sheet 1: the report (bold frozen header, filter buttons, numbers as
+    numbers, date-times in the organisation's time zone). Sheet 2 "About": what the file contains.
+
+    Memory stays flat: constant_memory writes each finished row to disk. Every text cell is written as
+    text (never parsed as a formula, a number or a link), so formula injection is impossible without
+    changing any value. Anything that fails removes the file; nothing half-built is ever sent."""
+    import xlsxwriter  # only needed for this format
+
+    tz = ZoneInfo(tz_name)
+    handle, path = tempfile.mkstemp(prefix="cgvms-report-", suffix=".xlsx")
+    os.close(handle)
+    try:
+        book = xlsxwriter.Workbook(path, {"constant_memory": True, "strings_to_formulas": False,
+                                          "strings_to_numbers": False, "strings_to_urls": False})
+        bold = book.add_format({"bold": True})
+        when = book.add_format({"num_format": _XLSX_DATETIME})
+        sheet = book.add_worksheet(SHEET_TITLES.get(report, "Report"))
+        for i, column in enumerate(columns):
+            sheet.set_column(i, i, max(12, min(40, len(column.header) + 4)))
+        sheet.write_row(0, 0, [c.header for c in columns], bold)
+        last = 0
+        async for row in rows:
+            last += 1
+            for i, column in enumerate(columns):
+                value = column.value(row)
+                if value is None:
+                    continue
+                if isinstance(value, bool):
+                    sheet.write_string(last, i, "Yes" if value else "No")
+                elif isinstance(value, int):
+                    sheet.write_number(last, i, value)
+                elif isinstance(value, datetime):          # Excel has no time zones: local wall-clock time
+                    sheet.write_datetime(last, i, value.astimezone(tz).replace(tzinfo=None), when)
+                else:
+                    sheet.write_string(last, i, str(value))
+        sheet.freeze_panes(1, 0)
+        sheet.autofilter(0, 0, last, len(columns) - 1)
+
+        info = book.add_worksheet("About")
+        info.set_column(0, 0, 22)
+        info.set_column(1, 1, 60)
+        for n, (label, text) in enumerate(about):
+            info.write_string(n, 0, label, bold)
+            info.write_string(n, 1, text)
+        await asyncio.to_thread(book.close)               # zipping is CPU work: off the event loop
+        return path
+    except BaseException:
+        discard(path)
+        raise
+
+
+def discard(path: str) -> None:
+    with contextlib.suppress(OSError):
+        os.remove(path)
 
 
 def filename(report: str, r: DayRange | None = None, at: datetime | None = None, tz_name: str | None = None) -> str:

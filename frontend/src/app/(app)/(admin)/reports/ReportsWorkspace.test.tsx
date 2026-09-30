@@ -7,7 +7,7 @@ import type { Overview, ReportRange, VisitReportRow } from "@/lib/api/reports";
 const api = {
   getOverview: vi.fn(), getVisitReport: vi.fn(), getVisitorReport: vi.fn(), getHostReport: vi.fn(),
   getDepartmentReport: vi.fn(), getGuardReport: vi.fn(), getInsideReport: vi.fn(), getDenialReport: vi.fn(),
-  downloadReportCsv: vi.fn(),
+  downloadReportCsv: vi.fn(), downloadReportXlsx: vi.fn(), downloadReportPdf: vi.fn(),
 };
 vi.mock("@/lib/api/reports", async (original) => {
   const actual = await original<typeof import("@/lib/api/reports")>();
@@ -202,6 +202,72 @@ describe("Visits report", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("Choose a shorter date range.");
   });
 
+  it("exports Excel with the same filters and range as the screen", async () => {
+    api.downloadReportXlsx.mockResolvedValue("century-gate-visits-2026-09-01_to_2026-09-15.xlsx");
+    render(<ReportsWorkspace />);
+    fireEvent.click(screen.getByLabelText("Custom"));
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-09-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-09-15" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    openTab("Visits");
+    await screen.findAllByTestId("report-row");
+    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "CHECKED_IN" } });
+    fireEvent.change(screen.getByLabelText("Purpose"), { target: { value: "INTERVIEW" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => expect(api.getVisitReport.mock.calls.at(-1)?.[1]).toMatchObject({ status: "CHECKED_IN" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export Excel" }));
+    await waitFor(() => expect(api.downloadReportXlsx).toHaveBeenCalledWith(
+      "visits", { range: "custom", from: "2026-09-01", to: "2026-09-15" },
+      expect.objectContaining({ status: "CHECKED_IN", reason_code: "INTERVIEW" })));
+    expect(api.downloadReportCsv).not.toHaveBeenCalled();                 // one request, for the chosen format
+    expect(toast.success).toHaveBeenCalledWith("Downloaded century-gate-visits-2026-09-01_to_2026-09-15.xlsx");
+  });
+
+  it("shows why an Excel export failed", async () => {
+    api.downloadReportXlsx.mockRejectedValue(new ApiError(0, "network_error", "Cannot reach the server."));
+    render(<ReportsWorkspace />);
+    openTab("Visits");
+    await screen.findAllByTestId("report-row");
+    fireEvent.click(screen.getByRole("button", { name: "Export Excel" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Cannot reach the server. Check the network connection and try again.");
+    expect((screen.getByRole("button", { name: "Export Excel" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("exports a PDF with the same filters and range, and locks the export buttons meanwhile", async () => {
+    let finish: (name: string) => void = () => {};
+    api.downloadReportPdf.mockImplementation(() => new Promise<string>((resolve) => { finish = resolve; }));
+    render(<ReportsWorkspace />);
+    fireEvent.click(screen.getByLabelText("Yesterday"));
+    openTab("Visits");
+    await screen.findAllByTestId("report-row");
+    fireEvent.change(screen.getByLabelText("Search"), { target: { value: "alia" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => expect(api.getVisitReport.mock.calls.at(-1)?.[1]).toMatchObject({ q: "alia" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export PDF" }));
+    await waitFor(() => expect(api.downloadReportPdf).toHaveBeenCalledWith(
+      "visits", { range: "yesterday" }, expect.objectContaining({ q: "alia", sort: "check_in_desc" })));
+    for (const name of ["Export CSV", "Export Excel", "Export PDF"]) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);   // one at a time
+    }
+    finish("century-gate-visits-2026-09-29.pdf");
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Downloaded century-gate-visits-2026-09-29.pdf"));
+    expect((screen.getByRole("button", { name: "Export CSV" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(api.downloadReportCsv).not.toHaveBeenCalled();
+    expect(api.downloadReportXlsx).not.toHaveBeenCalled();
+  });
+
+  it("shows why a PDF export failed", async () => {
+    api.downloadReportPdf.mockRejectedValue(new ApiError(503, "pdf_unavailable", "PDF export is not available."));
+    render(<ReportsWorkspace />);
+    openTab("Security");
+    await screen.findAllByTestId("report-row");
+    fireEvent.click(screen.getByRole("button", { name: "Export PDF" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "The report could not be loaded. Please try again in a moment.");
+    expect(api.downloadReportPdf).toHaveBeenCalledWith("denials", { range: "today" }, expect.anything());
+  });
+
   it("says so when nothing matches", async () => {
     api.getVisitReport.mockResolvedValue({ range: RANGE, total: 0, next_cursor: null, items: [] });
     render(<ReportsWorkspace />);
@@ -227,6 +293,8 @@ describe("Other reports", () => {
     expect(screen.getByText("(not listed)")).toBeTruthy();
     expect(within(screen.getByRole("table", { name: "Visits per department" })).getByText("HR")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Export CSV" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Export Excel" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Export PDF" })).toHaveLength(2);
   });
 
   it("shows operators without any account data", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { FileDown, Inbox, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { FileDown, FileSpreadsheet, FileText, Inbox, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 
@@ -9,7 +9,10 @@ import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { TextField } from "@/components/ui/TextField";
 import { ApiError } from "@/lib/api/client";
-import { downloadReportCsv, type ExportReport, type RangeChoice, type ReportRange } from "@/lib/api/reports";
+import {
+  downloadReportCsv, downloadReportPdf, downloadReportXlsx, type ExportFormat, type ExportReport, type RangeChoice,
+  type ReportRange,
+} from "@/lib/api/reports";
 
 // ------------------------------------------------------------------------------------------ errors
 /** A message that is safe to show: never a raw exception. The API's own messages are written for users. */
@@ -125,31 +128,49 @@ export function LoadMore({ shown, total, hasMore, loading, onMore }: {
 }
 
 // ------------------------------------------------------------------------------------------ export
-/** Downloads the server's CSV for the report as it is shown (same range and filters). */
+/** The export formats, in button order: each one is made by the server. */
+const EXPORTS: Record<ExportFormat, {
+  label: string; Icon: typeof FileDown;
+  download: (report: ExportReport, range: RangeChoice | null, filters?: object) => Promise<string>;
+}> = {
+  csv: { label: "Export CSV", Icon: FileDown, download: downloadReportCsv },
+  xlsx: { label: "Export Excel", Icon: FileSpreadsheet, download: downloadReportXlsx },
+  pdf: { label: "Export PDF", Icon: FileText, download: downloadReportPdf },
+};
+
+/** Downloads the server's CSV, Excel or PDF file for the report as it is shown (same range and filters). */
 export function ExportButton({ report, range, filters, disabled = false }: {
   report: ExportReport; range: RangeChoice | null; filters?: object; disabled?: boolean;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<ExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function onClick() {
-    setBusy(true);
+  async function download(format: ExportFormat) {
+    setBusy(format);
     setError(null);
     try {
-      const name = await downloadReportCsv(report, range, filters);
+      const name = await EXPORTS[format].download(report, range, filters);
       toast.success(`Downloaded ${name}`);
     } catch (e) {
       setError(e instanceof ApiError ? reportErrorMessage(e) : "The export could not be downloaded. Please try again.");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
   return (
     <div className="flex flex-col items-end gap-1.5">
-      <Button variant="secondary" onClick={onClick} loading={busy} disabled={disabled}>
-        {!busy && <FileDown aria-hidden="true" />} Export CSV
-      </Button>
+      <div className="flex flex-wrap justify-end gap-2">
+        {(Object.keys(EXPORTS) as ExportFormat[]).map((format) => {
+          const { label, Icon } = EXPORTS[format];
+          return (
+            <Button key={format} variant="secondary" onClick={() => download(format)} loading={busy === format}
+                    disabled={disabled || busy !== null}>
+              {busy !== format && <Icon aria-hidden="true" />} {label}
+            </Button>
+          );
+        })}
+      </div>
       {error && <p role="alert" className="max-w-xs text-right text-sm text-danger">{error}</p>}
     </div>
   );
