@@ -35,6 +35,12 @@ describe("BadgePreview", () => {
     expect(qr.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
   });
 
+  it("prints the emergency number on the screen and printed copies", () => {
+    render(<BadgePreview issued={ISSUED} visitId="visit1" photoId={null} />);
+    expect(screen.getByTestId("badge-emergency").textContent).toBe("Emergency: 76666");
+    expect(document.body.querySelector(".badge-print-root")?.textContent).toContain("Emergency: 76666");
+  });
+
   it("prints the visit's photo on the badge, loaded through the API", async () => {
     render(<BadgePreview issued={ISSUED} visitId="visit1" photoId="photo1" />);
     const photo = screen.getByTestId("badge-photo") as HTMLImageElement;

@@ -240,9 +240,9 @@ body {
  *
  * Layout, top to bottom (content area 48 × 81.5 mm):
  *   organisation + VISITOR band                 ~11 mm
- *   photo 22 × 27.5 mm | name (11 pt, ≤ 3 lines; down to 8 pt, ≤ 4 lines, so words stay whole), visit number, gate
- *   host / department / check-in                ~10 mm
- *   QR code 26 × 26 mm (quiet zone included), footer (≤ 2 lines)
+ *   photo 26 × 36 mm | name (11 pt, ≤ 3 lines; down to 8 pt, ≤ 4 lines, so words stay whole), visit number, gate
+ *   host / department / check-in | QR code 20 × 20 mm (quiet zone included; ~0.54 mm modules, camera-scannable)
+ *   emergency number, footer (≤ 2 lines)
  * Nothing may shrink and every text block is clamped, so long names or
  * departments never push the QR code or the footer off the card.
  */
@@ -294,19 +294,19 @@ body {
 }
 .badge-id {
   display: grid;
-  grid-template-columns: 22mm minmax(0, 1fr);
+  grid-template-columns: 26mm minmax(0, 1fr);
   column-gap: 2mm;
   align-items: center;
   width: 100%;
   text-align: left;
 }
-/* 4:5 portrait. object-fit: cover crops the stored (usually 16:9 landscape) photo instead of
+/* Portrait (about 5:7), as large as the card allows. object-fit: cover crops the stored (usually 16:9 landscape) photo instead of
    stretching it; the crop is centred, a little above the middle, where the camera guide puts the face.
    The browser scales the stored JPEG straight to printer resolution: no re-encoding on the way. */
 .badge-photo {
   box-sizing: border-box;
-  width: 22mm;
-  height: 27.5mm;
+  width: 26mm;
+  height: 36mm;
   border: 0.3mm solid #000;
   border-radius: 1mm;
   background: #e5e7eb;
@@ -360,19 +360,35 @@ body {
   font-weight: 600;
   color: #333;
 }
-.badge-facts {
+.badge-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20mm;
+  column-gap: 1.5mm;
+  align-items: center;
   width: 100%;
-  margin-top: 1.5mm;
-  padding-top: 0.8mm;
+  margin-top: auto;
+  padding-top: 1mm;
   border-top: 0.25mm solid #000;
+}
+.badge-facts {
   font-size: 7pt;
-  line-height: 1.25;
+  line-height: 1.15;
   text-align: left;
 }
-.badge-facts div { display: flex; gap: 1.5mm; }
-.badge-facts dt { flex: 0 0 8mm; color: #444; }
-.badge-facts dd { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.badge-qr { width: 26mm; height: 26mm; margin-top: auto; image-rendering: pixelated; }
+.badge-facts div + div { margin-top: 0.8mm; }
+.badge-facts dt { font-size: 5.5pt; color: #444; }
+.badge-facts dd { font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.badge-qr { width: 20mm; height: 20mm; image-rendering: pixelated; }
+.badge-emergency {
+  width: 100%;
+  margin-top: 1mm;
+  padding: 0.5mm 0;
+  border: 0.3mm solid #000;
+  border-radius: 1mm;
+  font-size: 8pt;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
 .badge-foot {
   display: -webkit-box;
   -webkit-box-orient: vertical;

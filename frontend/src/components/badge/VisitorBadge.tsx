@@ -42,6 +42,9 @@ export function useQrDataUrl(text: string | null): string | null {
 
 type BadgePhoto = { url: string } | "none" | "failed";
 
+/** The site's emergency number, printed on every badge. */
+export const EMERGENCY_NUMBER = "76666";
+
 /** Name sizes (pt), largest first. Below the first, the name may take one more line (.badge-name[data-small]). */
 const NAME_SIZES = [11, 10, 9, 8];
 
@@ -95,13 +98,17 @@ function BadgeCard({ issued, qr, photo, onPhotoError, nameSize, onScreen = false
           {b.gate_name && <p className="badge-gate">{b.gate_name}</p>}
         </div>
       </div>
-      <dl className="badge-facts">
-        <div><dt>Host</dt><dd>{b.host_name ?? "—"}</dd></div>
-        <div><dt>Dept.</dt><dd>{b.department_name ?? "—"}</dd></div>
-        <div><dt>In</dt><dd>{formatDateTime(b.check_in_at)}</dd></div>
-      </dl>
-      {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
-      {qr && <img className="badge-qr" src={qr} alt="Visitor pass QR code" data-testid={id("badge-qr")} />}
+      <div className="badge-bottom">
+        <dl className="badge-facts">
+          <div><dt>Host</dt><dd>{b.host_name ?? "—"}</dd></div>
+          <div><dt>Dept.</dt><dd>{b.department_name ?? "—"}</dd></div>
+          <div><dt>In</dt><dd>{formatDateTime(b.check_in_at)}</dd></div>
+        </dl>
+        {/* eslint-disable-next-line @next/next/no-img-element -- generated data URL */}
+        {qr ? <img className="badge-qr" src={qr} alt="Visitor pass QR code" data-testid={id("badge-qr")} />
+            : <div className="badge-qr" />}
+      </div>
+      <p className="badge-emergency" data-testid={id("badge-emergency")}>Emergency: {EMERGENCY_NUMBER}</p>
       <p className="badge-foot">Valid until {formatDateTime(b.valid_until)}. Wear visibly; return at exit.</p>
     </div>
   );
