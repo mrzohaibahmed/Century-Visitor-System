@@ -200,3 +200,34 @@ async def test_a_disabled_camera_is_not_used(admin, guard, cameras):
     r = await guard.post("/api/v1/gate-camera/snapshot")
     assert r.status_code == 404 and r.json()["error"]["code"] == "gate_camera_unavailable"
     assert cameras[0].requests == []
+
+
+# ---------------------------------------------------------------- live view frames
+async def test_preview_is_the_cameras_own_frame_and_stores_nothing(harness, admin, guard, cameras):
+    await one_gate_with_camera(admin, cameras[0])
+    r = await guard.get("/api/v1/gate-camera/preview")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+    assert "no-store" in r.headers["cache-control"]
+    assert await picture_size(r) == (1280, 720)                        # as the camera sent it, not scaled
+    assert await harness.db.photos.count_documents({}) == 0
+    for secret in (PASSWORD, USER, "127.0.0.1"):
+        assert secret not in r.headers.values() and secret.encode() not in r.content
+
+
+async def test_preview_uses_the_sessions_gate_camera_only(admin, guard, cameras):
+    a = (await admin.post("/api/v1/gates", json={"name": "Main Gate"})).json()["id"]
+    b = (await admin.post("/api/v1/gates", json={"name": "East Gate"})).json()["id"]
+    await configure(admin, a, cameras[0])
+    await configure(admin, b, cameras[1])
+    assert (await guard.put("/api/v1/auth/session/gate", json={"gate_id": a})).status_code == 200
+    r = await guard.get(f"/api/v1/gate-camera/preview?gate_id={b}&port={cameras[1].port}")
+    assert r.status_code == 200 and await picture_size(r) == (1280, 720)
+    assert cameras[1].requests == []
+
+
+async def test_preview_failures_and_refusals_are_safe(harness, admin, guard, cameras):
+    await one_gate_with_camera(admin, cameras[0], password="Wrong-Pass-9")
+    r = await guard.get("/api/v1/gate-camera/preview")
+    assert r.status_code == 502 and r.json()["error"]["code"] == "camera_authentication_failed"
+    assert "Wrong-Pass-9" not in r.text
+    assert (await harness.client().get("/api/v1/gate-camera/preview")).status_code == 401

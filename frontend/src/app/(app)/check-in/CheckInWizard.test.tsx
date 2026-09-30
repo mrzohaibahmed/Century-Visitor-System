@@ -10,7 +10,7 @@ import { installCamera } from "@/test-utils/camera";
 const api = {
   lookupVisitor: vi.fn(), createVisitor: vi.fn(), getVisitor: vi.fn(), checkIn: vi.fn(), checkOut: vi.fn(),
   listHosts: vi.fn(), listDepartments: vi.fn(), issuePass: vi.fn(), recordBadgePrint: vi.fn(), uploadVisitorPhoto: vi.fn(),
-  sessionGateCamera: vi.fn(), captureGateCameraPhoto: vi.fn(),
+  sessionGateCamera: vi.fn(), captureGateCameraPhoto: vi.fn(), gateCameraPreviewFrame: vi.fn(),
 };
 vi.mock("@/lib/api/visitors", async (original) => ({
   ...(await original<typeof import("@/lib/api/visitors")>()),
@@ -36,6 +36,7 @@ vi.mock("@/lib/api/gateCameras", async (original) => ({
   ...(await original<typeof import("@/lib/api/gateCameras")>()),
   sessionGateCamera: (...a: unknown[]) => api.sessionGateCamera(...a),
   captureGateCameraPhoto: (...a: unknown[]) => api.captureGateCameraPhoto(...a),
+  gateCameraPreviewFrame: (...a: unknown[]) => api.gateCameraPreviewFrame(...a),
 }));
 vi.mock("@/lib/api/directory", () => ({
   listHosts: (...a: unknown[]) => api.listHosts(...a),
@@ -416,6 +417,7 @@ describe("CheckInWizard photo from the gate camera", () => {
 
   beforeEach(() => {
     api.sessionGateCamera.mockResolvedValue({ available: true });
+    api.gateCameraPreviewFrame.mockResolvedValue(picture);                   // live view
     URL.createObjectURL = vi.fn(() => "blob:gate-1");
     URL.revokeObjectURL = vi.fn();
   });
@@ -427,8 +429,8 @@ describe("CheckInWizard photo from the gate camera", () => {
     await toPhotoStep();
     expect(api.sessionGateCamera).toHaveBeenCalledWith();                     // the server picks the camera
     fireEvent.click(await screen.findByRole("button", { name: "Take photo with gate camera" }));
-    expect(api.captureGateCameraPhoto).toHaveBeenCalledWith();
     expect((await screen.findByTestId("gate-camera-photo")).getAttribute("src")).toBe("blob:gate-1");
+    expect(api.captureGateCameraPhoto).toHaveBeenCalledWith();
     expect(api.uploadVisitorPhoto).not.toHaveBeenCalled();                    // a preview is not a visitor photo
     fireEvent.click(screen.getByRole("button", { name: "Use this photo" }));
     await screen.findByRole("button", { name: "Confirm check-in" });
@@ -444,6 +446,7 @@ describe("CheckInWizard photo from the gate camera", () => {
     await toPhotoStep();
     fireEvent.click(await screen.findByRole("button", { name: "Take photo with gate camera" }));
     fireEvent.click(await screen.findByRole("button", { name: "Retake" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Take photo with gate camera" }));
     await screen.findByRole("button", { name: "Use this photo" });
     expect(api.captureGateCameraPhoto).toHaveBeenCalledTimes(2);
     expect(api.uploadVisitorPhoto).not.toHaveBeenCalled();

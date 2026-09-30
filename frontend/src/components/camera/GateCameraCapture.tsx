@@ -5,20 +5,28 @@ import { useEffect, useRef, useState } from "react";
 
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
-import { errorMessage } from "@/lib/api/client";
-import { captureGateCameraPhoto } from "@/lib/api/gateCameras";
+import { ApiError, errorMessage } from "@/lib/api/client";
+import { captureGateCameraPhoto, gateCameraPreviewFrame } from "@/lib/api/gateCameras";
 
 type State =
-  | { kind: "idle" }
+  | { kind: "live" }
   | { kind: "capturing" }
   | { kind: "captured"; blob: Blob; url: string }
   | { kind: "problem"; message: string };
 
+/** Shortest time between two live-view frames (the camera is asked one frame at a time). */
+export const FRAME_INTERVAL_MS = 150;
+/** Wait before asking again when the camera is busy (e.g. an administrator's test). */
+const BUSY_RETRY_MS = 1000;
+
+type LiveRun = { stop: (abort: boolean) => void; done: Promise<void> };
+
 /**
- * The gate's fixed camera (Hikvision) as the photo source: take photo → preview → retake or confirm.
- * The server takes the picture with the camera of this session's gate; the browser never talks to the
- * camera and never names it. The picture is only a preview, kept in memory: `onConfirm` uploads it the
- * same way as a webcam photo. The camera is only asked when the guard presses the button.
+ * The gate's fixed camera (Hikvision) as the photo source: live view → take photo → preview → retake or confirm.
+ * The server talks to the camera of this session's gate; the browser never talks to the camera and never
+ * names it. Live view is a series of frames asked from the server one after another (never uploaded); the
+ * photo itself is a separate capture, checked like a visitor photo. The picture is kept in memory only:
+ * `onConfirm` uploads it the same way as a webcam photo.
  */
 export function GateCameraCapture({ onConfirm, onUseWebcam, confirmLabel = "Use this photo" }: {
   /** Uploads the photo. A rejection is shown and the photo is kept for another try. */
@@ -27,19 +35,27 @@ export function GateCameraCapture({ onConfirm, onUseWebcam, confirmLabel = "Use 
   onUseWebcam: () => void;
   confirmLabel?: string;
 }) {
-  const [state, setState] = useState<State>({ kind: "idle" });
+  const [state, setState] = useState<State>({ kind: "live" });
+  const [frame, setFrame] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const busy = useRef(false);                        // one picture at a time, even on a double click
   const urlRef = useRef<string | null>(null);
+  const frameRef = useRef<string | null>(null);
+  const live = useRef<LiveRun | null>(null);
   const mounted = useRef(true);
 
   useEffect(() => {
     mounted.current = true;
+    startLive();
     return () => {
       mounted.current = false;
+      void stopLive(true);
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);   // leaving the step discards an unused picture
+      urlRef.current = null;
+      dropFrame();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- start once per mount
   }, []);
 
   function forget() {
@@ -47,15 +63,75 @@ export function GateCameraCapture({ onConfirm, onUseWebcam, confirmLabel = "Use 
     urlRef.current = null;
   }
 
+  function dropFrame() {
+    if (frameRef.current) URL.revokeObjectURL(frameRef.current);
+    frameRef.current = null;
+    if (mounted.current) setFrame(null);
+  }
+
+  function startLive() {
+    if (live.current) return;
+    const controller = new AbortController();
+    let stopped = false;
+    let wake: () => void = () => {};
+    const pause = (ms: number) => new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      wake = () => { clearTimeout(timer); resolve(); };
+    });
+
+    const done = (async () => {
+      while (!stopped) {
+        if (typeof document !== "undefined" && document.hidden) {     // nobody is looking: do not ask the camera
+          await pause(BUSY_RETRY_MS);
+          continue;
+        }
+        const started = Date.now();
+        try {
+          const blob = await gateCameraPreviewFrame(controller.signal);
+          if (stopped || !mounted.current) return;
+          const url = URL.createObjectURL(blob);
+          if (frameRef.current) URL.revokeObjectURL(frameRef.current);
+          frameRef.current = url;
+          setFrame(url);
+        } catch (error) {
+          if (stopped || !mounted.current) return;
+          if (error instanceof ApiError && error.code === "gate_camera_busy") {
+            await pause(BUSY_RETRY_MS);
+            continue;
+          }
+          live.current = null;
+          dropFrame();
+          setState({ kind: "problem", message: errorMessage(error) });
+          return;
+        }
+        await pause(Math.max(0, FRAME_INTERVAL_MS - (Date.now() - started)));
+      }
+    })();
+    live.current = {
+      stop: (abort) => { stopped = true; wake(); if (abort) controller.abort(); },
+      done,
+    };
+  }
+
+  /** Stops live view. Without `abort` it waits for the frame being fetched, so the camera is free again. */
+  async function stopLive(abort = false) {
+    const run = live.current;
+    live.current = null;
+    if (!run) return;
+    run.stop(abort);
+    await run.done.catch(() => {});
+  }
+
   async function take() {
     if (busy.current) return;
     busy.current = true;
-    forget();                                        // Retake: the previous picture is dropped
     setUploadError(null);
     setState({ kind: "capturing" });
     try {
+      await stopLive();
       const blob = await captureGateCameraPhoto();
       if (!mounted.current) return;
+      forget();
       urlRef.current = URL.createObjectURL(blob);
       setState({ kind: "captured", blob, url: urlRef.current });
     } catch (error) {
@@ -63,6 +139,15 @@ export function GateCameraCapture({ onConfirm, onUseWebcam, confirmLabel = "Use 
     } finally {
       busy.current = false;
     }
+  }
+
+  /** Back to live view: Retake drops the picture; after a problem, the camera is asked again. */
+  function goLive() {
+    if (busy.current) return;
+    forget();                                        // Retake: the previous picture is dropped
+    setUploadError(null);
+    setState({ kind: "live" });
+    startLive();
   }
 
   async function confirm(blob: Blob) {
@@ -78,6 +163,7 @@ export function GateCameraCapture({ onConfirm, onUseWebcam, confirmLabel = "Use 
   }
 
   const capturing = state.kind === "capturing";
+  const showFrame = (state.kind === "live" || capturing) && frame;
   return (
     <div className="space-y-4" data-testid="gate-camera-capture">
       {state.kind === "problem" && (
@@ -92,16 +178,31 @@ export function GateCameraCapture({ onConfirm, onUseWebcam, confirmLabel = "Use 
           // eslint-disable-next-line @next/next/no-img-element -- in-memory preview from the server, not an asset
           <img src={state.url} alt="Photo from the gate camera" className="size-full object-cover" data-testid="gate-camera-photo" />
         )}
-        {(state.kind === "idle" || state.kind === "problem") && (
+        {showFrame && (
+          // eslint-disable-next-line @next/next/no-img-element -- live frame from the server, not an asset
+          <img src={frame} alt="Live view from the gate camera" className="size-full object-cover"
+               data-testid="gate-camera-live" />
+        )}
+        {state.kind === "live" && frame && (
+          <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/55 px-2.5 py-1 text-xs font-semibold text-white">
+            <span aria-hidden="true" className="size-2 animate-pulse rounded-full bg-red-500" />
+            Live
+          </span>
+        )}
+        {state.kind === "live" && !frame && (
+          <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-white/75">
+            <LoaderCircle aria-hidden="true" className="size-8 animate-spin" />
+            <p className="text-sm font-medium">Connecting to the gate camera…</p>
+          </div>
+        )}
+        {state.kind === "problem" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-white/75">
-            {state.kind === "problem"
-              ? <CameraOff aria-hidden="true" className="size-10" />
-              : <Camera aria-hidden="true" className="size-10" />}
+            <CameraOff aria-hidden="true" className="size-10" />
             <p className="text-sm font-medium">Ask the visitor to face the gate camera.</p>
           </div>
         )}
         {capturing && (
-          <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/85">
+          <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/40 text-white/90">
             <LoaderCircle aria-hidden="true" className="size-8 animate-spin" />
             <p className="text-sm font-medium">Taking the photo…</p>
           </div>
@@ -109,15 +210,21 @@ export function GateCameraCapture({ onConfirm, onUseWebcam, confirmLabel = "Use 
       </div>
 
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-center">
-        {state.kind !== "captured" && (
+        {(state.kind === "live" || capturing) && (
           <Button type="button" size="lg" onClick={() => void take()} loading={capturing}>
-            {!capturing && (state.kind === "problem" ? <RotateCcw aria-hidden="true" /> : <Camera aria-hidden="true" />)}
-            {state.kind === "problem" ? "Try the gate camera again" : "Take photo with gate camera"}
+            {!capturing && <Camera aria-hidden="true" />}
+            Take photo with gate camera
+          </Button>
+        )}
+        {state.kind === "problem" && (
+          <Button type="button" size="lg" onClick={goLive}>
+            <RotateCcw aria-hidden="true" />
+            Try the gate camera again
           </Button>
         )}
         {state.kind === "captured" && (
           <>
-            <Button type="button" variant="secondary" size="lg" onClick={() => void take()} disabled={uploading}>
+            <Button type="button" variant="secondary" size="lg" onClick={goLive} disabled={uploading}>
               <RotateCcw aria-hidden="true" />
               Retake
             </Button>

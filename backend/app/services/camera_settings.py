@@ -39,7 +39,7 @@ from app.services import audit
 from app.services import directory as directory_svc
 from app.services.audit import AuditAction, actor_from_user
 from app.services.auth import AuthContext, RequestMeta, session_gate
-from app.services.gate_camera import CameraConfig, CameraError, DeviceInfo, GateCameraClient
+from app.services.gate_camera import CameraConfig, CameraError, DeviceInfo, GateCameraClient, Snapshot
 
 log = logging.getLogger(__name__)
 
@@ -197,9 +197,8 @@ async def session_camera(db: AsyncDatabase, settings: Settings, ctx: AuthContext
     return gate, doc
 
 
-async def capture_for_session(db: AsyncDatabase, settings: Settings, ctx: AuthContext) -> NormalizedPhoto:
-    """One picture from the session's gate camera, checked and scaled like a visitor photo (so the
-    upload that follows accepts it), returned as a preview. Nothing is stored here."""
+async def _session_snapshot(db: AsyncDatabase, settings: Settings, ctx: AuthContext) -> Snapshot:
+    """One validated JPEG from the session's gate camera (one request per camera at a time)."""
     found = await session_camera(db, settings, ctx)
     if found is None:
         raise UNAVAILABLE_AT_GATE
@@ -213,15 +212,27 @@ async def capture_for_session(db: AsyncDatabase, settings: Settings, ctx: AuthCo
         except AppError:                                  # key missing / password unreadable: admin wording
             raise UNUSABLE_AT_GATE from None
         try:
-            shot = await asyncio.to_thread(client.capture_snapshot)
+            return await asyncio.to_thread(client.capture_snapshot)
         except CameraError as e:
             raise AppError(502, e.code.value.lower(), e.message) from None
-        try:
-            return await asyncio.to_thread(normalize_photo, shot.data)
-        except InvalidImageError:
-            raise AppError(502, "camera_image_unusable",
-                           "The gate camera's picture cannot be used. Use the webcam and tell the administrator.") \
-                from None
+
+
+async def preview_for_session(db: AsyncDatabase, settings: Settings, ctx: AuthContext) -> Snapshot:
+    """One live-view frame from the session's gate camera, exactly as the camera sent it. Only for
+    showing the guard what the camera sees; never uploaded or stored."""
+    return await _session_snapshot(db, settings, ctx)
+
+
+async def capture_for_session(db: AsyncDatabase, settings: Settings, ctx: AuthContext) -> NormalizedPhoto:
+    """One picture from the session's gate camera, checked and scaled like a visitor photo (so the
+    upload that follows accepts it), returned as a preview. Nothing is stored here."""
+    shot = await _session_snapshot(db, settings, ctx)
+    try:
+        return await asyncio.to_thread(normalize_photo, shot.data)
+    except InvalidImageError:
+        raise AppError(502, "camera_image_unusable",
+                       "The gate camera's picture cannot be used. Use the webcam and tell the administrator.") \
+            from None
 
 
 async def _run_test(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta, gate_id: str,

@@ -95,6 +95,11 @@ export function sessionGateCamera(): Promise<{ available: boolean }> {
   return apiRequest<{ available: boolean }>("/gate-camera");
 }
 
+/** One live-view frame from this session's gate camera, for showing what it sees. Never uploaded. */
+export async function gateCameraPreviewFrame(signal?: AbortSignal): Promise<Blob> {
+  return (await apiBlob("/gate-camera/preview", { signal })).blob;
+}
+
 /** A preview picture from this session's gate camera. Not stored: "Use this photo" uploads it
  *  like a webcam photo (uploadVisitorPhoto → POST /visitors/{id}/photo). */
 export async function captureGateCameraPhoto(): Promise<Blob> {

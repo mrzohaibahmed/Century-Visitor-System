@@ -43,6 +43,17 @@ async def session_gate_camera_snapshot(ctx: AuthContext = Depends(capture), data
                     headers={"Cache-Control": "no-store, private", "Content-Disposition": "inline"})
 
 
+@session_router.get("/preview", response_class=Response,
+                    responses={200: {"content": {"image/jpeg": {}}, "description": "A live-view frame; not stored"}})
+async def session_gate_camera_preview(ctx: AuthContext = Depends(capture), database: Database = Depends(get_database),
+                                      settings: Settings = Depends(get_settings)) -> Response:
+    """One live-view frame from this session's gate camera, as the camera sent it. The browser asks
+    for frames one after another to show a live picture; the photo itself is still POST /snapshot."""
+    frame = await svc.preview_for_session(database.db, settings, ctx)
+    return Response(content=frame.data, media_type=frame.content_type,
+                    headers={"Cache-Control": "no-store, private", "Content-Disposition": "inline"})
+
+
 @router.get("", response_model=list[GateCameraOut])
 async def list_gate_cameras(ctx: AuthContext = Depends(manage), database: Database = Depends(get_database),
                             settings: Settings = Depends(get_settings)) -> list[GateCameraOut]:
