@@ -29,8 +29,11 @@ export function installCamera(options: { fail?: string; secure?: boolean; suppor
   Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", { configurable: true, get: () => 640 });
   Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", { configurable: true, get: () => 480 });
   Object.defineProperty(HTMLVideoElement.prototype, "srcObject", { configurable: true, writable: true, value: null });
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
-    { drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage: vi.fn(),
+    getImageData: (_x: number, _y: number, width: number, height: number) =>
+      ({ data: new Uint8ClampedArray(width * height * 4), width, height }),
+  } as unknown as CanvasRenderingContext2D);
   vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(function (callback: BlobCallback) {
     callback(new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: "image/jpeg" }));
   });

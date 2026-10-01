@@ -5,21 +5,16 @@ import { useEffect, useRef, useState } from "react";
 
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
-import { ApiError, errorMessage } from "@/lib/api/client";
-import { captureGateCameraPhoto, gateCameraPreviewFrame } from "@/lib/api/gateCameras";
+import { errorMessage } from "@/lib/api/client";
+import { captureGateCameraPhoto } from "@/lib/api/gateCameras";
+
+import { useGateCameraLive } from "./useGateCameraLive";
 
 type State =
   | { kind: "live" }
   | { kind: "capturing" }
   | { kind: "captured"; blob: Blob; url: string }
   | { kind: "problem"; message: string };
-
-/** Shortest time between two live-view frames (the camera is asked one frame at a time). */
-export const FRAME_INTERVAL_MS = 150;
-/** Wait before asking again when the camera is busy (e.g. an administrator's test). */
-const BUSY_RETRY_MS = 1000;
-
-type LiveRun = { stop: (abort: boolean) => void; done: Promise<void> };
 
 /**
  * The gate's fixed camera (Hikvision) as the photo source: live view → take photo → preview → retake or confirm.
@@ -36,24 +31,22 @@ export function GateCameraCapture({ onConfirm, onUseWebcam, confirmLabel = "Use 
   confirmLabel?: string;
 }) {
   const [state, setState] = useState<State>({ kind: "live" });
-  const [frame, setFrame] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const busy = useRef(false);                        // one picture at a time, even on a double click
   const urlRef = useRef<string | null>(null);
-  const frameRef = useRef<string | null>(null);
-  const live = useRef<LiveRun | null>(null);
   const mounted = useRef(true);
+  const { frame, start: startLive, stop: stopLive } = useGateCameraLive({
+    onError: (message) => setState({ kind: "problem", message }),
+  });
 
   useEffect(() => {
     mounted.current = true;
     startLive();
     return () => {
       mounted.current = false;
-      void stopLive(true);
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);   // leaving the step discards an unused picture
       urlRef.current = null;
-      dropFrame();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- start once per mount
   }, []);
@@ -61,65 +54,6 @@ export function GateCameraCapture({ onConfirm, onUseWebcam, confirmLabel = "Use 
   function forget() {
     if (urlRef.current) URL.revokeObjectURL(urlRef.current);
     urlRef.current = null;
-  }
-
-  function dropFrame() {
-    if (frameRef.current) URL.revokeObjectURL(frameRef.current);
-    frameRef.current = null;
-    if (mounted.current) setFrame(null);
-  }
-
-  function startLive() {
-    if (live.current) return;
-    const controller = new AbortController();
-    let stopped = false;
-    let wake: () => void = () => {};
-    const pause = (ms: number) => new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, ms);
-      wake = () => { clearTimeout(timer); resolve(); };
-    });
-
-    const done = (async () => {
-      while (!stopped) {
-        if (typeof document !== "undefined" && document.hidden) {     // nobody is looking: do not ask the camera
-          await pause(BUSY_RETRY_MS);
-          continue;
-        }
-        const started = Date.now();
-        try {
-          const blob = await gateCameraPreviewFrame(controller.signal);
-          if (stopped || !mounted.current) return;
-          const url = URL.createObjectURL(blob);
-          if (frameRef.current) URL.revokeObjectURL(frameRef.current);
-          frameRef.current = url;
-          setFrame(url);
-        } catch (error) {
-          if (stopped || !mounted.current) return;
-          if (error instanceof ApiError && error.code === "gate_camera_busy") {
-            await pause(BUSY_RETRY_MS);
-            continue;
-          }
-          live.current = null;
-          dropFrame();
-          setState({ kind: "problem", message: errorMessage(error) });
-          return;
-        }
-        await pause(Math.max(0, FRAME_INTERVAL_MS - (Date.now() - started)));
-      }
-    })();
-    live.current = {
-      stop: (abort) => { stopped = true; wake(); if (abort) controller.abort(); },
-      done,
-    };
-  }
-
-  /** Stops live view. Without `abort` it waits for the frame being fetched, so the camera is free again. */
-  async function stopLive(abort = false) {
-    const run = live.current;
-    live.current = null;
-    if (!run) return;
-    run.stop(abort);
-    await run.done.catch(() => {});
   }
 
   async function take() {
@@ -182,6 +116,13 @@ export function GateCameraCapture({ onConfirm, onUseWebcam, confirmLabel = "Use 
           // eslint-disable-next-line @next/next/no-img-element -- live frame from the server, not an asset
           <img src={frame} alt="Live view from the gate camera" className="size-full object-cover"
                data-testid="gate-camera-live" />
+        )}
+        {state.kind === "live" && frame && (
+          // Framing guide only, as on the webcam; the whole frame is captured.
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center"
+               data-testid="gate-camera-guide">
+            <div className="aspect-[3/4] h-3/4 rounded-[50%] border-2 border-dashed border-white/70" />
+          </div>
         )}
         {state.kind === "live" && frame && (
           <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/55 px-2.5 py-1 text-xs font-semibold text-white">

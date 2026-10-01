@@ -50,6 +50,7 @@ describe("GateCameraCapture", () => {
     setup();
     expect((await screen.findByTestId("gate-camera-live")).getAttribute("src")).toMatch(/^blob:frame-/);
     expect(screen.getByText("Live")).toBeTruthy();
+    expect(screen.getByTestId("gate-camera-guide")).toBeTruthy();              // face guide, as on the webcam
     await vi.waitFor(() => expect(api.preview.mock.calls.length).toBeGreaterThan(1));
     expect(api.preview.mock.calls[0][0]).toBeInstanceOf(AbortSignal);          // no gate or camera named
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:frame-1");           // old frames are released
