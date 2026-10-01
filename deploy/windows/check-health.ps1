@@ -5,10 +5,14 @@
 .DESCRIPTION
       powershell -NoProfile -ExecutionPolicy Bypass -File check-health.ps1 [-ConfigPath ...]
 
-  Checks, without reading any password:
-    - the Windows services CGVMS-MongoDB, CGVMS-API, CGVMS-Web and CGVMS-Proxy are running;
-    - HealthUrl (normally https://<site>/api/v1/health/ready) answers "ready": the HTTPS certificate,
-      the proxy, the API, MongoDB, the schema version, transactions and the photo folder are all OK;
+  Checks, without reading any password, and prints one line per part:
+    MongoDB      service CGVMS-MongoDB running and listening on 127.0.0.1:<MongoPort>
+    API          service CGVMS-API running; http://127.0.0.1:8000/api/v1/health/ready answers "ready"
+    Database     (from the API) database reachable, schema up to date, transactions, photo folder
+    Web          service CGVMS-Web running; http://127.0.0.1:3000/login answers
+    HTTPS proxy  service CGVMS-Proxy running; HealthUrl (https://<SiteName>/api/v1/health/ready) answers
+                 "ready" with a certificate this PC trusts (exactly what a gate PC sees)
+  Each part is checked directly, so a proxy or name problem never hides the state of the others. Also:
     - the HTTPS certificate and the MongoDB certificates are valid for more than 30 days;
     - every drive holding Root, PhotoDir or the database keeps DiskMinFreePercent / DiskMinFreeGB free;
     - the last successful backup is younger than BackupMaxAgeHours.
@@ -25,26 +29,82 @@ $problems = New-Object System.Collections.Generic.List[string]
 $notes = New-Object System.Collections.Generic.List[string]
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# Services
-foreach ($svc in 'CGVMS-MongoDB', 'CGVMS-API', 'CGVMS-Web', 'CGVMS-Proxy') {
-    $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
-    if (-not $s) { $problems.Add("Service $svc is not installed.") }
-    elseif ($s.Status -ne 'Running') { $problems.Add("Service $svc is $($s.Status).") }
+$parts = New-Object System.Collections.Generic.List[object]
+function Part([string]$Name, [bool]$Ok, [string]$Detail) {
+    $parts.Add([pscustomobject]@{ part = $Name; healthy = $Ok; detail = $Detail })
+    if (-not $Ok) { $problems.Add("${Name}: $Detail") }
+}
+function Get-ServiceProblem([string]$Name) {
+    $s = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if (-not $s) { return "service $Name is not installed" }
+    if ($s.Status -ne 'Running') { return "service $Name is $($s.Status)" }
+    return ''
+}
+function Test-LocalPort([int]$Port) {
+    $tcp = New-Object Net.Sockets.TcpClient
+    try { $tcp.Connect('127.0.0.1', $Port); return $true } catch { return $false } finally { $tcp.Dispose() }
+}
+# GET a URL; returns @{ ok; status; body; error } (a 503 "not ready" still has a body).
+function Get-Url([string]$Url) {
+    try {
+        $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 15 -MaximumRedirection 0
+        return @{ ok = $true; status = [int]$r.StatusCode; body = $r.Content; error = '' }
+    } catch [System.Net.WebException] {
+        $body = ''; $status = 0
+        if ($_.Exception.Response) {
+            $status = [int]$_.Exception.Response.StatusCode
+            try { $body = (New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd() } catch { }
+        }
+        return @{ ok = $false; status = $status; body = $body; error = $_.Exception.Message }
+    }
+}
+function Read-Ready($Result) {
+    if (-not $Result.body) { return $null }
+    try { return $Result.body | ConvertFrom-Json } catch { return $null }
 }
 
-# Application readiness through the real entry point (certificate validated by Windows).
-try {
-    $response = Invoke-WebRequest -Uri $cfg.HealthUrl -UseBasicParsing -TimeoutSec 15
-    $ready = $response.Content | ConvertFrom-Json
-    if ($ready.status -ne 'ready') { $problems.Add("Application not ready: $($response.Content)") }
-} catch [System.Net.WebException] {
-    $body = ''
-    if ($_.Exception.Response) {
-        try { $body = (New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd() } catch { }
-    }
-    if ($body) { $problems.Add("Application not ready: $body") }
-    else { $problems.Add("Health URL $($cfg.HealthUrl) not reachable: $($_.Exception.Message)") }
+# MongoDB
+$p = Get-ServiceProblem 'CGVMS-MongoDB'
+if (-not $p -and -not (Test-LocalPort ([int]$cfg.MongoPort))) { $p = "not listening on 127.0.0.1:$($cfg.MongoPort)" }
+Part 'MongoDB' (-not $p) $(if ($p) { $p } else { "running on 127.0.0.1:$($cfg.MongoPort)" })
+
+# API, and through it the database (directly on the loopback port: no proxy, no certificate, no name involved).
+$p = Get-ServiceProblem 'CGVMS-API'
+$apiReady = $null
+if (-not $p) {
+    $r = Get-Url 'http://127.0.0.1:8000/api/v1/health/ready'
+    $apiReady = Read-Ready $r
+    if (-not $apiReady) { $p = "http://127.0.0.1:8000 does not answer ($($r.error))" }
 }
+Part 'API' (-not $p) $(if ($p) { $p } else { 'running on 127.0.0.1:8000' })
+if ($apiReady) {
+    $c = $apiReady.checks
+    $detail = "database $($c.database), schema $($c.schema_version), transactions $($c.transactions), photo folder $($c.photo_storage)"
+    Part 'Database' ($apiReady.status -eq 'ready') $detail
+}
+
+# Web
+$p = Get-ServiceProblem 'CGVMS-Web'
+if (-not $p) {
+    $r = Get-Url 'http://127.0.0.1:3000/login'
+    if ($r.status -ne 200) { $p = "http://127.0.0.1:3000/login answered $($r.status) $($r.error)" }
+}
+Part 'Web' (-not $p) $(if ($p) { $p } else { 'running on 127.0.0.1:3000' })
+
+# HTTPS proxy: the real address gate PCs use (certificate validated by Windows, as in a browser).
+$p = Get-ServiceProblem 'CGVMS-Proxy'
+if (-not $p) {
+    $r = Get-Url $cfg.HealthUrl
+    $viaProxy = Read-Ready $r
+    if (-not $viaProxy) {
+        $p = "$($cfg.HealthUrl) not reachable: $($r.error)"
+        if ($r.error -match 'trust|SSL|TLS|certificate') { $p += ' (is the internal CA root certificate installed on this PC? README "HTTPS")' }
+        if ($r.error -match 'remote name|resolve') { $p += " ($($cfg.SiteName) does not resolve on this PC)" }
+    } elseif ($viaProxy.status -ne 'ready' -and $apiReady -and $apiReady.status -eq 'ready') {
+        $p = "$($cfg.HealthUrl) answers not ready while the API itself is ready"
+    }
+}
+Part 'HTTPS proxy' (-not $p) $(if ($p) { $p } else { "https://$($cfg.SiteName) OK" })
 
 # HTTPS certificate expiry (as served to the gate PCs).
 $healthUri = [Uri]$cfg.HealthUrl
@@ -64,7 +124,7 @@ if ($healthUri.Scheme -eq 'https') {
 # MongoDB certificates.
 try {
     $python = Get-CgvmsPython $cfg
-    $tool = Join-Path $cfg.Root 'app\deploy\mongodb\cgvms_mongo.py'
+    $tool = Join-Path $cfg.AppDir 'deploy\mongodb\cgvms_mongo.py'
     $ErrorActionPreference = 'Continue'
     $out = & $python $tool cert-status --tls-dir (Join-Path $cfg.Root 'tls\mongodb') --warn-days $CertWarnDays 2>&1
     $certExit = $LASTEXITCODE
@@ -104,7 +164,8 @@ else {
 # Result, state changes and a daily reminder while a problem lasts.
 $healthy = $problems.Count -eq 0
 $statusDir = Get-StatusDir $cfg
-$state = [ordered]@{ checked = (Get-Date).ToString('o'); healthy = $healthy; problems = @($problems); notes = @($notes) }
+$state = [ordered]@{ checked = (Get-Date).ToString('o'); healthy = $healthy; parts = @($parts); problems = @($problems)
+                    notes = @($notes) }
 $state | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $statusDir 'health.json') -Encoding UTF8
 $stateFile = Join-Path $statusDir 'health-state.txt'
 $previous = if (Test-Path -LiteralPath $stateFile) { Get-Content -LiteralPath $stateFile -Raw } else { '' }
@@ -115,6 +176,11 @@ if ($current.Trim() -ne $previous.Trim()) {
     Set-Content -LiteralPath $stateFile -Value $current -Encoding UTF8
     Write-StatusLog $cfg 'health' ($(if ($healthy) { 'Healthy.' } else { 'PROBLEMS: ' + ($problems -join ' | ') }))
 }
+foreach ($part in $parts) {
+    Write-Host ("  {0,-12} {1,-9} {2}" -f $part.part, $(if ($part.healthy) { 'healthy' } else { 'PROBLEM' }), $part.detail)
+}
+$other = @($problems | Where-Object { $p = $_; -not ($parts | Where-Object { $p -like "$($_.part):*" }) })
 if ($healthy) { Write-Host 'Healthy.'; $notes | ForEach-Object { Write-Host "  $_" }; exit 0 }
-Write-Host 'PROBLEMS:'; $problems | ForEach-Object { Write-Host "  - $_" }
+if ($other.Count) { Write-Host 'Other problems:'; $other | ForEach-Object { Write-Host "  - $_" } }
+Write-Host 'NOT HEALTHY.'
 exit 1

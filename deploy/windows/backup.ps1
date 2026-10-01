@@ -14,13 +14,18 @@
      the application, so existing backup copies are never overwritten (a damaged live file cannot
      replace a good backup copy). The database is dumped FIRST, so every photo record in the dump
      has its file in the backup.
-  4. Writes manifest.json (SHA-256 of the dump, counts) and copies the dump to
+  4. Adds the non-secret settings (config\cgvms.psd1, mongodb\mongod.conf) under config\, writes
+     manifest.json (SHA-256 of the dump, counts) and copies everything to
      <BackupDestination>\database\cgvms-<timestamp>, then re-checks the SHA-256 there.
+     Secrets (backend\.env, Root\secrets) are deliberately NOT in the backup: they are kept in the
+     password manager, so a stolen backup does not also hand over the keys.
   5. Retention (only folders named cgvms-YYYYMMDD-HHMMSS in <BackupDestination>\database are ever
      deleted): every backup younger than BackupKeepDays, plus the newest backup of each of the last
      BackupKeepMonthly months. Photo backups are never deleted by this script.
   6. Records the result: status\last-backup.json, status\backup-<date>.log and the Windows event
      log (source CenturyGateVMS, 2000 = success, 2001 = failure). Exit code 0 / 1.
+  BackupDestination (cgvms.psd1) defaults to Root\backups on this PC. Copy that folder to another
+  disk or PC regularly, or point BackupDestination at one: a backup on the same disk dies with it.
 #>
 param([string]$ConfigPath = 'C:\CenturyGateVMS\config\cgvms.psd1')
 
@@ -51,7 +56,7 @@ function Remove-ExpiredBackups([string]$DatabaseDir) {
 
 try {
     $python = Get-CgvmsPython $cfg
-    $tool = Join-Path $cfg.Root 'app\deploy\mongodb\cgvms_mongo.py'
+    $tool = Join-Path $cfg.AppDir 'deploy\mongodb\cgvms_mongo.py'
     $dumpConfig = Join-Path $cfg.Root 'secrets\mongodump.yaml'
     $mongodump = Join-Path $cfg.MongoToolsBin 'mongodump.exe'
     foreach ($required in $dumpConfig, $mongodump, $cfg.PhotoDir) {
@@ -84,7 +89,12 @@ try {
     $backupPhotos = @(Get-ChildItem -LiteralPath $photoTarget -Recurse -File -Filter '*.jpg').Count
     if ($backupPhotos -lt $livePhotos) { throw "Photo backup incomplete: $backupPhotos of $livePhotos files." }
 
-    # 4. Manifest, copy to the destination, verify the copy.
+    # 4. Settings (no secrets), manifest, copy to the destination, verify the copy.
+    $configCopy = Join-Path $staging 'config'
+    New-Item -ItemType Directory -Path $configCopy -Force | Out-Null
+    foreach ($file in (Join-Path $cfg.Root 'config\cgvms.psd1'), (Join-Path $cfg.Root 'mongodb\mongod.conf')) {
+        if (Test-Path -LiteralPath $file) { Copy-Item -LiteralPath $file -Destination $configCopy }
+    }
     $manifest = [ordered]@{
         name = $name; created = $started.ToString('o'); computer = $env:COMPUTERNAME
         database = @{ file = 'mongodb.archive.gz'; sha256 = $archiveHash; bytes = $archiveSize; oplog = $true }

@@ -6,11 +6,12 @@
       powershell -NoProfile -ExecutionPolicy Bypass -File install-services.ps1 [-ConfigPath ...] [-DryRun]
       powershell -NoProfile -ExecutionPolicy Bypass -File install-services.ps1 -Uninstall      (keeps all data)
 
-  Before running it, follow README "Production operations" (Python, Node.js, MongoDB, the tools,
-  certificates, cgvms_mongo.py prepare/init, backend\.env, npm run build). It then:
+  Normally run by setup-production.ps1. Run it again after changing SiteName, TlsMode or AppDir in
+  cgvms.psd1: it rewrites the service settings and restarts the services. It:
     1. checks that everything it needs is in place (and stops with a clear message if not);
     2. creates the folders under Root;
-    3. registers four services, each running under its own virtual account (NT SERVICE\<name>),
+    3. writes Root\services\<name>.xml from deploy\windows\services (filling in AppDir, SiteName, TlsMode)
+       and registers four services, each running under its own virtual account (NT SERVICE\<name>),
        starting automatically and restarting after a failure:
          CGVMS-MongoDB  mongod with mongodb\mongod.conf (TLS, login, 127.0.0.1:27018)
          CGVMS-API      python -m app.serve (127.0.0.1:8000)          needs CGVMS-MongoDB
@@ -20,7 +21,7 @@
        certificates and the photo folder readable only by the service that needs them (and
        Administrators/SYSTEM); nothing is writable by ordinary users;
     5. registers the event log source "CenturyGateVMS" and opens ports 443 and 80 in Windows Firewall;
-    6. starts the services and waits for the health check.
+    6. starts the services (restarts the ones already running, so new settings apply) and runs the health check.
   -DryRun prints every action without changing anything.
 #>
 param(
@@ -33,6 +34,7 @@ param(
 
 $cfg = Get-CgvmsConfig $ConfigPath
 $root = $cfg.Root
+$app = $cfg.AppDir
 $services = 'CGVMS-MongoDB', 'CGVMS-API', 'CGVMS-Web', 'CGVMS-Proxy'
 $winswServices = 'CGVMS-API', 'CGVMS-Web', 'CGVMS-Proxy'
 $admins = '*S-1-5-32-544'      # Administrators (by SID: works in any Windows language)
@@ -77,38 +79,39 @@ if ($Uninstall) {
 }
 
 # ------------------------------------------------------------------------------------------ 1. checks
-$python = Join-Path $root 'app\backend\.venv\Scripts\python.exe'
+$python = Join-Path $app 'backend\.venv\Scripts\python.exe'
 $node = 'C:\Program Files\nodejs\node.exe'
 $mongod = Join-Path $cfg.MongoBin 'mongod.exe'
+$envFile = Join-Path $app 'backend\.env'
 $required = [ordered]@{
+    'Application folder (AppDir)'                 = (Join-Path $app 'deploy\windows\services')
     'API Python environment (README step 3)'      = $python
     'Node.js (installed for all users)'           = $node
-    'Next.js production build (npm run build)'    = (Join-Path $root 'app\frontend\.next\BUILD_ID')
+    'Next.js production build (npm run build)'    = (Join-Path $app 'frontend\.next\BUILD_ID')
     'MongoDB server'                              = $mongod
     'mongod.conf (from deploy\mongodb)'           = (Join-Path $root 'mongodb\mongod.conf')
     'MongoDB server certificate (prepare)'        = (Join-Path $root 'tls\mongodb\server.pem')
     'MongoDB CA certificate (prepare)'            = (Join-Path $root 'tls\mongodb\ca.pem')
     'MongoDB replica-set key file (prepare)'      = (Join-Path $root 'tls\mongodb\mongodb.keyfile')
-    'API settings backend\.env (api.env.template)'    = (Join-Path $root 'app\backend\.env')
+    'API settings backend\.env (api.env.template)'    = $envFile
     'Photo folder (PhotoDir)'                     = $cfg.PhotoDir
     'Caddy (tools\caddy.exe)'                     = (Join-Path $root 'tools\caddy.exe')
     'WinSW (tools\WinSW-x64.exe)'                 = (Join-Path $root 'tools\WinSW-x64.exe')
     'MongoDB Database Tools (mongodump)'          = (Join-Path $cfg.MongoToolsBin 'mongodump.exe')
 }
+if ($cfg.TlsMode -eq 'company') {
+    $required['HTTPS certificate (tls\web\cert.pem)'] = (Join-Path $root 'tls\web\cert.pem')
+    $required['HTTPS certificate key (tls\web\key.pem)'] = (Join-Path $root 'tls\web\key.pem')
+}
 $missing = @($required.GetEnumerator() | Where-Object { -not (Test-Path -LiteralPath $_.Value) })
 foreach ($m in $missing) { Write-Host "MISSING: $($m.Key): $($m.Value)" }
 if ($missing.Count -and -not $DryRun) { throw "$($missing.Count) prerequisite(s) missing; see README 'Production operations'." }
-if (Test-Path -LiteralPath (Join-Path $root 'app\backend\.env')) {
-    $envText = Get-Content -LiteralPath (Join-Path $root 'app\backend\.env') -Raw
+if (Test-Path -LiteralPath $envFile) {
+    $envText = Get-Content -LiteralPath $envFile -Raw
     if ($envText -notmatch '(?m)^CG_ENVIRONMENT=production\s*$') { throw 'backend\.env must contain CG_ENVIRONMENT=production.' }
     if ($envText -match 'PASTE-FROM') { throw 'backend\.env still contains the placeholder for CG_MONGO_URI.' }
 }
-$proxyXml = Join-Path $root 'services\CGVMS-Proxy.xml'
-if (Test-Path -LiteralPath $proxyXml) {
-    if ((Get-Content -LiteralPath $proxyXml -Raw) -match 'vms\.century\.local' -and $cfg.SiteName -ne 'vms.century.local') {
-        Write-Host "NOTE: services\CGVMS-Proxy.xml still uses vms.century.local but SiteName is $($cfg.SiteName)."
-    }
-}
+Write-Host "Application: $app   Data: $root   Site: https://$($cfg.SiteName) ($($cfg.TlsMode) certificate)"
 
 # ------------------------------------------------------------------------------------------ 2. folders
 foreach ($dir in 'services', 'logs\api', 'logs\web', 'logs\proxy', 'mongodb\data', 'mongodb\log', 'caddy-data',
@@ -128,15 +131,16 @@ if (-not (Get-Service -Name 'CGVMS-MongoDB' -ErrorAction SilentlyContinue)) {
         & sc.exe failure CGVMS-MongoDB reset= 3600 actions= restart/10000/restart/30000/restart/120000 | Out-Null
     }.GetNewClosure()
 }
+$placeholders = @{ '__APP_DIR__' = $app; '__SITE__' = $cfg.SiteName; '__TLS_MODE__' = $cfg.TlsMode }
 foreach ($svc in $winswServices) {
     $exe = Join-Path $root "services\$svc.exe"
     $xml = Join-Path $root "services\$svc.xml"
-    Step "Copy WinSW and $svc.xml to $root\services" {
-        Copy-Item -LiteralPath (Join-Path $root 'tools\WinSW-x64.exe') -Destination $exe -Force
-        # The proxy definition holds site-specific values: an existing (edited) copy is kept.
-        if (-not (Test-Path -LiteralPath $xml) -or $svc -ne 'CGVMS-Proxy') {
-            Copy-Item -LiteralPath (Join-Path $root "app\deploy\windows\services\$svc.xml") -Destination $xml -Force
-        }
+    $text = Get-Content -LiteralPath (Join-Path $app "deploy\windows\services\$svc.xml") -Raw
+    foreach ($key in $placeholders.Keys) { $text = $text.Replace($key, [Security.SecurityElement]::Escape([string]$placeholders[$key])) }
+    Step "Write $xml" {
+        [IO.File]::WriteAllText($xml, $text, (New-Object Text.UTF8Encoding($false)))
+        # The running service locks its copy of WinSW: copy it only when it is not there yet.
+        if (-not (Test-Path -LiteralPath $exe)) { Copy-Item -LiteralPath (Join-Path $root 'tools\WinSW-x64.exe') -Destination $exe }
     }.GetNewClosure()
     if (-not (Get-Service -Name $svc -ErrorAction SilentlyContinue)) {
         Step "Register service $svc (virtual account NT SERVICE\$svc)" {
@@ -151,11 +155,14 @@ foreach ($svc in $winswServices) {
 # ------------------------------------------------------------------------------------------ 4. permissions
 $api = 'NT SERVICE\CGVMS-API'; $web = 'NT SERVICE\CGVMS-Web'; $proxy = 'NT SERVICE\CGVMS-Proxy'; $db = 'NT SERVICE\CGVMS-MongoDB'
 Acl $root -Reset -Grants @("${api}:(RX)", "${web}:(RX)", "${proxy}:(RX)", "${db}:(RX)")        # traverse the top folder only
-Acl (Join-Path $root 'app') -Grants @("${api}:(OI)(CI)RX", "${web}:(OI)(CI)RX", "${proxy}:(OI)(CI)RX")
+# Application code: read-only for the services, not changeable by ordinary users; the administrator who
+# installs keeps the right to update it (git pull, npm run build) without an elevated prompt.
+$installer = "$env:USERDOMAIN\$env:USERNAME"
+Acl $app -Reset -Grants @("${installer}:(OI)(CI)M", "${api}:(OI)(CI)RX", "${web}:(OI)(CI)RX", "${proxy}:(OI)(CI)RX")
 Acl (Join-Path $root 'services') -Grants @("${api}:(OI)(CI)RX", "${web}:(OI)(CI)RX", "${proxy}:(OI)(CI)RX")
 Acl (Join-Path $root 'tools') -Grants @("${proxy}:(OI)(CI)RX")
-Acl (Join-Path $root 'app\backend\.env') -Reset -Grants @("${api}:(R)")
-Acl (Join-Path $root 'app\frontend\.next') -Grants @("${web}:(OI)(CI)M")                                 # Next.js runtime cache
+Acl $envFile -Reset -Grants @("${api}:(R)")
+Acl (Join-Path $app 'frontend\.next') -Grants @("${web}:(OI)(CI)M")                                      # Next.js runtime cache
 Acl (Join-Path $root 'logs\api') -Grants @("${api}:(OI)(CI)M")
 Acl (Join-Path $root 'logs\web') -Grants @("${web}:(OI)(CI)M")
 Acl (Join-Path $root 'logs\proxy') -Grants @("${proxy}:(OI)(CI)M")
@@ -181,9 +188,15 @@ Step 'Allow HTTPS (443) and HTTP redirect (80) to Caddy in Windows Firewall' {
 }
 
 # ------------------------------------------------------------------------------------------ 6. start
-foreach ($svc in $services) { Step "Start $svc" { Start-Service -Name $svc }.GetNewClosure() }
+# MongoDB is only started; the other three are restarted when already running, so rewritten settings apply.
+foreach ($svc in $services) {
+    $running = $false
+    if (-not $DryRun) { $running = (Get-Service -Name $svc).Status -eq 'Running' }
+    if ($running -and $svc -ne 'CGVMS-MongoDB') { Step "Restart $svc" { Restart-Service -Name $svc }.GetNewClosure() }
+    else { Step "Start $svc" { Start-Service -Name $svc }.GetNewClosure() }
+}
 if (-not $DryRun) {
     Start-Sleep -Seconds 10
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'check-health.ps1') -ConfigPath $ConfigPath
 }
-Write-Host 'Done. Next: register-tasks.ps1 (backups, health checks, restore tests), then test from a gate PC.'
+Write-Host 'Done. Next: register-tasks.ps1 (nightly backup, health check), then open the site from a gate PC.'

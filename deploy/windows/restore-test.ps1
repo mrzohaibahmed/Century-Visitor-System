@@ -87,7 +87,7 @@ try {
         if ($mongodProcess.HasExited) { break }
     }
     if (-not $ready) { throw "The temporary mongod did not start (see $work\mongod.log)." }
-    $tool = Join-Path $cfg.Root 'app\deploy\mongodb\cgvms_mongo.py'
+    $tool = Join-Path $cfg.AppDir 'deploy\mongodb\cgvms_mongo.py'
     if ((Invoke-Logged $cfg 'restore' $python @($tool, 'init-temp', '--tls-dir', $tlsDir, '--port', "$port")) -ne 0) {
         throw 'The temporary replica set could not be initiated.'
     }
@@ -108,7 +108,7 @@ try {
     Set-ProcessEnv @{ CG_ENVIRONMENT = 'test'; CG_MONGO_URI = $uri; CG_MONGO_DB = 'century_gate_vms'; CG_PHOTO_DIR = $photoDir;
                       CG_LOG_LEVEL = 'WARNING' }
     $reportFile = Join-Path (Get-StatusDir $cfg) "restore-test-$stamp.json"
-    Push-Location (Join-Path $cfg.Root 'app\backend')
+    Push-Location (Join-Path $cfg.AppDir 'backend')
     try {
         $ErrorActionPreference = 'Continue'
         $out = & $python -m app.cli restore-check 2>$null

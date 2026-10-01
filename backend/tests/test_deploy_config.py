@@ -118,6 +118,20 @@ def test_the_web_service_runs_the_production_build_on_loopback():
     assert not any(k.startswith("NEXT_PUBLIC_") for k in env)
 
 
+@pytest.mark.parametrize("name", ["CGVMS-API", "CGVMS-Web", "CGVMS-Proxy"])
+def test_services_find_the_application_through_app_dir(name):
+    # install-services.ps1 fills in __APP_DIR__ (AppDir): the application can live in any folder.
+    text = (DEPLOY / "windows" / "services" / f"{name}.xml").read_text(encoding="utf-8")
+    assert "__APP_DIR__\\" in ET.tostring(_service(name), encoding="unicode")
+    assert "..\\app\\" not in text and "CenturyGateVMS\\app" not in text
+
+
+def test_the_proxy_takes_site_and_tls_mode_from_the_settings():
+    env = {e.get("name"): e.get("value") for e in _service("CGVMS-Proxy").findall("env")}
+    assert env["CGVMS_SITE"] == "__SITE__" and env["CGVMS_TLS_MODE"] == "__TLS_MODE__"
+    assert (DEPLOY / "windows" / "caddy" / "tls-company.caddy").exists()
+
+
 def test_secret_files_are_ignored_by_git():
     ignored = (REPO / ".gitignore").read_text(encoding="utf-8")
     for pattern in (".env", "secrets/", "*.pem", "*.key", "*.keyfile"):

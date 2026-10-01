@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================================
-rem  Century Gate VMS - start the PRODUCTION services on the gate server.
+rem  Century Gate VMS - start the application (production, Windows services).
 rem
 rem    1. CGVMS-MongoDB   database
 rem    2. CGVMS-API       API
@@ -10,7 +10,8 @@ rem    5. health check    (check-health.ps1, retried for up to 2 minutes)
 rem
 rem  Services are started in this order; any already running are left alone.
 rem  Must be run as Administrator (right-click - "Run as administrator").
-rem  Requires the services to be installed first (PRODUCTION-COMMANDS.md, step 12).
+rem  Requires the setup first (setup-production.bat). The services also start by
+rem  themselves when Windows starts; this file is for after a stop-production.bat.
 rem
 rem  Optional:  start-production.bat C:\path\to\cgvms.psd1
 rem             (default C:\CenturyGateVMS\config\cgvms.psd1)
@@ -28,7 +29,7 @@ if errorlevel 1 (
 )
 if not exist "%CONFIG%" (
     echo ERROR: Settings file not found: %CONFIG%
-    echo        See PRODUCTION-COMMANDS.md, step 4.
+    echo        Run setup-production.bat first ^(deploy\PRODUCTION-COMMANDS.md^).
     goto :fail
 )
 
@@ -51,8 +52,9 @@ if errorlevel 1 (
 )
 
 echo.
-echo Century Gate VMS is running and healthy.
-powershell -NoProfile -Command "Get-Service CGVMS-* | Format-Table -AutoSize Name, Status"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check-health.ps1" -ConfigPath "%CONFIG%"
+echo.
+echo Century Gate VMS is running.
 goto :end
 
 rem ---- start_service <step> <name> -----------------------------------------------
@@ -61,7 +63,7 @@ echo.
 echo [%~1/5] %~2 ...
 sc query "%~2" >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: Service %~2 is not installed. See PRODUCTION-COMMANDS.md, step 12.
+    echo ERROR: Service %~2 is not installed. Run setup-production.bat first.
     exit /b 1
 )
 sc query "%~2" | findstr /C:"RUNNING" >nul
@@ -81,11 +83,11 @@ exit /b 0
 :fail
 echo.
 echo Start-up stopped.
-pause
+if not defined CGVMS_NOPAUSE pause
 endlocal
 exit /b 1
 
 :end
-pause
+if not defined CGVMS_NOPAUSE pause
 endlocal
 exit /b 0

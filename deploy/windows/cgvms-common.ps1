@@ -11,15 +11,38 @@ function Get-CgvmsConfig([string]$Path) {
         throw "Configuration file not found: $Path (copy deploy\windows\cgvms.example.psd1 there and adjust it)."
     }
     $cfg = Import-PowerShellDataFile -LiteralPath $Path
-    foreach ($key in 'Root', 'PhotoDir', 'MongoPort', 'MongoBin', 'MongoToolsBin', 'BackupDestination') {
+    foreach ($key in 'Root', 'PhotoDir', 'MongoBin') {
         if (-not $cfg.ContainsKey($key) -or -not $cfg[$key]) { throw "Setting '$key' is missing in $Path." }
     }
+    # Optional settings. AppDir: the application folder (this repository); by default the one these scripts are in.
+    $defaults = [ordered]@{
+        AppDir             = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+        SiteName           = $env:COMPUTERNAME.ToLowerInvariant()
+        TlsMode            = 'internal'
+        MongoPort          = 27018
+        MongoToolsBin      = (Join-Path $cfg.Root 'tools\mongodb-database-tools\bin')
+        BackupDestination  = (Join-Path $cfg.Root 'backups')
+        BackupKeepDays     = 35
+        BackupKeepMonthly  = 12
+        BackupLocalKeep    = 3
+        BackupMaxAgeHours  = 26
+        RestoreTestPort    = 27029
+        DiskMinFreePercent = 15
+        DiskMinFreeGB      = 10
+        StatusKeepDays     = 60
+    }
+    foreach ($key in $defaults.Keys) {
+        if (-not $cfg.ContainsKey($key) -or -not $cfg[$key]) { $cfg[$key] = $defaults[$key] }
+    }
+    $cfg.AppDir = $cfg.AppDir.TrimEnd('\')
+    if (-not $cfg.ContainsKey('HealthUrl') -or -not $cfg.HealthUrl) { $cfg.HealthUrl = "https://$($cfg.SiteName)/api/v1/health/ready" }
+    if ($cfg.TlsMode -notin 'internal', 'company') { throw "TlsMode must be 'internal' or 'company' in $Path." }
     if ([int]$cfg.MongoPort -eq 27017) { throw 'MongoPort 27017 is the legacy desktop database service; refusing.' }
     return $cfg
 }
 
 function Get-CgvmsPython($cfg) {
-    $python = Join-Path $cfg.Root 'app\backend\.venv\Scripts\python.exe'
+    $python = Join-Path $cfg.AppDir 'backend\.venv\Scripts\python.exe'
     if (-not (Test-Path -LiteralPath $python)) { throw "Python environment not found: $python" }
     return $python
 }

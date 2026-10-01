@@ -1,38 +1,38 @@
 <#
 .SYNOPSIS
-  First-time production setup of Century Gate VMS on the gate server (run as Administrator).
+  First-time production setup of Century Gate VMS on one Windows 11 PC (run as Administrator).
 
 .DESCRIPTION
-      powershell -NoProfile -ExecutionPolicy Bypass -File setup-production.ps1 [-BackupDestination \\SERVER\Share$]
-          [-SiteName vms.century.local] [-PhotoDir D:\CenturyGateVMS-Photos] [-OrganizationName "Century Gate"]
-          [-TlsMode internal|company] [-Rebuild]
+      powershell -NoProfile -ExecutionPolicy Bypass -File setup-production.ps1
+          [-SiteName <name gate PCs type>] [-PhotoDir <folder>] [-BackupDestination <folder or share>]
+          [-OrganizationName "Century Gate"] [-TlsMode internal|company] [-Root C:\CenturyGateVMS] [-Rebuild]
 
-  Does README "Production operations" -> "Installation (first time)" steps 3-16 in one run:
-     1. checks the server software and tools (stops with what is missing and where to get it);
+  Runs from wherever the application is (this repository); nothing is copied. Data (database, logs,
+  secrets, certificates, tools, local backups) goes under -Root (default C:\CenturyGateVMS).
+  Defaults: SiteName = this PC's computer name, internal HTTPS certificate, photos in
+  D:\CenturyGateVMS-Photos when a D: drive exists (otherwise Root\photos), backups in Root\backups.
+
+     1. checks the software and tools (stops with what is missing and where to get it);
      2. API Python environment (pip install);
      3. web production build (npm ci, npm run build; skipped when a build exists, unless -Rebuild);
-     4. config\cgvms.psd1 (from cgvms.example.psd1, with the values above);
+     4. Root\config\cgvms.psd1 (the only settings file the administrator edits);
      5. photo folder;
      6. MongoDB certificates and key file (cgvms_mongo.py prepare);
-     7. mongodb\mongod.conf;
+     7. Root\mongodb\mongod.conf;
      8. database accounts (cgvms_mongo.py init, with a temporary MongoDB process);
      9. backend\.env (database connection, photo folder, organisation name, new CG_SECRETS_KEY);
     10. schema (migrate.ps1) and the first administrator (asks for the password);
-    11. services\CGVMS-Proxy.xml (site name, TLS mode);
-    12. Windows services (install-services.ps1);
-    13. internal CA: trusts it on this server, copies its root certificate for the gate PCs;
-    14. scheduled tasks (register-tasks.ps1), health check, and (if you agree) a first backup + restore test.
+    11. Windows services (install-services.ps1);
+    12. internal certificate: trusted on this PC, root certificate copied for the gate PCs;
+    13. scheduled tasks (nightly backup, health check), health check, optional first backup.
 
-  Safe to run again: every step that is already done is skipped, nothing existing is overwritten
-  (backend\.env, cgvms.psd1, CGVMS-Proxy.xml, certificates and secrets are kept as they are).
-
-  The application must already be at Root\app (git clone + git checkout <release-tag>), and this
-  script is run from there: C:\CenturyGateVMS\app\deploy\windows\setup-production.ps1
+  Safe to run again: finished steps are skipped and nothing existing is overwritten (backend\.env,
+  cgvms.psd1, mongod.conf, certificates and secrets are kept as they are).
 #>
 param(
     [string]$Root = 'C:\CenturyGateVMS',
-    [string]$SiteName = 'vms.century.local',
-    [string]$PhotoDir = 'D:\CenturyGateVMS-Photos',
+    [string]$SiteName = '',
+    [string]$PhotoDir = '',
     [string]$BackupDestination = '',
     [string]$OrganizationName = 'Century Gate',
     [ValidateSet('internal', 'company')][string]$TlsMode = 'internal',
@@ -44,7 +44,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3
 
-$app = Join-Path $Root 'app'
+$scripts = $PSScriptRoot
+$app = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path.TrimEnd('\')
 $configPath = Join-Path $Root 'config\cgvms.psd1'
 $tlsMongo = Join-Path $Root 'tls\mongodb'
 $secrets = Join-Path $Root 'secrets'
@@ -53,13 +54,12 @@ $venvPython = Join-Path $app 'backend\.venv\Scripts\python.exe'
 $envFile = Join-Path $app 'backend\.env'
 $nodeDir = 'C:\Program Files\nodejs'
 $mongoPort = 27018
-$services = 'CGVMS-MongoDB', 'CGVMS-API', 'CGVMS-Web', 'CGVMS-Proxy'
 $script:step = 0
 
 function Step([string]$Title) {
     $script:step++
     Write-Host ''
-    Write-Host ("[{0,2}/14] {1}" -f $script:step, $Title) -ForegroundColor Cyan
+    Write-Host ("[{0,2}/13] {1}" -f $script:step, $Title) -ForegroundColor Cyan
 }
 function Done([string]$Message) { Write-Host "        $Message" }
 function Warn([string]$Message) { Write-Host "        WARNING: $Message" -ForegroundColor Yellow }
@@ -69,6 +69,9 @@ function Run([string]$FilePath, [string[]]$Arguments, [string]$What) {
     $ErrorActionPreference = 'Continue'
     & $FilePath @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$What failed (exit code $LASTEXITCODE)." }
+}
+function Run-Script([string]$Name, [string[]]$Extra = @()) {
+    Run 'powershell.exe' (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $scripts $Name), '-ConfigPath', $configPath) + $Extra) $Name
 }
 
 function Write-Utf8NoBom([string]$Path, [string]$Text) {
@@ -86,14 +89,14 @@ function Confirm-Yes([string]$Question) {
 }
 
 # ============================================================================================ 1. checks
-Step 'Checking the server'
+Step 'Checking this PC'
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this script as Administrator.'
 }
-$expected = Join-Path $app 'deploy\windows'
-if ((Resolve-Path -LiteralPath $PSScriptRoot).Path.TrimEnd('\') -ne $expected) {
-    throw "Run this script from $expected (clone the application to $app first; PRODUCTION-COMMANDS.md step 1)."
+if ($app.StartsWith($Root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -and
+    -not $app.Equals((Join-Path $Root 'app'), [StringComparison]::OrdinalIgnoreCase)) {
+    throw "The application ($app) must not be inside the data folder $Root (only $Root\app is allowed)."
 }
 
 $mongoBin = Get-ChildItem 'C:\Program Files\MongoDB\Server' -Directory -ErrorAction SilentlyContinue |
@@ -114,7 +117,7 @@ if (-not (Test-Path (Join-Path $mongoToolsBin 'mongodump.exe'))) {
     $missing.Add("MongoDB Database Tools 100.x -> $mongoToolsBin\mongodump.exe  (zip from mongodb.com/try/download/database-tools; unzip and rename the folder)")
 }
 if (-not (Test-Path (Join-Path $Root 'tools\caddy.exe'))) {
-    $missing.Add("Caddy 2.x for Windows amd64 -> $Root\tools\caddy.exe  (caddyserver.com/download or github.com/caddyserver/caddy/releases; check the SHA-512 checksum)")
+    $missing.Add("Caddy 2.x for Windows amd64 -> $Root\tools\caddy.exe  (caddyserver.com/download; rename the download to caddy.exe)")
 }
 if (-not (Test-Path (Join-Path $Root 'tools\WinSW-x64.exe'))) {
     $missing.Add("WinSW 2.12 -> $Root\tools\WinSW-x64.exe  (WinSW-x64.exe from github.com/winsw/winsw/releases/tag/v2.12.0)")
@@ -125,12 +128,8 @@ if ($missing.Count) {
     foreach ($m in $missing) { Write-Host "  - $m" }
     exit 1
 }
-Done "Python $PythonExe, Node.js $nodeDir, MongoDB $mongoBin, tools in $Root\tools: OK."
-
-foreach ($drive in @((Split-Path -Qualifier $Root), (Split-Path -Qualifier $PhotoDir)) | Select-Object -Unique) {
-    $freeGb = [math]::Round((Get-PSDrive -Name $drive.TrimEnd(':')).Free / 1GB, 1)
-    if ($freeGb -lt 10) { Warn "$drive has only $freeGb GB free (the health check wants at least 10 GB)." }
-}
+Done "Application: $app"
+Done "Python, Node.js, MongoDB ($mongoBin) and the tools in $Root\tools: OK."
 if (Test-Port 27017) { Done 'Legacy MongoDB on port 27017 detected: it is not used or changed.' }
 
 # ============================================================================================ 2. Python
@@ -158,31 +157,34 @@ if ($Rebuild -or -not (Test-Path (Join-Path $app 'frontend\.next\BUILD_ID'))) {
 }
 
 # ============================================================================================ 4. settings
-Step 'Script settings (config\cgvms.psd1)'
+Step 'Settings (config\cgvms.psd1)'
 if (Test-Path -LiteralPath $configPath) {
     Done "$configPath exists; kept as it is."
 } else {
-    if (-not $BackupDestination) {
-        $BackupDestination = Read-Host '        Backup folder on ANOTHER machine or disk (e.g. \\BACKUP01\CenturyGateVMS$)'
-        if (-not $BackupDestination) { throw 'A backup destination is required.' }
+    if (-not $SiteName) { $SiteName = $env:COMPUTERNAME.ToLowerInvariant() }
+    if (-not $PhotoDir) {
+        $dDrive = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='D:' AND DriveType=3" -ErrorAction SilentlyContinue
+        $PhotoDir = if ($dDrive) { 'D:\CenturyGateVMS-Photos' } else { Join-Path $Root 'photos' }
     }
-    if (-not (Test-Path -LiteralPath $BackupDestination)) {
-        Warn "$BackupDestination is not reachable from this account right now. The backup task runs as SYSTEM, i.e. as the computer account $env:USERDOMAIN\$env:COMPUTERNAME`$: give that account write access to the share."
-    }
+    if (-not $BackupDestination) { $BackupDestination = Join-Path $Root 'backups' }
     New-Item -ItemType Directory -Force -Path (Split-Path $configPath) | Out-Null
-    $text = (Get-Content -LiteralPath (Join-Path $expected 'cgvms.example.psd1') -Raw).Replace('C:\CenturyGateVMS', $Root)
-    $set = @{ SiteName = $SiteName; PhotoDir = $PhotoDir; MongoBin = $mongoBin
-              HealthUrl = "https://$SiteName/api/v1/health/ready"; BackupDestination = $BackupDestination }
+    $text = (Get-Content -LiteralPath (Join-Path $scripts 'cgvms.example.psd1') -Raw).Replace('C:\CenturyGateVMS', $Root)
+    $set = [ordered]@{ AppDir = $app; SiteName = $SiteName; TlsMode = $TlsMode; PhotoDir = $PhotoDir; MongoBin = $mongoBin
+                       BackupDestination = $BackupDestination }
     foreach ($key in $set.Keys) {
-        $value = $set[$key].Replace("'", "''")
-        $text = [regex]::Replace($text, "(?m)^(\s*$key\s*=\s*)'[^']*'", { param($m) $m.Groups[1].Value + "'" + $value + "'" })
+        $value = ([string]$set[$key]).Replace("'", "''")
+        $text = [regex]::Replace($text, "(?m)^(\s*)(#\s*)?($key\s*=\s*)'[^']*'", { param($m) $m.Groups[1].Value + $m.Groups[3].Value + "'" + $value + "'" })
     }
     Write-Utf8NoBom $configPath $text
-    Done "Written: $configPath"
+    Done "Written: $configPath (site https://$SiteName, photos $PhotoDir, backups $BackupDestination)"
 }
 $cfg = Import-PowerShellDataFile -LiteralPath $configPath
 $PhotoDir = $cfg.PhotoDir
-$SiteName = $cfg.SiteName
+$SiteName = if ($cfg.ContainsKey('SiteName') -and $cfg.SiteName) { $cfg.SiteName } else { $env:COMPUTERNAME.ToLowerInvariant() }
+$TlsMode = if ($cfg.ContainsKey('TlsMode') -and $cfg.TlsMode) { $cfg.TlsMode } else { 'internal' }
+if ($cfg.ContainsKey('AppDir') -and $cfg.AppDir -and $cfg.AppDir.TrimEnd('\') -ne $app) {
+    throw "cgvms.psd1 says AppDir = $($cfg.AppDir), but this script runs from $app. Run the script in AppDir, or fix AppDir."
+}
 
 # ============================================================================================ 5. photos
 Step 'Photo folder'
@@ -209,7 +211,7 @@ if (Test-Path -LiteralPath $mongoConf) {
 
 # ============================================================================================ 8-10. database
 # The database must run for the accounts, the migration and the first administrator. Before the services
-# exist, a temporary mongod is started here (as README step 9 does by hand) and shut down cleanly afterwards.
+# exist, a temporary mongod is started here and shut down cleanly afterwards.
 $tempMongod = $null
 $serviceInstalled = [bool](Get-Service -Name 'CGVMS-MongoDB' -ErrorAction SilentlyContinue)
 try {
@@ -256,19 +258,18 @@ try {
         if (-not $key) { throw 'Generating CG_SECRETS_KEY failed.' }
         $values = [ordered]@{ CG_MONGO_URI = $appUri; CG_PHOTO_DIR = $PhotoDir; CG_ORGANIZATION_NAME = $OrganizationName
                               CG_SECRETS_KEY = $key.Trim() }
-        $text = Get-Content -LiteralPath (Join-Path $expected 'api.env.template') -Raw
+        $text = Get-Content -LiteralPath (Join-Path $scripts 'api.env.template') -Raw
         foreach ($name in $values.Keys) {
             $line = "$name=$($values[$name])"
             $text = [regex]::Replace($text, "(?m)^$name=.*$", { param($m) $line })
         }
         Write-Utf8NoBom $envFile $text
         Done "Written: $envFile"
-        Warn "Copy the CG_SECRETS_KEY line from $envFile into the password manager (camera passwords cannot be read without it)."
+        Warn "Copy the CG_SECRETS_KEY line from $envFile into the password manager (saved camera passwords cannot be read without it)."
     }
 
     Step 'Database schema and first administrator'
-    Run 'powershell.exe' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $expected 'migrate.ps1'),
-        '-ConfigPath', $configPath) 'migrate.ps1'
+    Run-Script 'migrate.ps1'
     $adminMarker = Join-Path $Root 'config\first-admin-created.txt'
     if (Test-Path -LiteralPath $adminMarker) {
         Done 'The first administrator was created earlier.'
@@ -283,7 +284,7 @@ try {
                 $ErrorActionPreference = 'Stop'
                 if ($code -eq 0) { break }
                 if (-not (Confirm-Yes 'Creating the administrator failed (see above). Try again?')) {
-                    throw "No administrator created. Later: cd $app\backend; .venv\Scripts\python -m app.cli create-admin --username $AdminUsername"
+                    throw "No administrator created. Later: cd `"$app\backend`"; .venv\Scripts\python -m app.cli create-admin --username $AdminUsername"
                 }
             }
         } finally { Pop-Location }
@@ -314,45 +315,23 @@ except (AutoReconnect, ConnectionFailure):
     }
 }
 
-# ============================================================================================ 11. proxy
-Step 'HTTPS proxy settings (services\CGVMS-Proxy.xml)'
-$proxyXml = Join-Path $Root 'services\CGVMS-Proxy.xml'
-New-Item -ItemType Directory -Force -Path (Join-Path $Root 'services') | Out-Null
-if (Test-Path -LiteralPath $proxyXml) {
-    Done "$proxyXml exists; kept as it is."
-} else {
-    $text = Get-Content -LiteralPath (Join-Path $expected 'services\CGVMS-Proxy.xml') -Raw
-    $text = $text -replace '(<env name="CGVMS_SITE" value=")[^"]*', "`${1}$SiteName"
-    $text = $text -replace '(<env name="CGVMS_TLS_MODE" value=")[^"]*', "`${1}$TlsMode"
-    Write-Utf8NoBom $proxyXml $text
-    Done "Written: $proxyXml (site $SiteName, TLS $TlsMode)"
-}
+# ============================================================================================ 11. services
+Step 'Windows services'
 if ($TlsMode -eq 'company' -and -not (Test-Path (Join-Path $Root 'tls\web\cert.pem'))) {
-    throw "Company TLS mode: put the certificate in $Root\tls\web\cert.pem and the key in key.pem, then run again."
+    throw "TlsMode company: put the certificate in $Root\tls\web\cert.pem and its key in key.pem, then run again."
 }
-
-# The server itself must reach the site name for the health check.
+# This PC must reach its own site name for the health check (a computer name always resolves locally).
 $resolves = $true
 try { [Net.Dns]::GetHostAddresses($SiteName) | Out-Null } catch { $resolves = $false }
 if (-not $resolves) {
     $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
     Add-Content -LiteralPath $hosts -Value "`r`n127.0.0.1`t$SiteName`t# Century Gate VMS (setup-production.ps1)" -Encoding ASCII
-    Warn "$SiteName is not in DNS yet: added it to this server's hosts file. Ask IT for a DNS record pointing $SiteName to this server for the gate PCs."
+    Warn "$SiteName does not resolve: added it to this PC's hosts file. Gate PCs need it too (DNS record or their hosts file)."
 }
+if ($TlsMode -eq 'internal') { Done 'The first health check below may report the HTTPS proxy until step 12 trusts the certificate.' }
+Run-Script 'install-services.ps1'
 
-# ============================================================================================ 12. services
-Step 'Windows services'
-$missingServices = @($services | Where-Object { -not (Get-Service -Name $_ -ErrorAction SilentlyContinue) })
-if ($missingServices.Count) {
-    if ($TlsMode -eq 'internal') { Done 'The first health check below may fail until step 13 trusts the internal CA.' }
-    Run 'powershell.exe' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $expected 'install-services.ps1'),
-        '-ConfigPath', $configPath) 'install-services.ps1'
-} else {
-    foreach ($svc in $services) { Start-Service -Name $svc }
-    Done 'All four services are installed and running.'
-}
-
-# ============================================================================================ 13. internal CA
+# ============================================================================================ 12. internal CA
 Step 'HTTPS certificate'
 if ($TlsMode -eq 'internal') {
     $rootCrt = Join-Path $Root 'caddy-data\pki\authorities\local\root.crt'
@@ -362,7 +341,7 @@ if ($TlsMode -eq 'internal') {
     $cert = New-Object Security.Cryptography.X509Certificates.X509Certificate2($rootCrt)
     if (-not (Get-ChildItem Cert:\LocalMachine\Root | Where-Object Thumbprint -eq $cert.Thumbprint)) {
         Import-Certificate -FilePath $rootCrt -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-        Done 'Trusted the internal CA on this server.'
+        Done 'Trusted the internal certificate on this PC.'
     }
     $gateDir = Join-Path $Root 'gate-pc'
     New-Item -ItemType Directory -Force -Path $gateDir | Out-Null
@@ -372,50 +351,49 @@ if ($TlsMode -eq 'internal') {
     Done "Company certificate from $Root\tls\web."
 }
 
-# ============================================================================================ 14. tasks, checks
+# ============================================================================================ 13. tasks, checks
 Step 'Scheduled tasks, health check, first backup'
-Run 'powershell.exe' @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $expected 'register-tasks.ps1'),
-    '-ConfigPath', $configPath) 'register-tasks.ps1'
+Run-Script 'register-tasks.ps1'
 $healthy = $false
 $deadline = (Get-Date).AddMinutes(2)
 do {
     $ErrorActionPreference = 'Continue'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $expected 'check-health.ps1') -ConfigPath $configPath *> $null
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scripts 'check-health.ps1') -ConfigPath $configPath *> $null
     $healthy = ($LASTEXITCODE -eq 0)
     $ErrorActionPreference = 'Stop'
     if (-not $healthy) { Start-Sleep -Seconds 5 }
 } while (-not $healthy -and (Get-Date) -lt $deadline)
 if (-not $healthy) {
-    Write-Host '        Health check details (no backup yet is expected on a new installation):'
+    Write-Host '        Health check (on a new installation "no successful backup" is expected until the first backup):'
     $ErrorActionPreference = 'Continue'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $expected 'check-health.ps1') -ConfigPath $configPath
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scripts 'check-health.ps1') -ConfigPath $configPath
     $ErrorActionPreference = 'Stop'
 }
-if (Confirm-Yes 'Run the first backup and a restore test now (takes a few minutes)?') {
+if (Confirm-Yes 'Run the first backup now (takes a minute)?') {
     $ErrorActionPreference = 'Continue'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $expected 'backup.ps1') -ConfigPath $configPath
-    if ($LASTEXITCODE -eq 0) {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $expected 'restore-test.ps1') -ConfigPath $configPath
-    }
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $expected 'check-health.ps1') -ConfigPath $configPath
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scripts 'backup.ps1') -ConfigPath $configPath
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scripts 'check-health.ps1') -ConfigPath $configPath
     $ErrorActionPreference = 'Stop'
 }
 
 # ============================================================================================ summary
+$cfg = Import-PowerShellDataFile -LiteralPath $configPath
+$backupDir = if ($cfg.ContainsKey('BackupDestination') -and $cfg.BackupDestination) { $cfg.BackupDestination } else { Join-Path $Root 'backups' }
 Write-Host ''
-Write-Host 'Setup finished. Still to do by hand:' -ForegroundColor Green
+Write-Host "Setup finished. Gate PCs open:  https://$SiteName" -ForegroundColor Green
+Write-Host 'Still to do by hand:'
 $todo = New-Object System.Collections.Generic.List[string]
 if (Test-Path -LiteralPath (Join-Path $tlsMongo 'ca.key')) {
-    $todo.Add("MOVE $tlsMongo\ca.key OFF this server (USB key in the safe). It is only needed to renew the database certificate.")
+    $todo.Add("Move $tlsMongo\ca.key OFF this PC (USB key in the safe). It is only needed to renew the database certificate.")
 }
 $todo.Add("Put the contents of $secrets\mongodb-root.txt and the CG_SECRETS_KEY line of backend\.env into the password manager.")
 if ($TlsMode -eq 'internal') {
-    $todo.Add("Install $Root\gate-pc\CenturyGateVMS-root.crt on every gate PC as a Trusted Root Certification Authority (Group Policy, or double-click -> Install -> Local Machine -> Trusted Root).")
+    $todo.Add("On every gate PC install $Root\gate-pc\CenturyGateVMS-root.crt once: double-click -> Install Certificate -> Local Machine -> 'Trusted Root Certification Authorities'.")
 }
-$todo.Add("Ask IT for a DNS record: $SiteName -> this server ($env:COMPUTERNAME).")
-$todo.Add("Give the computer account $env:USERDOMAIN\$env:COMPUTERNAME`$ write access to the backup share $($cfg.BackupDestination).")
-$todo.Add("From a gate PC open https://$SiteName and log in as '$AdminUsername' (no certificate warning may appear).")
+$todo.Add("Check a gate PC can reach https://$SiteName (if not: a DNS record, or '<this PC's IP> $SiteName' in the gate PC's hosts file).")
+$todo.Add("Backups go to $backupDir. Copy that folder to another disk or PC regularly.")
+$todo.Add("Log in as '$AdminUsername' from a gate PC; there must be no certificate warning.")
 $i = 0
 foreach ($t in $todo) { $i++; Write-Host "  $i. $t" }
 Write-Host ''
-Write-Host "Daily start/stop: $expected\start-production.bat, or Start-Service / Stop-Service CGVMS-* (PRODUCTION-COMMANDS.md)."
+Write-Host "Start / stop / restart: start-production.bat, stop-production.bat, restart-production.bat in $scripts (as Administrator)."

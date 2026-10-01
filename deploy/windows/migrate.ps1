@@ -22,7 +22,7 @@ if (-not (Test-Path -LiteralPath $uriFile)) { throw "Not found: $uriFile (create
 $previous = $env:CG_MONGO_URI
 try {
     $env:CG_MONGO_URI = (Get-Content -LiteralPath $uriFile -Raw).Trim()
-    Push-Location (Join-Path $cfg.Root 'app\backend')
+    Push-Location (Join-Path $cfg.AppDir 'backend')
     & $python -m app.cli migrate
     $code = $LASTEXITCODE
     $env:CG_MONGO_URI = $previous                  # the readiness check uses the application's own account
