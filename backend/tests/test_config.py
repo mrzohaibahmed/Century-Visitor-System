@@ -79,5 +79,22 @@ def test_an_insecure_production_connection_is_refused(uri, message):
     assert "App-Pass-1" not in str(error.value).split("input_value")[0]     # the message never names the password
 
 
+@pytest.mark.parametrize("uri", ["mongodb://127.0.0.1:27018/?replicaSet=cgvms-dev",
+                                 "mongodb://localhost:27018/?replicaSet=cgvms-dev"])
+def test_production_accepts_a_local_database_without_login_only_when_allowed(uri):
+    with pytest.raises(ValidationError, match="user and password"):
+        make_settings(environment="production", mongo_uri=uri)
+    s = make_settings(environment="production", mongo_uri=uri, mongo_localhost_without_login=True)
+    assert s.environment == "production" and s.cookie_secure is True
+
+
+@pytest.mark.parametrize("uri", ["mongodb://192.168.0.7:27018/?replicaSet=cgvms-dev",
+                                 "mongodb://127.0.0.1:27018,db2.example.com:27018/?replicaSet=x",
+                                 "mongodb+srv://cluster.example.com/"])
+def test_the_no_login_exception_never_covers_another_machine(uri):
+    with pytest.raises(ValidationError):
+        make_settings(environment="production", mongo_uri=uri, mongo_localhost_without_login=True)
+
+
 def test_development_keeps_the_local_unauthenticated_database():
     assert make_settings(environment="development").mongo_uri.get_secret_value().startswith("mongodb://127.0.0.1")

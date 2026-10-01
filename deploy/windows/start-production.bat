@@ -1,93 +1,29 @@
 @echo off
 rem ============================================================================
-rem  Century Gate VMS - start the application (production, Windows services).
+rem  Century Gate VMS - start the application in PRODUCTION mode on this PC,
+rem  from this project folder (no copy, no Windows services):
 rem
-rem    1. CGVMS-MongoDB   database
-rem    2. CGVMS-API       API
-rem    3. CGVMS-Web       web
-rem    4. CGVMS-Proxy     HTTPS proxy
-rem    5. health check    (check-health.ps1, retried for up to 2 minutes)
+rem    1. MongoDB   127.0.0.1:27018   the project's database (.dev\mongo)
+rem    2. build     npm run build     only when there is no build yet
+rem    3. API       127.0.0.1:8000    python -m app.serve (no reload)
+rem    4. Web       127.0.0.1:3000    next start
+rem    5. HTTPS     https://<this PC's name> for the gate PCs (Caddy)
+rem    then the health check.
 rem
-rem  Services are started in this order; any already running are left alone.
-rem  Must be run as Administrator (right-click - "Run as administrator").
-rem  Requires the setup first (setup-production.bat). The services also start by
-rem  themselves when Windows starts; this file is for after a stop-production.bat.
+rem  Run it as Administrator the FIRST time (trusts the HTTPS certificate on this
+rem  PC and allows HTTPS in Windows Firewall); afterwards a double-click is enough.
+rem  Logs: .prod\logs.  Details: deploy\windows\production.ps1, deploy\PRODUCTION-COMMANDS.md
 rem
-rem  Optional:  start-production.bat C:\path\to\cgvms.psd1
-rem             (default C:\CenturyGateVMS\config\cgvms.psd1)
+rem  Optional:  start-production.bat rebuild    (npm run build first, after an update)
 rem ============================================================================
 setlocal
-cd /d "%~dp0"
-set "CONFIG=%~1"
-if "%CONFIG%"=="" set "CONFIG=C:\CenturyGateVMS\config\cgvms.psd1"
-
-rem ---- prerequisites ---------------------------------------------------------
-net session >nul 2>&1
-if errorlevel 1 (
-    echo ERROR: Run this file as Administrator ^(right-click - "Run as administrator"^).
-    goto :fail
-)
-if not exist "%CONFIG%" (
-    echo ERROR: Settings file not found: %CONFIG%
-    echo        Run setup-production.bat first ^(deploy\PRODUCTION-COMMANDS.md^).
-    goto :fail
-)
-
-rem ---- 1-4. services -----------------------------------------------------------
-call :start_service 1 CGVMS-MongoDB || goto :fail
-call :start_service 2 CGVMS-API     || goto :fail
-call :start_service 3 CGVMS-Web     || goto :fail
-call :start_service 4 CGVMS-Proxy   || goto :fail
-
-rem ---- 5. health check -----------------------------------------------------------
-echo.
-echo [5/5] Health check (up to 2 minutes) ...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$end=(Get-Date).AddMinutes(2); do { & '%~dp0check-health.ps1' -ConfigPath '%CONFIG%' *> $null; if ($LASTEXITCODE -eq 0) { exit 0 }; Start-Sleep -Seconds 5 } while ((Get-Date) -lt $end); exit 1"
-if errorlevel 1 (
+set "EXTRA="
+if /i "%~1"=="rebuild" set "EXTRA=-Rebuild"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0production.ps1" -Action start %EXTRA%
+set "CODE=%errorlevel%"
+if not "%CODE%"=="0" (
     echo.
-    echo WARNING: The application is not healthy yet. Details:
-    echo.
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check-health.ps1" -ConfigPath "%CONFIG%"
-    goto :fail
+    echo Start-up stopped - see above.
 )
-
-echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check-health.ps1" -ConfigPath "%CONFIG%"
-echo.
-echo Century Gate VMS is running.
-goto :end
-
-rem ---- start_service <step> <name> -----------------------------------------------
-:start_service
-echo.
-echo [%~1/5] %~2 ...
-sc query "%~2" >nul 2>&1
-if errorlevel 1 (
-    echo ERROR: Service %~2 is not installed. Run setup-production.bat first.
-    exit /b 1
-)
-sc query "%~2" | findstr /C:"RUNNING" >nul
-if not errorlevel 1 (
-    echo       already running - left as it is.
-    exit /b 0
-)
-powershell -NoProfile -Command "try { Start-Service -Name '%~2' -ErrorAction Stop; (Get-Service '%~2').WaitForStatus('Running', [TimeSpan]::FromSeconds(60)); exit 0 } catch { Write-Host ('      ' + $_.Exception.Message); exit 1 }"
-if errorlevel 1 (
-    echo ERROR: %~2 did not start. Check the service logs in C:\CenturyGateVMS\logs
-    echo        and the Windows event log ^(Event Viewer - Windows Logs - Application^).
-    exit /b 1
-)
-echo       started.
-exit /b 0
-
-:fail
-echo.
-echo Start-up stopped.
 if not defined CGVMS_NOPAUSE pause
-endlocal
-exit /b 1
-
-:end
-if not defined CGVMS_NOPAUSE pause
-endlocal
-exit /b 0
+endlocal & exit /b %CODE%

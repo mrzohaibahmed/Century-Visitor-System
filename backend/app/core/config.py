@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     mongo_uri: SecretStr = SecretStr("mongodb://127.0.0.1:27018/?replicaSet=cgvms-dev")
     mongo_db: str = "century_gate_vms"
     mongo_timeout_ms: int = Field(default=5000, ge=100, le=60_000)
+    # Single-PC production: allow a database WITHOUT login/TLS, but only when every host in
+    # CG_MONGO_URI is on this machine (127.0.0.1 / localhost / ::1) and mongod listens on loopback
+    # only. Anyone who can run programs on this PC can then read the database. Default: off.
+    mongo_localhost_without_login: bool = False
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
@@ -148,6 +152,12 @@ class Settings(BaseSettings):
         def enabled(name: str) -> bool:
             return str(options.get(name, "")).strip().lower() == "true"
 
+        if self.mongo_localhost_without_login:
+            hosts = {host.strip("[]").lower() for host, _port in parsed.get("nodelist", [])}
+            if not hosts or not hosts <= {"127.0.0.1", "localhost", "::1"}:
+                raise ValueError("CG_MONGO_LOCALHOST_WITHOUT_LOGIN only allows a database on this machine "
+                                 "(127.0.0.1 or localhost) in CG_MONGO_URI.")
+            return self
         if not parsed.get("username") or not parsed.get("password"):
             raise ValueError("CG_MONGO_URI must include the application's database user and password in production.")
         if not (enabled("tls") or enabled("ssl")):

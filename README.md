@@ -268,9 +268,24 @@ webcam works as before).
 - **Not yet verified on a real camera.** The paths `/ISAPI/System/deviceInfo` and
   `/ISAPI/Streaming/channels/<channel>/picture` must be confirmed on the installed model.
 
+## Production on one Windows 11 PC
+
+The simplest production setup runs this project folder in production mode on one PC, as normal programs:
+MongoDB (127.0.0.1:27018, the project's own database in `.dev\mongo`), the API with `python -m app.serve`
+(no reload, 127.0.0.1:8000), the web server with `next start` (127.0.0.1:3000) and Caddy for HTTPS on port 443,
+which the gate PCs use. HTTPS is needed because the login cookie is `Secure` and browsers only allow the webcam
+on HTTPS. Start with `deploy\windows\start-production.bat`, stop with `stop-production.bat`, restart with
+`restart-production.bat`, check with `check-health.ps1`. Step by step: `deploy\PRODUCTION-COMMANDS.md`.
+
+In this mode the database has no login: production allows that only with `CG_MONGO_LOCALHOST_WITHOUT_LOGIN=true`
+and only for a database on 127.0.0.1 (set by `production.ps1`). MongoDB listens on 127.0.0.1 only, so gate PCs
+cannot reach it, but any program or user on this PC can. The Windows-services installation below adds database
+login + TLS and service accounts.
+
 ## Production operations (Phase 7A)
 
-This part is for the administrator who installs and runs the system on the gate server. It assumes no
+This part is for the administrator who installs and runs the system on the gate server (Windows-services
+installation; for one PC without services see "Production on one Windows 11 PC" above). It assumes no
 knowledge of the code. Everything named `*.ps1` is in `deploy\windows\`; run PowerShell **as Administrator**.
 
 ### Architecture

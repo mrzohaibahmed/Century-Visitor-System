@@ -6,6 +6,46 @@ Set-StrictMode -Version 3
 
 $script:EventSource = 'CenturyGateVMS'
 
+# Settings for the scripts: cgvms.psd1 when the Windows services of setup-production.ps1 are installed,
+# otherwise the single-PC "local mode" of start-production.bat (see Get-CgvmsLocalConfig). A settings file
+# left by an unfinished services setup does not switch a local-mode PC over.
+function Get-CgvmsSettings([string]$Path) {
+    if ((Test-Path -LiteralPath $Path) -and (Get-Service -Name 'CGVMS-API' -ErrorAction SilentlyContinue)) {
+        return Get-CgvmsConfig $Path
+    }
+    return Get-CgvmsLocalConfig
+}
+
+# Local mode: the application runs from this repository as normal processes (start-production.bat).
+# Everything comes from the project itself: backend\.env, the development MongoDB instance on 127.0.0.1:27018
+# (scripts\dev_mongo.py, data in .dev\mongo), runtime files (logs, Caddy data, backups) in .prod\.
+function Get-CgvmsLocalConfig {
+    $app = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path.TrimEnd('\')
+    $photoDir = Join-Path $app '.dev\photos'                    # the API's own default (core/config.py)
+    $envFile = Join-Path $app 'backend\.env'
+    if (Test-Path -LiteralPath $envFile) {
+        $line = Get-Content -LiteralPath $envFile | Where-Object { $_ -match '^\s*CG_PHOTO_DIR\s*=' } | Select-Object -Last 1
+        if ($line) { $photoDir = ($line -replace '^\s*CG_PHOTO_DIR\s*=\s*', '').Trim().Trim('"') }
+    }
+    $site = if ($env:CGVMS_SITE) { $env:CGVMS_SITE } else { $env:COMPUTERNAME.ToLowerInvariant() }
+    $toolsBin = Get-ChildItem 'C:\Program Files\MongoDB\Tools' -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName 'bin' } |
+        Where-Object { Test-Path (Join-Path $_ 'mongodump.exe') } | Select-Object -First 1
+    if (-not $toolsBin) {
+        $onPath = Get-Command mongodump.exe -ErrorAction SilentlyContinue
+        $toolsBin = if ($onPath) { Split-Path $onPath.Source } else { Join-Path $app '.prod\mongodb-database-tools\bin' }
+    }
+    $root = Join-Path $app '.prod'
+    return @{
+        LocalMode = $true; AppDir = $app; Root = $root; PhotoDir = $photoDir; MongoPort = 27018
+        MongoUri = 'mongodb://127.0.0.1:27018/?directConnection=true'
+        MongoToolsBin = $toolsBin; SiteName = $site; TlsMode = 'internal'; HealthUrl = "https://$site/api/v1/health/ready"
+        BackupDestination = $(if ($env:CGVMS_BACKUP) { $env:CGVMS_BACKUP } else { Join-Path $root 'backups' })
+        BackupKeepDays = 35; BackupKeepMonthly = 12; BackupLocalKeep = 3; BackupMaxAgeHours = 26
+        DiskMinFreePercent = 15; DiskMinFreeGB = 10; StatusKeepDays = 60
+    }
+}
+
 function Get-CgvmsConfig([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) {
         throw "Configuration file not found: $Path (copy deploy\windows\cgvms.example.psd1 there and adjust it)."
@@ -35,6 +75,7 @@ function Get-CgvmsConfig([string]$Path) {
         if (-not $cfg.ContainsKey($key) -or -not $cfg[$key]) { $cfg[$key] = $defaults[$key] }
     }
     $cfg.AppDir = $cfg.AppDir.TrimEnd('\')
+    $cfg.LocalMode = $false
     if (-not $cfg.ContainsKey('HealthUrl') -or -not $cfg.HealthUrl) { $cfg.HealthUrl = "https://$($cfg.SiteName)/api/v1/health/ready" }
     if ($cfg.TlsMode -notin 'internal', 'company') { throw "TlsMode must be 'internal' or 'company' in $Path." }
     if ([int]$cfg.MongoPort -eq 27017) { throw 'MongoPort 27017 is the legacy desktop database service; refusing.' }

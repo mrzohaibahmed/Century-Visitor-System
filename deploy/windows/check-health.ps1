@@ -12,7 +12,9 @@
     Web          service CGVMS-Web running; http://127.0.0.1:3000/login answers
     HTTPS proxy  service CGVMS-Proxy running; HealthUrl (https://<SiteName>/api/v1/health/ready) answers
                  "ready" with a certificate this PC trusts (exactly what a gate PC sees)
-  Each part is checked directly, so a proxy or name problem never hides the state of the others. Also:
+  Each part is checked directly, so a proxy or name problem never hides the state of the others.
+  Without the Windows services (CGVMS-* not installed) it checks the single-PC local mode of
+  start-production.bat instead: the same parts, by their ports, without Windows services. Also:
     - the HTTPS certificate and the MongoDB certificates are valid for more than 30 days;
     - every drive holding Root, PhotoDir or the database keeps DiskMinFreePercent / DiskMinFreeGB free;
     - the last successful backup is younger than BackupMaxAgeHours.
@@ -24,7 +26,8 @@ param([string]$ConfigPath = 'C:\CenturyGateVMS\config\cgvms.psd1', [int]$CertWar
 
 . (Join-Path $PSScriptRoot 'cgvms-common.ps1')
 
-$cfg = Get-CgvmsConfig $ConfigPath
+# Without the Windows services: the single-PC local mode of start-production.bat (normal processes, no services).
+$cfg = Get-CgvmsSettings $ConfigPath
 $problems = New-Object System.Collections.Generic.List[string]
 $notes = New-Object System.Collections.Generic.List[string]
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -35,6 +38,7 @@ function Part([string]$Name, [bool]$Ok, [string]$Detail) {
     if (-not $Ok) { $problems.Add("${Name}: $Detail") }
 }
 function Get-ServiceProblem([string]$Name) {
+    if ($cfg.LocalMode) { return '' }                  # local mode: processes, checked through their ports below
     $s = Get-Service -Name $Name -ErrorAction SilentlyContinue
     if (-not $s) { return "service $Name is not installed" }
     if ($s.Status -ne 'Running') { return "service $Name is $($s.Status)" }
@@ -115,14 +119,18 @@ if ($healthUri.Scheme -eq 'https') {
         $ssl.AuthenticateAsClient($healthUri.Host)
         $cert = New-Object Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)
         $days = [int]($cert.NotAfter - (Get-Date)).TotalDays
-        $notes.Add("HTTPS certificate valid until $($cert.NotAfter.ToString('yyyy-MM-dd')) ($days days).")
-        if ($days -lt $CertWarnDays) { $problems.Add("The HTTPS certificate expires in $days days ($($cert.NotAfter.ToString('yyyy-MM-dd'))). Renew it.") }
+        $notes.Add("HTTPS certificate valid until $($cert.NotAfter.ToString('yyyy-MM-dd HH:mm')).")
+        # Internal mode: Caddy issues short-lived certificates (hours) and renews them itself; only an
+        # expired one is a problem. A company certificate is renewed by hand: warn 30 days ahead.
+        if ($cfg.TlsMode -eq 'internal') {
+            if ($cert.NotAfter -lt (Get-Date)) { $problems.Add('The HTTPS certificate has expired: Caddy did not renew it (see the Caddy log).') }
+        } elseif ($days -lt $CertWarnDays) { $problems.Add("The HTTPS certificate expires in $days days ($($cert.NotAfter.ToString('yyyy-MM-dd'))). Renew it.") }
         $ssl.Dispose(); $tcp.Dispose()
     } catch { $problems.Add("Could not check the HTTPS certificate: $($_.Exception.Message)") }
 }
 
-# MongoDB certificates.
-try {
+# MongoDB certificates (local mode: the database has no TLS, nothing to check).
+if (-not $cfg.LocalMode) { try {
     $python = Get-CgvmsPython $cfg
     $tool = Join-Path $cfg.AppDir 'deploy\mongodb\cgvms_mongo.py'
     $ErrorActionPreference = 'Continue'
@@ -131,10 +139,10 @@ try {
     $ErrorActionPreference = 'Stop'
     $notes.Add("Database certificates: $($out -join '; ')")
     if ($certExit -ne 0) { $problems.Add("A MongoDB certificate expires within $CertWarnDays days: $($out -join '; '). Renew it (README).") }
-} catch { $problems.Add("Could not check the MongoDB certificates: $($_.Exception.Message)") }
+} catch { $problems.Add("Could not check the MongoDB certificates: $($_.Exception.Message)") } }
 
 # Disk space on every drive that holds application data.
-$paths = @($cfg.Root, $cfg.PhotoDir, (Join-Path $cfg.Root 'mongodb'))
+$paths = @($cfg.Root, $cfg.PhotoDir, (Join-Path $cfg.Root 'mongodb'), (Join-Path $cfg.AppDir '.dev\mongo'))
 $drives = $paths | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Get-Item -LiteralPath $_).PSDrive.Name } | Sort-Object -Unique
 foreach ($d in $drives) {
     $info = Get-PSDrive -Name $d
@@ -164,8 +172,8 @@ else {
 # Result, state changes and a daily reminder while a problem lasts.
 $healthy = $problems.Count -eq 0
 $statusDir = Get-StatusDir $cfg
-$state = [ordered]@{ checked = (Get-Date).ToString('o'); healthy = $healthy; parts = @($parts); problems = @($problems)
-                    notes = @($notes) }
+$state = [ordered]@{ checked = (Get-Date).ToString('o'); healthy = $healthy; parts = $parts.ToArray()
+                    problems = $problems.ToArray(); notes = $notes.ToArray() }
 $state | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $statusDir 'health.json') -Encoding UTF8
 $stateFile = Join-Path $statusDir 'health-state.txt'
 $previous = if (Test-Path -LiteralPath $stateFile) { Get-Content -LiteralPath $stateFile -Raw } else { '' }

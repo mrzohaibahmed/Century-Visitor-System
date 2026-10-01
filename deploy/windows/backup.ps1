@@ -31,7 +31,9 @@ param([string]$ConfigPath = 'C:\CenturyGateVMS\config\cgvms.psd1')
 
 . (Join-Path $PSScriptRoot 'cgvms-common.ps1')
 
-$cfg = Get-CgvmsConfig $ConfigPath
+# Without the Windows services: the single-PC local mode of start-production.bat (database without login,
+# backups in .prod\backups unless CGVMS_BACKUP names another folder).
+$cfg = Get-CgvmsSettings $ConfigPath
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $name = "cgvms-$stamp"
 $started = Get-Date
@@ -59,21 +61,30 @@ try {
     $tool = Join-Path $cfg.AppDir 'deploy\mongodb\cgvms_mongo.py'
     $dumpConfig = Join-Path $cfg.Root 'secrets\mongodump.yaml'
     $mongodump = Join-Path $cfg.MongoToolsBin 'mongodump.exe'
-    foreach ($required in $dumpConfig, $mongodump, $cfg.PhotoDir) {
-        if (-not (Test-Path -LiteralPath $required)) { throw "Not found: $required" }
+    if (-not (Test-Path -LiteralPath $mongodump)) {
+        throw "Not found: $mongodump (install MongoDB Database Tools: mongodb.com/try/download/database-tools)"
+    }
+    $required = @($cfg.PhotoDir)
+    if (-not $cfg.LocalMode) { $required += $dumpConfig }
+    foreach ($path in $required) {
+        if (-not (Test-Path -LiteralPath $path)) { throw "Not found: $path" }
     }
     Write-StatusLog $cfg 'backup' "Backup $name started."
 
-    # 1. MongoDB log rotation (a failure here does not stop the backup).
-    $rotated = Invoke-Logged $cfg 'backup' $python @($tool, 'rotate-logs', '--dump-config', $dumpConfig,
-        '--log-dir', (Join-Path $cfg.Root 'mongodb\log'), '--keep-days', '30')
-    if ($rotated -ne 0) { Write-StatusLog $cfg 'backup' "  WARNING: MongoDB log rotation failed (exit code $rotated)." }
+    # 1. MongoDB log rotation (a failure here does not stop the backup). Local mode: dev_mongo.py's log, not rotated.
+    if (-not $cfg.LocalMode) {
+        $rotated = Invoke-Logged $cfg 'backup' $python @($tool, 'rotate-logs', '--dump-config', $dumpConfig,
+            '--log-dir', (Join-Path $cfg.Root 'mongodb\log'), '--keep-days', '30')
+        if ($rotated -ne 0) { Write-StatusLog $cfg 'backup' "  WARNING: MongoDB log rotation failed (exit code $rotated)." }
+    }
 
-    # 2. Database dump (consistent: --oplog).
+    # 2. Database dump (consistent: --oplog). The connection comes from secrets\mongodump.yaml (login), or in
+    #    local mode is the database on 127.0.0.1 without login.
     $staging = Join-Path $cfg.Root "backup\staging\$name"
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
     $archive = Join-Path $staging 'mongodb.archive.gz'
-    $dumped = Invoke-Logged $cfg 'backup' $mongodump @("--config=$dumpConfig", '--oplog', '--gzip', "--archive=$archive") '  mongodump: '
+    $connection = if ($cfg.LocalMode) { "--uri=$($cfg.MongoUri)" } else { "--config=$dumpConfig" }
+    $dumped = Invoke-Logged $cfg 'backup' $mongodump @($connection, '--oplog', '--gzip', "--archive=$archive") '  mongodump: '
     if ($dumped -ne 0) { throw "mongodump failed (exit code $dumped)." }
     $archiveHash = Get-FileSha256 $archive
     $archiveSize = (Get-Item -LiteralPath $archive).Length
