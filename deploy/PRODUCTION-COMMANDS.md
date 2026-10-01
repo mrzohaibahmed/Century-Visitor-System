@@ -2,6 +2,20 @@
 
 Run everything in **PowerShell as Administrator** on the server. Full explanations: `README.md` → "Production operations".
 
+## Quick setup (steps 2–14 in one script)
+
+1. Install Python 3.12 (**for all users**), Node.js 24 LTS and MongoDB 8.x (untick "Install MongoD as a Service").
+2. Put `caddy.exe`, `WinSW-x64.exe` and the MongoDB Database Tools (`tools\mongodb-database-tools\bin\mongodump.exe`) in `C:\CenturyGateVMS\tools`.
+3. Clone the application (step 1 below) to `C:\CenturyGateVMS\app`.
+4. Right-click `C:\CenturyGateVMS\app\deploy\windows\setup-production.bat` → **Run as administrator**, or:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File C:\CenturyGateVMS\app\deploy\windows\setup-production.ps1 -BackupDestination \\BACKUP01\CenturyGateVMS$
+   ```
+   Defaults: site `vms.century.local`, internal CA, photos in `D:\CenturyGateVMS-Photos`. It lists anything missing and stops; it is safe to run again.
+   It asks for the first administrator's password, and ends with the steps that must be done by hand (move `ca.key` off the server, password manager, gate-PC root certificate, DNS, backup share rights).
+
+After that, start everything with `deploy\windows\start-production.bat` (as Administrator). The steps below are the same setup done by hand.
+
 ## First-time installation
 
 ### 1. Get the application
