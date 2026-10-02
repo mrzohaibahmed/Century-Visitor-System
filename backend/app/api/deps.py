@@ -55,21 +55,21 @@ def request_meta(request: HTTPConnection) -> RequestMeta:
 
 def session_cookie_name(settings: Settings) -> str:
     # The __Host- prefix makes browsers insist on Secure, Path=/ and no Domain attribute.
-    return "__Host-cg_session" if settings.cookie_secure else "cg_session"
+    return "__Host-cg_session" if settings.secure_cookies else "cg_session"
 
 
 def set_session_cookies(response: Response, settings: Settings, new: NewSession) -> None:
     max_age = settings.session_max_hours * 3600
     response.set_cookie(session_cookie_name(settings), new.token, max_age=max_age, path="/",
-                        httponly=True, secure=settings.cookie_secure, samesite="strict")
+                        httponly=True, secure=settings.secure_cookies, samesite="strict")
     # Readable by the page's JavaScript on purpose: it is echoed back in the X-CSRF-Token header.
     response.set_cookie(CSRF_COOKIE, new.csrf_token, max_age=max_age, path="/",
-                        httponly=False, secure=settings.cookie_secure, samesite="strict")
+                        httponly=False, secure=settings.secure_cookies, samesite="strict")
 
 
 def clear_session_cookies(response: Response, settings: Settings) -> None:
     for name, httponly in ((session_cookie_name(settings), True), (CSRF_COOKIE, False)):
-        response.delete_cookie(name, path="/", secure=settings.cookie_secure, httponly=httponly, samesite="strict")
+        response.delete_cookie(name, path="/", secure=settings.secure_cookies, httponly=httponly, samesite="strict")
 
 
 def _verify_csrf(request: Request, session: dict) -> None:

@@ -3,8 +3,7 @@
 Web-based Visitor Management System replacing the Century Gate desktop application.
 
 ```
-Browser ──HTTPS──> Reverse proxy ──/──────> Next.js (frontend/)
-                                 └─/api/──> FastAPI (backend/) ──> MongoDB (private)
+Browser ──HTTP :3000──> Next.js web server (frontend/) ──/api/──> FastAPI (backend/, 127.0.0.1) ──> MongoDB (127.0.0.1)
 ```
 
 - The browser never connects to MongoDB; only the API holds database credentials.
@@ -20,7 +19,7 @@ Browser ──HTTPS──> Reverse proxy ──/──────> Next.js (fro
 | `backend/` | FastAPI backend (Python 3.12, Pydantic v2, PyMongo async) |
 | `frontend/` | Next.js 16 frontend (App Router, React 19, TypeScript, Tailwind CSS 4) |
 | `scripts/dev_mongo.py` | Starts an isolated local MongoDB replica set for development |
-| `deploy/` | Production deployment on Windows: services, HTTPS proxy, MongoDB, backups, monitoring (see "Production operations") |
+| `deploy/` | Production on one Windows PC: start/stop scripts, health check, backups (see "Production on one Windows 11 PC") |
 | `.dev/` | Local development data and logs (git-ignored) |
 
 ## Local development (Windows)
@@ -172,7 +171,7 @@ phone. For other label stock, change the sizes in `frontend/src/app/globals.css`
 
 See **Production operations → Hardware acceptance tests** below. The automated tests use Edge's fake webcam
 and check the print layout as a PDF; real webcams, badge printers and QR scanners are tested by hand on each
-gate PC, over HTTPS.
+gate PC.
 
 ## Host arrival notifications (Phase 6A)
 
@@ -270,228 +269,89 @@ webcam works as before).
 
 ## Production on one Windows 11 PC
 
-The simplest production setup runs this project folder in production mode on one PC, as normal programs:
-MongoDB (127.0.0.1:27018, the project's own database in `.dev\mongo`), the API with `python -m app.serve`
-(no reload, 127.0.0.1:8000), the web server with `next start` (127.0.0.1:3000) and Caddy for HTTPS on port 443,
-which the gate PCs use. HTTPS is needed because the login cookie is `Secure` and browsers only allow the webcam
-on HTTPS. Start with `deploy\windows\start-production.bat`, stop with `stop-production.bat`, restart with
-`restart-production.bat`, check with `check-health.ps1`. Step by step: `deploy\PRODUCTION-COMMANDS.md`.
+The simplest production setup runs this project folder in production mode on one PC, as normal programs, for
+gate PCs on a **trusted private LAN over plain HTTP**:
+
+```
+Gate PC browser ──HTTP :3000──> web server (node server.mjs, 0.0.0.0:3000) ──/api/*──> API (127.0.0.1:8000) ──> MongoDB (127.0.0.1:27018)
+                                                                                        API ──> gate cameras (Hikvision)
+```
+
+- Gate PCs open `http://<this PC's name or IP>:3000`. No TLS, no certificate, no Caddy.
+- Only the web server listens on the network. The API (8000) and MongoDB (27018, the project's own database in
+  `.dev\mongo`) listen on 127.0.0.1 only and are never exposed; the browser reaches the API only through `/api/*`.
+- The API runs with `CG_ENVIRONMENT=production` and `CG_DEPLOYMENT_MODE=http-lan`: the session cookies lose only
+  their `Secure` flag (see *Configuration reference*). HTTP is **not encrypted**: passwords, session cookies and
+  visitor data cross the LAN in clear text. Use it only on a network you trust; never expose port 3000 to the
+  internet.
+- Gate cameras (Hikvision) are read by the server and work over HTTP. Browsers allow the **webcam fallback** (and
+  webcam QR scanning) only on HTTPS or on this PC itself, so a gate without a working gate camera has no photo
+  capture or QR scanning on HTTP.
+- A browser that opened the former HTTPS address (`https://<name>`) remembers HSTS for that name for up to a
+  year and will refuse `http://<name>:3000`: use the IP address on that PC, or clear the HSTS entry for the name
+  (Edge: `edge://net-internals/#hsts`, Chrome: `chrome://net-internals/#hsts`).
+- **Windows Firewall is not part of this deployment**: no script changes it, and nothing needs to be configured
+  in it. The API and MongoDB stay private because they listen on 127.0.0.1 only, not because of firewall rules.
+  No subnet is configured anywhere.
+- **`start-production.bat` refuses to start** unless every connected network is Private or Domain: on a Public
+  network (phone hotspot, guest Wi-Fi, an unidentified virtual adapter) the web server would answer on it, so
+  nothing is started. Each time: connect the server to the gate LAN, check that Windows shows that network as
+  Private (Settings → Network & internet → the network → Network profile type) or Domain, start production, and
+  give the gate PCs the `http://<IP>:3000` address it prints. A new LAN needs no configuration change.
+
+Start with `deploy\windows\start-production.bat`, stop with `stop-production.bat`, restart with
+`restart-production.bat`, check with `check-health.ps1` (it reads `http://127.0.0.1:3000/api/v1/health/ready`
+through the web server). Step by step: `deploy\PRODUCTION-COMMANDS.md`.
 
 In this mode the database has no login: production allows that only with `CG_MONGO_LOCALHOST_WITHOUT_LOGIN=true`
 and only for a database on 127.0.0.1 (set by `production.ps1`). MongoDB listens on 127.0.0.1 only, so gate PCs
-cannot reach it, but any program or user on this PC can. The Windows-services installation below adds database
-login + TLS and service accounts.
+cannot reach it, but any program or user on this PC can.
 
-## Production operations (Phase 7A)
+## Production operations
 
-This part is for the administrator who installs and runs the system on the gate server (Windows-services
-installation; for one PC without services see "Production on one Windows 11 PC" above). It assumes no
-knowledge of the code. Everything named `*.ps1` is in `deploy\windows\`; run PowerShell **as Administrator**.
+This part is for the administrator who runs the system on the server PC with `start-production.bat` (see
+"Production on one Windows 11 PC" above and `deploy\PRODUCTION-COMMANDS.md`). It assumes no knowledge of the
+code. Everything named `*.ps1` or `*.bat` is in `deploy\windows\`. This is the only supported production
+deployment: there are no Windows services, no Caddy, no HTTPS certificates and no firewall scripts.
 
-### Architecture
-
-```
-Gate PC (browser only) ──HTTPS 443──> CGVMS-Proxy (Caddy) ──/api/*──> CGVMS-API (FastAPI, 127.0.0.1:8000) ──TLS + login──> CGVMS-MongoDB (127.0.0.1:27018)
-                         (80 → 443)                       └─else────> CGVMS-Web (Next.js, 127.0.0.1:3000)
-                                                          CGVMS-API ──> private photo folder (CG_PHOTO_DIR)
-```
-
-- Gate PCs need **only a browser** (Edge or Chrome), the site name in DNS, and (if the internal CA is used)
-  the CA's root certificate. They never get Python, Node.js, MongoDB, source code, `.env` or passwords.
-- Only the proxy listens on the network (443, and 80 which only redirects to HTTPS). The API, the web server
-  and MongoDB listen on `127.0.0.1` only: nothing outside the server can reach them.
+- Gate PCs need **only a browser** (Edge or Chrome) and the `http://<server IP>:3000` address. They never get
+  Python, Node.js, MongoDB, source code, `.env` or passwords.
 - The **legacy desktop MongoDB service (port 27017, database `century_gate_system`) is not used, changed or
-  stopped**. The web application runs its own MongoDB instance on port 27018. Every script refuses port 27017,
+  stopped**. The web application runs its own MongoDB instance on port 27018. The scripts never use port 27017,
   and the API refuses the legacy database name.
-
-| Service | Program | Listens on | Runs as | Logs |
-| --- | --- | --- | --- | --- |
-| `CGVMS-MongoDB` | `mongod --config C:\CenturyGateVMS\mongodb\mongod.conf` | 127.0.0.1:27018 (TLS only) | `NT SERVICE\CGVMS-MongoDB` | `mongodb\log\mongod.log` |
-| `CGVMS-API` | `python -m app.serve` (production server, no reload, no API docs) | 127.0.0.1:8000 | `NT SERVICE\CGVMS-API` | `logs\api\` |
-| `CGVMS-Web` | `next start` of the production build | 127.0.0.1:3000 | `NT SERVICE\CGVMS-Web` | `logs\web\` |
-| `CGVMS-Proxy` | Caddy (`deploy\windows\caddy\Caddyfile`) | 0.0.0.0:443 and :80 | `NT SERVICE\CGVMS-Proxy` | `logs\proxy\` |
-
-All four start automatically at boot and restart themselves after a crash (10 s, 30 s, then 2 min).
-`CGVMS-API` waits for `CGVMS-MongoDB`; `CGVMS-Web` waits for `CGVMS-API`.
-
-### Server requirements
-
-- Windows Server 2019 or later (or Windows 10/11 Pro for a small site), 4 CPU cores, 8 GB RAM.
-- Disk: 20 GB for the system and the application, plus the photo folder (about 100 KB per visitor photo,
-  roughly 4 GB per 100 visitors a day for a year) on a data drive if possible.
-- A DNS name for the server that the gate PCs use, e.g. `vms.century.local`.
-- A backup destination on **another machine or disk** (a network share or a backup drive).
-- Software (install for **all users**, so the service accounts can run it):
-  - Python 3.12 (python.org installer, "Install for all users") → `C:\Program Files\Python312`
-  - Node.js 24 LTS → `C:\Program Files\nodejs`
-  - MongoDB Community Server 8.x (the MSI; **untick "Install MongoD as a Service"**, the installer's own
-    service is not used; the legacy 27017 service, if present, stays as it is)
-  - MongoDB Database Tools 100.x (zip, for `mongodump`/`mongorestore`) → `C:\CenturyGateVMS\tools\mongodb-database-tools`
-  - Caddy 2.x for Windows (caddyserver.com, verify the checksum) → `C:\CenturyGateVMS\tools\caddy.exe`
-  - WinSW 2.12 (`WinSW-x64.exe` from github.com/winsw/winsw releases) → `C:\CenturyGateVMS\tools\WinSW-x64.exe`
-
-### Folder layout on the server
-
-| Folder | Contents | Who may read it |
-| --- | --- | --- |
-| `C:\CenturyGateVMS\app` | This repository (a release), incl. `backend\.env` | services (read); `backend\.env`: CGVMS-API only |
-| `...\config\cgvms.psd1` | Settings for the operations scripts (no passwords) | Administrators |
-| `...\secrets\` | Database connection files and the MongoDB admin password | Administrators, SYSTEM |
-| `...\tls\mongodb\` | Database certificate, CA, replica-set key file | CGVMS-MongoDB (the API: `ca.pem` only) |
-| `...\tls\web\` | HTTPS certificate and key (company CA) | CGVMS-Proxy |
-| `...\mongodb\` | `mongod.conf`, `data\`, `log\` | CGVMS-MongoDB |
-| `...\logs\api|web|proxy` | Service logs (rotated) | the service, Administrators |
-| `...\status\` | Backup, restore-test and health results | Administrators, SYSTEM |
-| `...\backup\staging\` | Last 3 local dumps (not a real backup) | Administrators, SYSTEM |
-| `D:\CenturyGateVMS-Photos` | Visitor photos (`CG_PHOTO_DIR`) | CGVMS-API (modify), SYSTEM (backup) |
-
-`install-services.ps1` sets these permissions and removes the default "Authenticated Users" rights, so an
-ordinary user logged on to the server can neither read the data nor change the application.
-
-### Installation (first time)
-
-1. **Software**: install everything listed under *Server requirements*.
-2. **Application**: copy the release to `C:\CenturyGateVMS\app` (e.g. `git clone` then `git checkout <tag>`).
-3. **API environment** (PowerShell in `C:\CenturyGateVMS\app\backend`):
-   ```powershell
-   & 'C:\Program Files\Python312\python.exe' -m venv .venv
-   .venv\Scripts\python -m pip install -r requirements.txt -r ..\deploy\requirements-ops.txt
-   ```
-4. **Web build** (in `C:\CenturyGateVMS\app\frontend`): `npm ci` then `npm run build`. Never run `npm run dev` on the server.
-5. **Settings for the scripts**: copy `deploy\windows\cgvms.example.psd1` to `C:\CenturyGateVMS\config\cgvms.psd1`
-   and set `SiteName`, `PhotoDir`, `MongoBin`, `HealthUrl` and `BackupDestination`.
-6. **Photo folder**: create it (e.g. `D:\CenturyGateVMS-Photos`). The API refuses to start if it is missing.
-7. **Database certificates and key file** (in `C:\CenturyGateVMS\app`):
-   ```powershell
-   backend\.venv\Scripts\python deploy\mongodb\cgvms_mongo.py prepare --tls-dir C:\CenturyGateVMS\tls\mongodb
-   ```
-   Then **move `C:\CenturyGateVMS\tls\mongodb\ca.key` off the server** (e.g. to a USB key in the safe). It is
-   only needed to renew the database certificate.
-8. **MongoDB configuration**: copy `deploy\mongodb\mongod.conf.template` to `C:\CenturyGateVMS\mongodb\mongod.conf`
-   (adjust paths if you use other folders) and create `mongodb\data` and `mongodb\log`.
-9. **Database accounts** (once): start MongoDB in a console window, create the accounts, stop it again:
-   ```powershell
-   & 'C:\Program Files\MongoDB\Server\8.3\bin\mongod.exe' --config C:\CenturyGateVMS\mongodb\mongod.conf
-   # in a SECOND window:
-   backend\.venv\Scripts\python deploy\mongodb\cgvms_mongo.py init --tls-dir C:\CenturyGateVMS\tls\mongodb --secrets-dir C:\CenturyGateVMS\secrets
-   ```
-   This creates the replica set and the accounts and writes their connection files into `secrets\`. Put the
-   `cgvms_root` password (`secrets\mongodb-root.txt`) into the company password manager.
-10. **API settings**: copy `deploy\windows\api.env.template` to `C:\CenturyGateVMS\app\backend\.env`. Paste the line
-    from `secrets\cgvms_app.uri.txt` into `CG_MONGO_URI`, and set `CG_PHOTO_DIR` and `CG_ORGANIZATION_NAME`.
-11. **Schema and first administrator** (MongoDB still running in the console):
-    ```powershell
-    powershell -ExecutionPolicy Bypass -File deploy\windows\migrate.ps1
-    cd backend; .venv\Scripts\python -m app.cli create-admin --username admin
-    ```
-    Then stop the console MongoDB (Ctrl+C).
-12. **HTTPS certificate**: see *HTTPS* below. Copy `deploy\windows\services\CGVMS-Proxy.xml` to
-    `C:\CenturyGateVMS\services\` and set `CGVMS_SITE` (and `CGVMS_TLS_MODE`) there.
-13. **Services**: `powershell -ExecutionPolicy Bypass -File deploy\windows\install-services.ps1`
-    (use `-DryRun` first to see what it will do). It ends with a health check.
-14. **Scheduled tasks**: `powershell -ExecutionPolicy Bypass -File deploy\windows\register-tasks.ps1`.
-15. **DNS**: point `SiteName` at the server. From a gate PC, open `https://<SiteName>`: no certificate warning.
-16. **Prove the backups**: run `backup.ps1` and then `restore-test.ps1` by hand once and check both say PASSED.
 
 ### Configuration reference
 
 Gate cameras: `CG_SECRETS_KEY` (see "Gate cameras" above) is a secret like `CG_MONGO_URI`; keep a copy of it
 with the other secrets, not with the database backups.
 
-`C:\CenturyGateVMS\app\backend\.env` (template: `deploy\windows\api.env.template`) holds the only secret the
-application uses at runtime (`CG_MONGO_URI`). The API **refuses to start in production** if:
+`backend\.env` holds the secrets the application uses at runtime. The API **refuses to start in production** if:
 - `CG_MONGO_URI` has no user/password, no `tls=true`, or any of `tlsAllowInvalidCertificates`,
-  `tlsAllowInvalidHostnames`, `tlsInsecure`;
+  `tlsAllowInvalidHostnames`, `tlsInsecure`; the only exception is `CG_MONGO_LOCALHOST_WITHOUT_LOGIN=true`
+  (set by `production.ps1`) for a database on 127.0.0.1;
 - `CG_PHOTO_DIR` is not set, does not exist, is not a folder or is not writable;
-- `CG_COOKIE_SECURE` is false; or `CG_MONGO_DB` is the legacy database name.
+- `CG_COOKIE_SECURE` is false; or `CG_MONGO_DB` is the legacy database name;
+- `CG_DEPLOYMENT_MODE` is anything but `https` (default) or `http-lan`. `http-lan` is an intentional,
+  production-only mode for plain HTTP on a trusted private LAN: the session cookie becomes `cg_session` and
+  both cookies lose only `Secure` (HttpOnly, SameSite=Strict, CSRF and sessions are unchanged). HTTP gives no
+  transport confidentiality. Development and test refuse `http-lan`. `production.ps1` sets it for the API.
 It prints only the reason, never the value. E-mail to hosts: see *Host arrival notifications*. Other settings: `CG_ORGANIZATION_NAME` (badges), `CG_SESSION_IDLE_MINUTES`
 (15), `CG_SESSION_MAX_HOURS` (12), `CG_PASS_VALID_HOURS` (24), `CG_LOG_LEVEL` (INFO), `CG_TIMEZONE`
-(Asia/Karachi), `CG_TRUSTED_PROXIES` (the local proxy). There is no separate "public origin" or CSRF
-setting: session cookies are host-only (`__Host-`), HTTPS-only and SameSite=Strict, and every change needs the
-CSRF token.
+(Asia/Karachi), `CG_TRUSTED_PROXIES` (the local web server). There is no separate "public origin" or CSRF
+setting: session cookies are host-only and SameSite=Strict, and every change needs the CSRF token.
 
-The web service has no secrets (only `API_INTERNAL_URL=http://127.0.0.1:8000`); no `NEXT_PUBLIC_*` variables
-exist. The proxy's settings are in `services\CGVMS-Proxy.xml` (`CGVMS_SITE`, `CGVMS_TLS_MODE`, certificate paths).
+The web server has no secrets; no `NEXT_PUBLIC_*` variables exist.
 
-### Starting, stopping, restarting
-
-```powershell
-Get-Service CGVMS-*                                   # status of all four
-Restart-Service CGVMS-API                             # after changing backend\.env
-Restart-Service CGVMS-Proxy                           # after changing the certificate or Caddyfile
-Stop-Service CGVMS-Proxy, CGVMS-Web, CGVMS-API, CGVMS-MongoDB      # full stop (this order)
-Start-Service CGVMS-MongoDB, CGVMS-API, CGVMS-Web, CGVMS-Proxy     # full start (this order)
-powershell -ExecutionPolicy Bypass -File C:\CenturyGateVMS\app\deploy\windows\check-health.ps1   # verify
-```
-
-Health in a browser (from any gate PC): `https://<SiteName>/api/v1/health/ready` answers
-`{"status":"ready", ...}` with the state of the database, schema, transactions and photo storage. It never
-shows host names, paths or errors. The dashboard's *System status* card shows the same.
-
-### Updating to a new version
-
-```powershell
-powershell -ExecutionPolicy Bypass -File deploy\windows\backup.ps1        # 1. fresh backup
-Stop-Service CGVMS-Proxy, CGVMS-Web, CGVMS-API                            # 2. stop (MongoDB keeps running)
-# 3. replace C:\CenturyGateVMS\app with the new release (keep backend\.env!), then:
-cd C:\CenturyGateVMS\app\backend; .venv\Scripts\python -m pip install -r requirements.txt
-cd ..\frontend; npm ci; npm run build
-powershell -ExecutionPolicy Bypass -File ..\deploy\windows\migrate.ps1  # 4. schema (with the migration account)
-Start-Service CGVMS-API, CGVMS-Web, CGVMS-Proxy                           # 5. start and check
-powershell -ExecutionPolicy Bypass -File ..\deploy\windows\check-health.ps1
-```
-
-### HTTPS
-
-The camera only works on HTTPS (or on the server itself as `localhost`), so gate PCs **must** use HTTPS. Plain
-`http://` requests are answered only with a redirect to HTTPS, and browsers are told to use HTTPS only (HSTS).
-TLS certificate validation is never switched off anywhere.
-
-Choose one (`CGVMS_TLS_MODE` in `services\CGVMS-Proxy.xml`):
-
-- **`company` (recommended)**: a certificate from the company's certificate authority (e.g. Active Directory
-  Certificate Services) for `SiteName`. Put the certificate (PEM, with intermediates) in
-  `C:\CenturyGateVMS\tls\web\cert.pem` and its key in `tls\web\key.pem`. Gate PCs in the domain already trust
-  the company CA. **Renewal**: before it expires (the health check warns 30 days ahead), replace both files and
-  `Restart-Service CGVMS-Proxy`.
-- **`internal`**: only if the company has no CA. Caddy runs its own small CA and renews the server certificate
-  automatically. Its root certificate (`C:\CenturyGateVMS\caddy-data\pki\authorities\local\root.crt`, valid
-  10 years) must be installed as a *Trusted Root Certification Authority* on every gate PC (Group Policy) and on
-  the server itself (for the health check). Never click through a certificate warning instead.
-
-A public certificate (e.g. Let's Encrypt) is only possible for a public DNS name and is not needed on an
-internal network.
-
-### MongoDB security
-
-- **Separate instance**: service `CGVMS-MongoDB`, port **27018**, data in `C:\CenturyGateVMS\mongodb\data`.
-- **Network**: `bindIp: 127.0.0.1`: only programs on the server can connect; the firewall is not even needed for it.
-- **TLS required** (`requireTLS`, TLS 1.2+) with a private database CA. The API checks the database certificate
-  (`tlsCAFile`) and its name (`localhost`).
-- **Login required** (`authorization: enabled`) and a replica-set key file.
-- **Single-node replica set** (`cgvms`): the application needs transactions (check-in, check-out). One server
-  is enough; there is no cluster to run.
-- **Accounts** (created by `cgvms_mongo.py init`, passwords are random):
-
-| Account | Rights | Used by | Connection file |
-| --- | --- | --- | --- |
-| `cgvms_app` | read/write on `century_gate_vms` only | the API (`backend\.env`) | `secrets\cgvms_app.uri.txt` |
-| `cgvms_migrate` | + database admin on `century_gate_vms` only | `migrate.ps1` | `secrets\cgvms_migrate.uri.txt` |
-| `cgvms_backup` | `backup` + log rotation | `backup.ps1` | `secrets\mongodump.yaml` |
-| `cgvms_root` | administrator (break glass) | people, rarely | `secrets\mongodb-root.txt` → password manager |
-
-  The application account cannot change the schema, read any other database (including the legacy one),
-  manage accounts or shut the server down (all checked).
-- **Certificate renewal**: the server certificate lasts 27 months (the health check warns 30 days ahead). Bring
-  `ca.key` back, run `cgvms_mongo.py prepare --tls-dir C:\CenturyGateVMS\tls\mongodb --renew`,
-  `Restart-Service CGVMS-MongoDB` (the API reconnects by itself), then remove `ca.key` again.
+Health in a browser: `http://<server IP>:3000/api/v1/health/ready` answers `{"status":"ready", ...}` with the
+state of the database, schema, transactions and photo storage. It never shows host names, paths or errors. The
+dashboard's *System status* card shows the same.
 
 ### Photos
 
-- `CG_PHOTO_DIR` (and `PhotoDir` in `cgvms.psd1`, the same path): a private folder, preferably on a data drive.
-  Only `CGVMS-API` (and SYSTEM for backups) can read it. Neither the proxy nor Next.js serves it. The only way
-  to see a photo is `GET /api/v1/photos/{id}`, which checks the login and role every time (Phase 4 rules).
-  File names are random; no path or file name ever reaches a browser.
+- `CG_PHOTO_DIR` (default `.dev\photos` in this project): a private folder, preferably on a data drive. Neither
+  the web server nor Next.js serves it. The only way to see a photo is `GET /api/v1/photos/{id}`, which checks
+  the login and role every time (Phase 4 rules). File names are random; no path or file name ever reaches a
+  browser.
 - The API refuses to start if the folder is missing or not writable. It never re-creates a vanished folder: if
   the drive disappears while running, photo uploads fail with a clear message ("continue without a photo"),
   and the health check reports `photo_storage: unavailable`.
@@ -499,130 +359,80 @@ internal network.
 
 ### Backups
 
-`CGVMS Backup` runs `backup.ps1` every night (02:00) as SYSTEM:
+`backup.ps1` (run by hand, or from a Task Scheduler task you create) backs up to `.prod\backups`, or to the
+folder named by `CGVMS_BACKUP`. It needs the MongoDB Database Tools (`mongodump`).
 
 1. **Database**: `mongodump --oplog` of the whole instance: a consistent point-in-time copy of all
    collections (users, visitors, visits, watchlist, hosts, departments, gates, audit logs, photo metadata,
-   sessions, settings, counters) and the database accounts.
-2. **Photos**: new photo files are copied to `<BackupDestination>\photos` (after the dump, so every photo in the
+   sessions, settings, counters).
+2. **Photos**: new photo files are copied to `<backup folder>\photos` (after the dump, so every photo in the
    dump has its file). Existing backup copies are never overwritten or deleted, so a damaged live file cannot
    spoil the backup.
 3. **Verification**: SHA-256 of the dump recorded in `manifest.json`, re-checked after copying to
-   `<BackupDestination>\database\cgvms-YYYYMMDD-HHMMSS\`. The photo count in the backup must not be lower than
+   `<backup folder>\database\cgvms-YYYYMMDD-HHMMSS\`. The photo count in the backup must not be lower than
    the live count.
-4. **Retention** (only folders named `cgvms-YYYYMMDD-HHMMSS` are ever deleted): every backup of the last
-   `BackupKeepDays` (35) days, plus the newest backup of each of the last `BackupKeepMonthly` (12) months. Photo
-   backups are kept indefinitely (photos are never deleted by the application; a retention policy for visitor
-   photos is still to be decided, see *Pending decisions*). The last 3 dumps also stay in `backup\staging`.
-5. **Failure detection**: exit code, event log (2000 success, 2001 failure), `status\backup-<date>.log`,
-   `status\last-backup.json`. The health check raises an alarm when the last good backup is older than
-   26 hours.
+4. **Retention** (only folders named `cgvms-YYYYMMDD-HHMMSS` are ever deleted): every backup of the last 35
+   days, plus the newest backup of each of the last 12 months. Photo backups are kept indefinitely (a retention
+   policy for visitor photos is still to be decided, see *Pending decisions*). The last 3 dumps also stay in
+   `.prod\backup\staging`.
+5. **Result**: exit code, `.prod\status\backup-<date>.log`, `.prod\status\last-backup.json`. The health check
+   reports a problem when the last good backup is older than 26 hours.
 
-Backups contain personal data **and** the database accounts' password hashes: give the backup share access only
-to the server's computer account (or the backup account) and the administrators. The secrets folder is not
-part of the backup: keep the `cgvms_root` password and a copy of `secrets\` in the password manager / safe.
+Backups contain personal data: copy them to another disk or PC regularly and give access only to the
+administrators. `backend\.env` is not part of the backup: keep a copy of its secrets in the password manager.
 
-### Restore test (monthly, automatic)
-
-`CGVMS Restore test` runs `restore-test.ps1` on the first Sunday of each month (or run it by hand). It never
-touches the live database or photo folder:
-
-1. picks the newest backup and checks its SHA-256;
-2. starts a **temporary** MongoDB (own folder under `restore-test\`, port 27029, loopback, TLS);
-3. restores the dump point-in-time, and copies the photo backup into a temporary folder;
-4. runs `python -m app.cli restore-check`: record counts (users, visitors, visits, watchlist, audit logs,
-   photos), every photo file present with its recorded SHA-256, visit/visitor photo links intact, and, with the
-   real API against the copy, logins, roles, the watchlist rules and the photo rules (admin sees photos, a guard
-   only the ones needed at the gate, anonymous nobody);
-5. deletes the copy. Result: event 3000 (passed) / 3001 (failed) and `status\restore-test-<time>.json`.
-
-### Disaster recovery (the server or the database is lost)
-
-1. Rebuild the server with *Installation* steps 1–8. Reuse the `tls\mongodb` files and `ca.key` from the safe if
-   you have them, otherwise `prepare` new ones.
-2. Restore the database into the new, empty instance. It starts **without** login for this step, loopback only:
-   copy `mongod.conf` to `mongod-restore.conf` and delete its `security:` section, then:
-   ```powershell
-   & 'C:\Program Files\MongoDB\Server\8.3\bin\mongod.exe' --config C:\CenturyGateVMS\mongodb\mongod-restore.conf
-   # second window:
-   backend\.venv\Scripts\python deploy\mongodb\cgvms_mongo.py init-temp --tls-dir C:\CenturyGateVMS\tls\mongodb --port 27018 --replica-set cgvms
-   C:\CenturyGateVMS\tools\mongodb-database-tools\bin\mongorestore.exe "--uri=mongodb://localhost:27018/?directConnection=true&tls=true&tlsCAFile=C:/CenturyGateVMS/tls/mongodb/ca.pem" --gzip "--archive=<BackupDestination>\database\<newest>\mongodb.archive.gz" --oplogReplay
-   ```
-   Stop that MongoDB (Ctrl+C) and delete `mongod-restore.conf`. The dump contains the database accounts, so the
-   connection files from the password manager work again. (Rehearsed on 27 Sept 2026: 34 documents restored;
-   after restarting with login, the application account connected with its original password; anonymous
-   access was refused.)
-3. Copy the photos back: `robocopy <BackupDestination>\photos D:\CenturyGateVMS-Photos *.jpg /E`.
-4. Continue with *Installation* steps 10 and 12–16 (`backend\.env` from the saved connection files), then run
-   `cd C:\CenturyGateVMS\app\backend; .venv\Scripts\python -m app.cli verify-data`: it must say `"ok": true`.
+**Restore** (not rehearsed in this setup yet): with the application stopped (`stop-production.bat`), start an
+empty database (`backend\.venv\Scripts\python scripts\dev_mongo.py start` with an empty `.dev\mongo`), then
+`mongorestore "--uri=mongodb://127.0.0.1:27018/?directConnection=true" --gzip "--archive=<backup folder>\database\<newest>\mongodb.archive.gz" --oplogReplay`,
+copy the photos back (`robocopy "<backup folder>\photos" "<CG_PHOTO_DIR>" *.jpg /E`), and check with
+`cd backend; .venv\Scripts\python -m app.cli verify-data` (it must say `"ok": true`) before `start-production.bat`.
 
 ### Monitoring
 
-`CGVMS Health check` runs `check-health.ps1` every 5 minutes and checks: the four services; `HealthUrl`
-(through the real HTTPS name and certificate: proxy, API, database, schema, transactions, photo folder); the
-HTTPS and database certificates (warning 30 days before expiry); free space on every drive holding
-application data (below 15 % or 10 GB); the age of the last good backup (26 hours). The result is written to
-`status\health.json`. Problems go to the **Windows Application event log**, source `CenturyGateVMS`:
+`check-health.ps1` runs at the end of every `start-production.bat` and can be run at any time (or from a Task
+Scheduler task). It checks MongoDB, the API, the database (schema, transactions, photo folder), the web server,
+the way gate PCs reach the API (`http://127.0.0.1:3000/api/v1/health/ready` through the web server), free space
+on every drive holding application data (below 15 % or 10 GB) and the age of the last good backup (26 hours).
+The result is written to `.prod\status\health.json`. If an administrator registered the event source once
+(`New-EventLog -LogName Application -Source CenturyGateVMS`), problems also go to the **Windows Application
+event log**:
 
 | Event ID | Meaning |
 | --- | --- |
 | 1001 / 1000 | health problem found / healthy again (only on a change, and once a day while it lasts) |
 | 2001 / 2000 | backup failed / succeeded |
-| 3001 / 3000 | restore test failed / passed |
-
-Point the company's monitoring at these events, or attach an e-mail action to them in Task Scheduler.
 
 **Logs** (no passwords, tokens, QR codes, ID numbers or query strings are written; request IDs stay intact for
 correlation):
 
-| Log | Where | Rotation |
-| --- | --- | --- |
-| API (JSON lines, one per request) | `logs\api\CGVMS-API.err.log` | 10 files × 10 MB, oldest deleted |
-| Web | `logs\web\` | 10 × 10 MB |
-| Proxy (errors only; no access log on purpose) | `logs\proxy\` | 10 × 10 MB |
-| MongoDB | `mongodb\log\mongod.log` | rotated nightly by the backup job, kept 30 days |
-| Backups, restore tests, health | `status\*.log`, `status\*.json` | kept 60 days (`StatusKeepDays`) |
-| Service start/stop | `logs\*\*.wrapper.log`, Windows *System* event log | Windows |
+| Log | Where |
+| --- | --- |
+| API (JSON lines, one per request) | `.prod\logs\api.log` (previous run: `api.1.log`) |
+| Web | `.prod\logs\web.log`, `web.err.log` |
+| MongoDB | `.dev\mongo\mongod.log` |
+| Backups, health | `.prod\status\*.log`, `.prod\status\*.json` (kept 60 days) |
 
 ### Recovery runbook
 
 | Symptom | What to do |
 | --- | --- |
-| Gate PCs show "cannot reach the server" | `Get-Service CGVMS-*`. Start what is stopped (in the order above). Check the firewall allows 443. |
-| **API stopped** / keeps restarting | Read the end of `logs\api\CGVMS-API.err.log`: a configuration problem prints `ERROR: configuration is not valid: <reason>` (no secrets). Fix `backend\.env`, `Restart-Service CGVMS-API`. |
-| **Web stopped** | `logs\web\`. Usually a missing build: `cd app\web; npm run build`, `Start-Service CGVMS-Web`. |
-| **MongoDB stopped** | `mongodb\log\mongod.log` (look for `"s":"F"` / `"s":"E"`). Common: disk full, a certificate or the key file unreadable, a newer MongoDB version. `Start-Service CGVMS-MongoDB`; the API reconnects by itself. |
-| **Certificate expired** (browser warning) | HTTPS: replace `tls\web\cert.pem`/`key.pem` (company CA) and `Restart-Service CGVMS-Proxy`. Database: see *MongoDB → Certificate renewal*. |
-| **Disk full** | Photos and the database grow; logs are bounded. Free space or extend the drive; move old `backup\staging` copies away. MongoDB stops writing when the disk is full: check it afterwards. |
-| **Backup failed** (event 2001) | `status\backup-<date>.log` names the step. Usual causes: backup share unreachable or no rights, disk full. Fix, then run `backup.ps1` by hand and check event 2000. |
-| **Restore test failed** (event 3001) | `status\restore-test-<time>.json` lists what did not match. Treat it as "the backups may be unusable" until solved. |
-| **Photo folder unavailable** | Health shows `photo_storage: unavailable`; gates can still check visitors in without photos. Reconnect the drive or share (same path), check the CGVMS-API account can write, `Restart-Service CGVMS-API`. Never create an empty folder in its place. |
-
-### Deployment security review (Phase 7A)
-
-| Check | Result |
-| --- | --- |
-| MongoDB not reachable from the network | `bindIp: 127.0.0.1` (verified: listening on 127.0.0.1 only) |
-| MongoDB requires login | `authorization: enabled`; anonymous access refused (verified) |
-| MongoDB TLS validated | `requireTLS`; plain connections dropped; a client without the database CA is refused; the API refuses URIs that disable checks (tested) |
-| Least-privilege application account | `readWrite` on `century_gate_vms` only; no schema changes, no other databases, no accounts, no shutdown (verified) |
-| Backend secrets server-only | only in `backend\.env` (readable by CGVMS-API only) and `secrets\`; nothing in service definitions, Next.js or the browser; no `NEXT_PUBLIC_*` |
-| Photo folder private | outside `frontend\`; not served by the proxy or Next.js (verified 404); API-authorised access only |
-| No HTTP for gate PCs | port 80 only redirects to HTTPS (to the configured name); HSTS one year |
-| HTTPS validation | company or internal CA; never disabled |
-| Debug / reload off | `app.serve` refuses non-production settings and never reloads; API docs 404 in production (verified); `next start`, never `next dev` |
-| Safe errors | unchanged from Phase 1: `{"error": {...}}`, no stack traces, no paths |
-| Logs | no credentials, tokens, QR codes, ID numbers or query strings (verified on a production-mode run); proxy access log off |
-| Backups not web-accessible | on another machine/disk; nothing under the proxy's or Next.js's reach |
-| `.env` not served | `/.env`, `/api/.env`, `/web/.env.local` → 404 (verified) |
-| Admin surfaces | Caddy admin endpoint off; MongoDB admin only via `cgvms_root` on the server |
+| Gate PCs show "cannot reach the server" | Run `check-health.ps1` on the server. If something is stopped, `restart-production.bat`. Check the gate PC uses `http://<server IP>:3000` (not `https://`; see the HSTS note above). |
+| `start-production.bat` refuses to start | It names the reason: a Public network (connect the trusted LAN, check its profile is Private or Domain), a port in use (close the development windows), or a missing part. |
+| **API stopped** | Read the end of `.prod\logs\api.log`: a configuration problem prints `ERROR: configuration is not valid: <reason>` (no secrets). Fix `backend\.env`, `restart-production.bat`. |
+| **Web stopped** | `.prod\logs\web.log`. Usually a missing build: `restart-production.bat rebuild`. |
+| **MongoDB stopped** | `.dev\mongo\mongod.log` (look for `"s":"F"` / `"s":"E"`). Common: disk full, a newer MongoDB version. `restart-production.bat`. |
+| **Disk full** | Photos and the database grow. Free space or extend the drive; move old `.prod\backup\staging` copies away. MongoDB stops writing when the disk is full: check it afterwards. |
+| **Backup failed** | `.prod\status\backup-<date>.log` names the step. Usual causes: backup folder unreachable, disk full, `mongodump` missing. Fix, then run `backup.ps1` again. |
+| **Photo folder unavailable** | Health shows `photo_storage: unavailable`; gates can still check visitors in without photos. Reconnect the drive (same path), `restart-production.bat`. Never create an empty folder in its place. |
 
 ### Hardware acceptance tests (real devices, not yet done)
 
-Do these on **each gate PC**, over **HTTPS** (`https://<SiteName>`), with the real webcam, badge printer and
-scanner. Nothing here has been tested on real hardware yet.
+Do these on **each gate PC**, at `http://<server IP>:3000`, with the real badge printer and scanner. Nothing
+here has been tested on real hardware yet.
 
-**Webcam**: check in a visitor and at the photo step:
+**Webcam** (browsers allow it only on HTTPS or on the server itself, so on a gate PC over plain HTTP the
+webcam fallback and webcam QR scanning are not available; the gate cameras work). On the server PC at
+`http://localhost:3000`, check in a visitor and at the photo step:
 - first use: the browser asks for camera permission; allow it (and check the permission is remembered);
 - the photo is sharp and the face recognisable in the gate's lighting;
 - deny the permission once: the page explains how to allow it;
@@ -630,17 +440,16 @@ scanner. Nothing here has been tested on real hardware yet.
 - with the webcam unplugged: "No camera was found";
 - unplug it while the preview runs: the preview stops (the page does not detect this by itself; known
   limitation). "Back" and "Review" again restart the camera step; record what the guard sees;
-- the webcam light goes off after "Take photo", and also when leaving the step without a photo;
-- on `http://` (if someone types it) the browser is redirected to HTTPS, and the camera works there.
+- the webcam light goes off after "Take photo", and also when leaving the step without a photo.
 
 **Badge printer**:
 - in the print dialog: the badge printer, paper 54 × 86 mm (or the configured card), margins *None*, scale
   100 %, *Headers and footers* off; save these settings once per gate PC;
 - only the badge is printed (no menu, no other page), nothing is cut off, one card per badge;
-- text readable; the QR code scans from the printed card (webcam and USB scanner).
+- text readable; the QR code scans from the printed card (USB scanner).
 
 **QR scanning**:
-- USB scanner into the check-out box, and *Scan badge with camera*: both open the confirmation with the photo;
+- USB scanner into the check-out box: it opens the confirmation with the photo;
 - printed, laminated, and worn/creased badges;
 - scan the same badge after check-out: "already checked out", nothing changes;
 - *Badge* (reprint) on a visitor inside, then scan the OLD badge: "replaced"; the new badge works;
@@ -659,7 +468,7 @@ the pass security.
 
 ## Status
 
-Phase 4 (watchlist management, photos, QR passes, badges, scan-to-check-out), Phase 7A (production
-infrastructure: HTTPS, MongoDB login + TLS, Windows services, backups with restore tests, monitoring) and
-Phase 6A (host arrival notifications: in-app and e-mail) are complete. Next: real deployment and hardware
+Phase 4 (watchlist management, photos, QR passes, badges, scan-to-check-out), production on one Windows PC
+(plain HTTP on the trusted LAN, `start-production.bat`, health check, backups; the former HTTPS/Windows-services
+setup was removed) and Phase 6A (host arrival notifications: in-app and e-mail) are complete. Next: real deployment and hardware
 testing (see *Hardware acceptance tests*), and a test of the e-mails with the company mail server.

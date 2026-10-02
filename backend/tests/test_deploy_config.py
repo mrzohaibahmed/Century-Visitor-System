@@ -1,138 +1,144 @@
 """The production deployment files (deploy/) keep their security properties.
 
-These are text-level checks of configuration that cannot run in the test suite itself (Windows
-services, Caddy, mongod): a later edit that, say, binds MongoDB to all interfaces or starts the
-Next.js development server fails here.
+These are text-level checks of the start-production.bat scripts that cannot run in the test suite itself:
+a later edit that, say, binds MongoDB to all interfaces or starts the Next.js development server fails here.
 """
-import importlib.util
-import re
-import xml.etree.ElementTree as ET
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
-from app.core.config import Settings
 
 REPO = Path(__file__).resolve().parents[2]
 DEPLOY = REPO / "deploy"
-SECURE_URI = ("mongodb://cgvms_app:App-Pass-1@localhost:27018/century_gate_vms?replicaSet=cgvms&tls=true"
-              "&tlsCAFile=C:/CenturyGateVMS/tls/mongodb/ca.pem&authSource=admin")
 
 
-def _env_file(tmp_path, uri: str) -> Path:
-    text = (DEPLOY / "windows" / "api.env.template").read_text(encoding="utf-8")
-    text = re.sub(r"^CG_MONGO_URI=.*$", lambda _: f"CG_MONGO_URI={uri}", text, flags=re.M)
-    text = re.sub(r"^CG_PHOTO_DIR=.*$", lambda _: f"CG_PHOTO_DIR={tmp_path}", text, flags=re.M)
-    path = tmp_path / "api.env"
-    path.write_text(text, encoding="utf-8")
-    return path
+# ---------------------------------------------------------------- single-PC production (start-production.bat)
+# Plain HTTP on the trusted LAN: the web server is the only thing on the network; no Caddy, no certificate.
+def _production_script() -> str:
+    return (DEPLOY / "windows" / "production.ps1").read_text(encoding="utf-8")
 
 
-def test_the_production_env_template_gives_valid_secure_settings(tmp_path, monkeypatch):
-    for key in ("CG_ENVIRONMENT", "CG_MONGO_URI", "CG_PHOTO_DIR", "CG_COOKIE_SECURE", "CG_API_DOCS"):
-        monkeypatch.delenv(key, raising=False)
-    s = Settings(_env_file=_env_file(tmp_path, SECURE_URI))
-    assert s.environment == "production" and s.cookie_secure is True and s.docs_enabled is False
-    assert s.trusted_proxies == ["127.0.0.1", "::1"] and s.mongo_db == "century_gate_vms"
+def test_the_local_production_start_runs_the_web_server_on_the_lan():
+    """server.mjs (sets the client address the API sees) on all interfaces, plain HTTP, port 3000."""
+    script = _production_script()
+    assert "-ArgumentList 'server.mjs', '--hostname', '0.0.0.0', '--port', '3000'" in script
+    assert "next\\dist\\bin\\next" not in script and "next dev" not in script
 
 
-def test_the_unfilled_template_is_refused(tmp_path, monkeypatch):
-    monkeypatch.delenv("CG_MONGO_URI", raising=False)
-    template = (DEPLOY / "windows" / "api.env.template").read_text(encoding="utf-8")
-    path = tmp_path / "api.env"
-    path.write_text(template.replace(r"D:\CenturyGateVMS-Photos", str(tmp_path)), encoding="utf-8")
-    with pytest.raises(ValidationError):
-        Settings(_env_file=path)
+def test_the_local_production_start_keeps_api_and_database_on_loopback():
+    script = _production_script()
+    assert "-ArgumentList '-m', 'app.serve', '--host', '127.0.0.1', '--port', '8000'" in script
+    assert script.count("'--host', ") == 1 and "--reload" not in script
+    dev_mongo = (DEPLOY.parent / "scripts" / "dev_mongo.py").read_text(encoding="utf-8")
+    assert 'HOST = "127.0.0.1"' in dev_mongo and '"--bind_ip", HOST' in dev_mongo and "bind_ip_all" not in dev_mongo
 
 
-def test_the_template_contains_no_real_secret():
-    text = (DEPLOY / "windows" / "api.env.template").read_text(encoding="utf-8")
-    assert "@" not in text.split("CG_MONGO_URI=")[1].splitlines()[0]
+def test_the_local_production_start_selects_http_lan_explicitly():
+    script = _production_script()
+    assert "$env:CG_ENVIRONMENT = 'production'" in script and "$env:CG_DEPLOYMENT_MODE = 'http-lan'" in script
+    assert "CG_COOKIE_SECURE" not in script                    # http-lan is the only switch (Step 1)
 
 
-def test_mongod_is_loopback_only_with_tls_and_login():
-    conf = (DEPLOY / "mongodb" / "mongod.conf.template").read_text(encoding="utf-8")
-    assert re.search(r"^\s*bindIp:\s*127\.0\.0\.1\s*$", conf, re.M)
-    assert re.search(r"^\s*mode:\s*requireTLS", conf, re.M)
-    assert re.search(r"^\s*authorization:\s*enabled", conf, re.M)
-    assert re.search(r"^\s*keyFile:", conf, re.M) and re.search(r"^\s*replSetName:\s*cgvms", conf, re.M)
-    port = int(re.search(r"^\s*port:\s*(\d+)", conf, re.M).group(1))
-    assert port != 27017                                       # the legacy desktop database service
-    assert "bindIpAll" not in conf and "0.0.0.0" not in conf
+def test_the_local_production_start_needs_no_caddy_certificate_or_firewall_change():
+    script = _production_script()
+    for gone in ("Find-Caddy", "caddy.exe", "Caddyfile", "Start-Process -FilePath $caddy", "Import-Certificate",
+                 "root.crt", "New-NetFirewallRule", "Set-NetFirewall", "Get-NetFirewallRule", "configure-firewall",
+                 "https://", "Tls12", "Get-Service", "Start-Service", "CGVMS-"):
+        assert gone not in script, gone
+    # The only Caddy left in the code is stopping one that an earlier version of the script started
+    # (never required). The help text above param() and comments are not code.
+    code = script[script.index("param("):].splitlines()
+    assert [line.strip() for line in code if "caddy" in line.lower() and not line.lstrip().startswith("#")] == [
+        "$legacy = Get-Ours 'Caddy' 'caddy'",
+        "if ($legacy) { Stop-Process -Id $legacy.Id -Force; Say '  Caddy (former HTTPS setup) stopped.' }",
+        "if (Get-Ours 'Caddy' 'caddy') {",
+        "Say '      NOTE: Caddy from the former HTTPS setup is still running on 443; stop-production.bat stops it.'",
+    ]
 
 
-def test_database_accounts_have_least_privilege():
-    spec = importlib.util.spec_from_file_location("cgvms_mongo", DEPLOY / "mongodb" / "cgvms_mongo.py")
-    tool = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(tool)
-    assert tool.USERS["cgvms_app"] == [{"role": "readWrite", "db": "century_gate_vms"}]
-    assert {r["role"] for r in tool.USERS["cgvms_migrate"]} == {"readWrite", "dbAdmin"}
-    assert all(r["db"] == "century_gate_vms" for r in tool.USERS["cgvms_migrate"])
-    assert "century_gate_system" not in str(tool.USERS)
-    # The connection strings it writes are accepted by the production settings as they are.
-    uri = tool.uri("cgvms_app", "p@ss w/rd", 27018, Path("C:/CenturyGateVMS/tls/mongodb/ca.pem"), "century_gate_vms")
-    assert "p%40ss+w%2Frd" in uri and "tls=true" in uri
-    Settings(_env_file=None, environment="production", mongo_uri=uri, photo_dir=Path("C:/x"))
+def test_the_local_health_check_reads_readiness_over_http_through_the_web_server():
+    common = (DEPLOY / "windows" / "cgvms-common.ps1").read_text(encoding="utf-8")
+    assert "HealthUrl = 'http://127.0.0.1:3000/api/v1/health/ready'" in common and "https://" not in common
+    health = (DEPLOY / "windows" / "check-health.ps1").read_text(encoding="utf-8")
+    assert "$cfg = Get-CgvmsLocalConfig" in health and "Get-Url $cfg.HealthUrl" in health
+    assert "https" not in health.lower() and "SslStream" not in health and "CGVMS-" not in health
 
 
-def test_the_proxy_has_https_only_and_no_access_log():
-    caddy = (DEPLOY / "windows" / "caddy" / "Caddyfile").read_text(encoding="utf-8")
-    assert re.search(r"^\s*admin off\s*$", caddy, re.M)
-    assert "Strict-Transport-Security" in caddy and "-Server" in caddy
-    assert re.search(r"redir https://\{\$CGVMS_SITE\}\{uri\} 308", caddy)
-    upstreams = re.findall(r"reverse_proxy\s+(\S+)", caddy)
-    assert upstreams and all(u.startswith("127.0.0.1:") for u in upstreams)
-    assert not re.search(r"^\s*log\b", caddy, re.M)               # URLs may contain ID numbers in query strings
-    assert "tls_insecure_skip_verify" not in caddy and "file_server" not in caddy
-    assert "tls internal" in (DEPLOY / "windows" / "caddy" / "tls-internal.caddy").read_text(encoding="utf-8")
+def test_the_former_https_services_deployment_is_gone():
+    """Only start-production.bat deploys: no Caddy, Windows services, certificates or firewall scripts."""
+    windows = DEPLOY / "windows"
+    assert sorted(p.name for p in windows.iterdir()) == [
+        "backup.ps1", "cgvms-common.ps1", "check-health.ps1", "production.ps1",
+        "restart-production.bat", "start-production.bat", "stop-production.bat"]
+    assert sorted(p.name for p in DEPLOY.iterdir()) == ["PRODUCTION-COMMANDS.md", "windows"]
+    for script in windows.iterdir():
+        text = script.read_text(encoding="utf-8")
+        for gone in ("NetFirewall", "netsh", "Strict-Transport-Security", "CGVMS-Proxy", "install-services"):
+            assert gone not in text, (script.name, gone)
 
 
-def _service(name: str) -> ET.Element:
-    return ET.parse(DEPLOY / "windows" / "services" / f"{name}.xml").getroot()
-
-
-@pytest.mark.parametrize("name", ["CGVMS-API", "CGVMS-Web", "CGVMS-Proxy"])
-def test_services_restart_rotate_logs_and_hold_no_secrets(name):
-    svc = _service(name)
-    assert svc.findtext("id") == name and svc.findtext("startmode") == "Automatic"
-    assert [f.get("action") for f in svc.findall("onfailure")] == ["restart"] * 3
-    log = svc.find("log")
-    assert log.get("mode") == "roll-by-size" and int(log.findtext("keepFiles")) <= 20
-    text = ET.tostring(svc, encoding="unicode")
-    assert "CG_MONGO_URI" not in text and "password" not in text.lower() and "mongodb://" not in text
-
-
-def test_the_api_service_runs_the_production_server_on_loopback():
-    args = _service("CGVMS-API").findtext("arguments")
-    assert "-m app.serve" in args and "--host 127.0.0.1" in args and "--reload" not in args
-    assert _service("CGVMS-API").findtext("depend") == "CGVMS-MongoDB"
-
-
-def test_the_web_service_runs_the_production_build_on_loopback():
-    svc = _service("CGVMS-Web")
-    args = svc.findtext("arguments")
-    assert "next start" in args and "next dev" not in args and "--hostname 127.0.0.1" in args
-    env = {e.get("name"): e.get("value") for e in svc.findall("env")}
-    assert env["NODE_ENV"] == "production" and env["API_INTERNAL_URL"].startswith("http://127.0.0.1:")
-    assert not any(k.startswith("NEXT_PUBLIC_") for k in env)
-
-
-@pytest.mark.parametrize("name", ["CGVMS-API", "CGVMS-Web", "CGVMS-Proxy"])
-def test_services_find_the_application_through_app_dir(name):
-    # install-services.ps1 fills in __APP_DIR__ (AppDir): the application can live in any folder.
-    text = (DEPLOY / "windows" / "services" / f"{name}.xml").read_text(encoding="utf-8")
-    assert "__APP_DIR__\\" in ET.tostring(_service(name), encoding="unicode")
-    assert "..\\app\\" not in text and "CenturyGateVMS\\app" not in text
-
-
-def test_the_proxy_takes_site_and_tls_mode_from_the_settings():
-    env = {e.get("name"): e.get("value") for e in _service("CGVMS-Proxy").findall("env")}
-    assert env["CGVMS_SITE"] == "__SITE__" and env["CGVMS_TLS_MODE"] == "__TLS_MODE__"
-    assert (DEPLOY / "windows" / "caddy" / "tls-company.caddy").exists()
+def test_the_web_server_defaults_to_loopback():
+    server = (DEPLOY.parent / "frontend" / "server.mjs").read_text(encoding="utf-8")
+    assert 'hostname: { type: "string", short: "H", default: "127.0.0.1" }' in server
+    assert "setClientIdentity(req);" in server and "dev: false" in server
 
 
 def test_secret_files_are_ignored_by_git():
     ignored = (REPO / ".gitignore").read_text(encoding="utf-8")
     for pattern in (".env", "secrets/", "*.pem", "*.key", "*.keyfile"):
         assert pattern in ignored, pattern
+
+
+# ---------------------------------------------------------------- LAN exposure (Windows network profile)
+POWERSHELL = shutil.which("powershell.exe")
+TRUSTED_MESSAGE = ("Production HTTP-LAN mode requires the server to be connected to a trusted Private or Domain "
+                   "network.")
+
+
+def _lan_exposure_problem(*networks: tuple[str, str, str]) -> str:
+    """Get-LanExposureProblem (cgvms-common.ps1) for simulated Get-NetConnectionProfile results."""
+    fakes = ", ".join(f"[pscustomobject]@{{ Name = '{n}'; InterfaceAlias = '{a}'; NetworkCategory = '{c}' }}"
+                      for n, a, c in networks)
+    script = (f". '{DEPLOY / 'windows' / 'cgvms-common.ps1'}'; "
+              f"[Console]::Out.Write((Get-LanExposureProblem @({fakes})))")
+    result = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", script],  # noqa: S603
+                            capture_output=True, text=True, timeout=60, check=True)
+    return result.stdout.strip()
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is needed")
+@pytest.mark.parametrize("networks", [
+    [("Gate LAN", "Ethernet", "Private")],
+    [("corp.example", "Ethernet", "DomainAuthenticated")],
+    [("Gate LAN", "Ethernet", "Private"), ("corp.example", "Ethernet 2", "DomainAuthenticated")],
+])
+def test_production_may_listen_on_the_lan_on_private_or_domain_networks(networks):
+    assert _lan_exposure_problem(*networks) == ""
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is needed")
+@pytest.mark.parametrize("networks", [
+    [("Pixel 6a 61", "WiFi", "Public")],
+    [("Gate LAN", "Ethernet", "Private"), ("Pixel 6a 61", "WiFi", "Public")],      # one trusted is not enough
+    [("Unidentified network", "vEthernet (Default Switch)", "Public"), ("corp", "Ethernet", "DomainAuthenticated")],
+])
+def test_production_refuses_the_lan_while_any_network_is_public(networks):
+    problem = _lan_exposure_problem(*networks)
+    assert problem.startswith(TRUSTED_MESSAGE) and "The active network is Public" in problem
+    assert "so the VMS was not started on 0.0.0.0:3000." in problem
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is needed")
+def test_production_refuses_the_lan_without_any_network():
+    assert _lan_exposure_problem().startswith(TRUSTED_MESSAGE)
+
+
+def test_the_network_guard_runs_before_anything_starts():
+    code = _production_script()
+    start = code.index("# ================================================================================================= start")
+    guard = code.index("$exposure = Get-LanExposureProblem $networks", start)
+    assert code.index("if ($exposure) {", guard) < code.index("[1/4] MongoDB", start)
+    assert guard < code.index("dev_mongo.py') start", start) < code.index("'server.mjs', '--hostname', '0.0.0.0'", start)
+    assert "$networks = @(Get-NetConnectionProfile" in code[start:guard]
+    assert "Fail ($exposure" in code[guard:guard + 300]

@@ -6,19 +6,10 @@ Set-StrictMode -Version 3
 
 $script:EventSource = 'CenturyGateVMS'
 
-# Settings for the scripts: cgvms.psd1 when the Windows services of setup-production.ps1 are installed,
-# otherwise the single-PC "local mode" of start-production.bat (see Get-CgvmsLocalConfig). A settings file
-# left by an unfinished services setup does not switch a local-mode PC over.
-function Get-CgvmsSettings([string]$Path) {
-    if ((Test-Path -LiteralPath $Path) -and (Get-Service -Name 'CGVMS-API' -ErrorAction SilentlyContinue)) {
-        return Get-CgvmsConfig $Path
-    }
-    return Get-CgvmsLocalConfig
-}
-
-# Local mode: the application runs from this repository as normal processes (start-production.bat).
+# The application runs from this repository as normal processes (start-production.bat).
 # Everything comes from the project itself: backend\.env, the development MongoDB instance on 127.0.0.1:27018
-# (scripts\dev_mongo.py, data in .dev\mongo), runtime files (logs, Caddy data, backups) in .prod\.
+# (scripts\dev_mongo.py, data in .dev\mongo), runtime files (logs, backups) in .prod\. Gate PCs use plain
+# HTTP on port 3000 (no Caddy, no certificate): the health check reads readiness through the web server.
 function Get-CgvmsLocalConfig {
     $app = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path.TrimEnd('\')
     $photoDir = Join-Path $app '.dev\photos'                    # the API's own default (core/config.py)
@@ -37,55 +28,32 @@ function Get-CgvmsLocalConfig {
     }
     $root = Join-Path $app '.prod'
     return @{
-        LocalMode = $true; AppDir = $app; Root = $root; PhotoDir = $photoDir; MongoPort = 27018
+        AppDir = $app; Root = $root; PhotoDir = $photoDir; MongoPort = 27018
         MongoUri = 'mongodb://127.0.0.1:27018/?directConnection=true'
-        MongoToolsBin = $toolsBin; SiteName = $site; TlsMode = 'internal'; HealthUrl = "https://$site/api/v1/health/ready"
+        MongoToolsBin = $toolsBin; SiteName = $site; HealthUrl = 'http://127.0.0.1:3000/api/v1/health/ready'
         BackupDestination = $(if ($env:CGVMS_BACKUP) { $env:CGVMS_BACKUP } else { Join-Path $root 'backups' })
         BackupKeepDays = 35; BackupKeepMonthly = 12; BackupLocalKeep = 3; BackupMaxAgeHours = 26
         DiskMinFreePercent = 15; DiskMinFreeGB = 10; StatusKeepDays = 60
     }
 }
 
-function Get-CgvmsConfig([string]$Path) {
-    if (-not (Test-Path -LiteralPath $Path)) {
-        throw "Configuration file not found: $Path (copy deploy\windows\cgvms.example.psd1 there and adjust it)."
+# Why the production web server must NOT listen on 0.0.0.0:3000 now, or '' when it may.
+# Plain HTTP is only for a trusted LAN: every connected network (Get-NetConnectionProfile) must be Private or
+# Domain. A listener on 0.0.0.0 answers on every interface, so one Public network (a hotspot, a guest Wi-Fi,
+# an unidentified virtual adapter) is enough to refuse; no connected network at all is refused too (fail closed).
+function Get-LanExposureProblem($Profiles) {
+    $all = @($Profiles | Where-Object { $_ })
+    if (-not $all) {
+        return 'Production HTTP-LAN mode requires the server to be connected to a trusted Private or Domain network. ' +
+               'No connected network was found, so the VMS was not started on 0.0.0.0:3000.'
     }
-    $cfg = Import-PowerShellDataFile -LiteralPath $Path
-    foreach ($key in 'Root', 'PhotoDir', 'MongoBin') {
-        if (-not $cfg.ContainsKey($key) -or -not $cfg[$key]) { throw "Setting '$key' is missing in $Path." }
+    $untrusted = @($all | Where-Object { "$($_.NetworkCategory)" -notin 'Private', 'DomainAuthenticated' })
+    if ($untrusted) {
+        $names = ($untrusted | ForEach-Object { "'$($_.Name)' on $($_.InterfaceAlias) ($($_.NetworkCategory))" }) -join ', '
+        return 'Production HTTP-LAN mode requires the server to be connected to a trusted Private or Domain network. ' +
+               "The active network is Public ($names), so the VMS was not started on 0.0.0.0:3000."
     }
-    # Optional settings. AppDir: the application folder (this repository); by default the one these scripts are in.
-    $defaults = [ordered]@{
-        AppDir             = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-        SiteName           = $env:COMPUTERNAME.ToLowerInvariant()
-        TlsMode            = 'internal'
-        MongoPort          = 27018
-        MongoToolsBin      = (Join-Path $cfg.Root 'tools\mongodb-database-tools\bin')
-        BackupDestination  = (Join-Path $cfg.Root 'backups')
-        BackupKeepDays     = 35
-        BackupKeepMonthly  = 12
-        BackupLocalKeep    = 3
-        BackupMaxAgeHours  = 26
-        RestoreTestPort    = 27029
-        DiskMinFreePercent = 15
-        DiskMinFreeGB      = 10
-        StatusKeepDays     = 60
-    }
-    foreach ($key in $defaults.Keys) {
-        if (-not $cfg.ContainsKey($key) -or -not $cfg[$key]) { $cfg[$key] = $defaults[$key] }
-    }
-    $cfg.AppDir = $cfg.AppDir.TrimEnd('\')
-    $cfg.LocalMode = $false
-    if (-not $cfg.ContainsKey('HealthUrl') -or -not $cfg.HealthUrl) { $cfg.HealthUrl = "https://$($cfg.SiteName)/api/v1/health/ready" }
-    if ($cfg.TlsMode -notin 'internal', 'company') { throw "TlsMode must be 'internal' or 'company' in $Path." }
-    if ([int]$cfg.MongoPort -eq 27017) { throw 'MongoPort 27017 is the legacy desktop database service; refusing.' }
-    return $cfg
-}
-
-function Get-CgvmsPython($cfg) {
-    $python = Join-Path $cfg.AppDir 'backend\.venv\Scripts\python.exe'
-    if (-not (Test-Path -LiteralPath $python)) { throw "Python environment not found: $python" }
-    return $python
+    return ''
 }
 
 function Get-StatusDir($cfg) {
@@ -107,8 +75,9 @@ function Remove-OldStatusLogs($cfg) {
         Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$keep) } | Remove-Item -Force
 }
 
-# Windows Application event log (source registered by install-services.ps1). Monitoring tools and
-# Task Scheduler triggers can watch these IDs: 1xxx health, 2xxx backup, 3xxx restore test.
+# Windows Application event log, only if an administrator registered the source "CenturyGateVMS"
+# (New-EventLog -LogName Application -Source CenturyGateVMS). Monitoring tools and Task Scheduler
+# triggers can watch these IDs: 1xxx health, 2xxx backup.
 function Write-CgvmsEvent([string]$Type, [int]$Id, [string]$Message) {
     try {
         if ([System.Diagnostics.EventLog]::SourceExists($script:EventSource)) {

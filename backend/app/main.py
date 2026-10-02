@@ -36,6 +36,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.database = Database(settings)
         log.info("API starting (version %s, environment %s, database %s)",
                  APP_VERSION, settings.environment, settings.mongo_db)
+        if not settings.secure_cookies and settings.environment == "production":
+            log.warning("Deployment mode http-lan: plain HTTP on a trusted LAN, cookies without Secure; "
+                        "traffic between browsers and this server is not encrypted.")
         # Prepare the timing-equaliser hash now, so the first unknown-user login is not slower.
         warm_up = asyncio.create_task(asyncio.to_thread(burn_verify_time, "warm-up"))
         # Host e-mails (Phase 6A): sent in the background, never during a request. Always running, so

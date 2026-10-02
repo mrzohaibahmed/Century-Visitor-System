@@ -14,7 +14,7 @@ mongodump.yaml
 
 # Local development database, logs, scratch
 .dev/
-# start-production.bat runtime files: logs, Caddy data (internal certificate keys), backups, caddy.exe
+# start-production.bat runtime files: logs, status, backups (and leftovers of the former Caddy setup)
 .prod/
 *.log
 

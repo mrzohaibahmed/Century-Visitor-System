@@ -4,8 +4,8 @@ ASGI middleware:
 - RequestContextMiddleware: assigns a request ID (reusing a well-formed incoming
   X-Request-ID), returns it in the response and writes one access-log line per
   request. The query string is NOT logged: it can contain identity numbers.
-- SecurityHeadersMiddleware: safe defaults for every API response. The reverse
-  proxy adds TLS-related headers (HSTS) in production.
+- SecurityHeadersMiddleware: safe defaults for every API response. No HSTS:
+  production serves plain HTTP on the trusted LAN (CG_DEPLOYMENT_MODE=http-lan).
 """
 import logging
 import re

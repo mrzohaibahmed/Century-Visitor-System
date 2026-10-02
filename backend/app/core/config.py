@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     # Secure cookies (HTTPS only; browsers also accept them on http://localhost).
     # Only set to false for a plain-HTTP test network; never in production.
     cookie_secure: bool = True
+    # How browsers reach a PRODUCTION server. "https" (default): Secure, __Host- session cookie.
+    # "http-lan": plain HTTP on a trusted private LAN, deliberately without TLS: the session and CSRF
+    # cookies drop only the Secure flag (and so the __Host- prefix); everything else stays the same.
+    # HTTP gives no transport confidentiality. Refused outside production.
+    deployment_mode: Literal["https", "http-lan"] = "https"
 
     # --- Login protection -------------------------------------------------------
     login_max_failures: int = Field(default=5, ge=1, le=50)         # per account, then locked
@@ -126,8 +131,33 @@ class Settings(BaseSettings):
     @classmethod
     def _secure_cookies_in_production(cls, value: bool, info) -> bool:
         if not value and info.data.get("environment") == "production":
-            raise ValueError("cookie_secure must be true in production.")
+            raise ValueError("cookie_secure must be true in production "
+                             "(plain HTTP on a trusted LAN: CG_DEPLOYMENT_MODE=http-lan instead).")
         return value
+
+    @field_validator("deployment_mode", mode="before")
+    @classmethod
+    def _known_deployment_mode(cls, value):
+        # Exact values only (no case folding): a typo must stop the start, never pick a mode.
+        if value not in ("https", "http-lan"):
+            raise ValueError("CG_DEPLOYMENT_MODE must be 'https' (default) or 'http-lan'.")
+        return value
+
+    @field_validator("deployment_mode")
+    @classmethod
+    def _http_lan_only_in_production(cls, value: str, info) -> str:
+        if value == "http-lan" and info.data.get("environment") != "production":
+            raise ValueError("CG_DEPLOYMENT_MODE=http-lan is a production deployment mode; "
+                             "leave it unset in development and test.")
+        return value
+
+    @property
+    def secure_cookies(self) -> bool:
+        """Whether the session and CSRF cookies carry Secure (and the session cookie the __Host- prefix).
+        Off only for production explicitly deployed as http-lan; otherwise cookie_secure as before."""
+        if self.environment == "production" and self.deployment_mode == "http-lan":
+            return False
+        return self.cookie_secure
 
     @model_validator(mode="after")
     def _explicit_photo_dir_in_production(self):

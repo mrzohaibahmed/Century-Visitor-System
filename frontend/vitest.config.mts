@@ -9,7 +9,8 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    include: ["src/**/*.test.{ts,tsx}"],
+    // server/: the production web server (Node environment, set per file).
+    include: ["src/**/*.test.{ts,tsx}", "server/**/*.test.mjs"],
     restoreMocks: true,
   },
 });

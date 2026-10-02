@@ -1,7 +1,8 @@
 @echo off
 rem ============================================================================
 rem  Century Gate VMS - stop the production application on this PC:
-rem  HTTPS (Caddy), web, API, then MongoDB (clean shutdown).
+rem  web, API, then MongoDB (clean shutdown). A Caddy left from the former
+rem  HTTPS setup is stopped too, if this script started it.
 rem  The legacy MongoDB on port 27017 is not touched.
 rem  Start again with start-production.bat.
 rem ============================================================================

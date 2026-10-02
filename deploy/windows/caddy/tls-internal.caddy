@@ -1,5 +1,0 @@
-# Caddy's own certificate authority (only when the company has no CA).
-# Caddy renews the server certificate by itself. Its ROOT certificate
-# (CGVMS_CADDY_DATA\pki\authorities\local\root.crt) must be installed as a
-# trusted root on every gate PC (Group Policy), otherwise browsers refuse the site.
-tls internal

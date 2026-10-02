@@ -1,5 +1,5 @@
 """
-Production API server (what the Windows service runs):
+Production API server (what start-production.bat runs):
 
     python -m app.serve [--host 127.0.0.1] [--port 8000] [--workers 1]
 
@@ -9,10 +9,10 @@ Production API server (what the Windows service runs):
   folder, secure cookies) and a wrong setting stops the start with a clear
   message.
 - No auto-reload, no debug. The interactive API docs stay off (CG_API_DOCS).
-- Listens on 127.0.0.1 only: the HTTPS reverse proxy (Caddy) on the same
-  server is the only way in. Gate PCs never reach this port.
-- Logs are JSON lines on stderr; the service wrapper (WinSW) writes them to
-  files and rotates them.
+- Listens on 127.0.0.1 only: the web server's /api/* forwarding (server.mjs)
+  on the same server is the only way in. Gate PCs never reach this port.
+- Logs are JSON lines on stderr; start-production.bat writes them to
+  .prod/logs/api.log.
 
 Development still uses:  uvicorn app.main:create_app --factory --reload
 """

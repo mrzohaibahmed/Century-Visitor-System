@@ -46,8 +46,8 @@ async def _migrate() -> int:
     except OperationFailure as e:
         if e.code != 13:                                   # 13 = Unauthorized
             raise
-        print("ERROR: this database account may not change the schema. In production run migrations with the "
-              r"cgvms_migrate account (deploy\windows\migrate.ps1), not the application's account.", file=sys.stderr)
+        print("ERROR: this database account may not change the schema. Run migrations with an account that "
+              "may change it, not the application's account.", file=sys.stderr)
         return 2
     finally:
         await database.close()
