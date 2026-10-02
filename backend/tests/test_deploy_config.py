@@ -90,55 +90,45 @@ def test_secret_files_are_ignored_by_git():
         assert pattern in ignored, pattern
 
 
-# ---------------------------------------------------------------- LAN exposure (Windows network profile)
+# ---------------------------------------------------------------- any organization network
+# The VMS starts on whatever network the organization uses: Windows' network profile (Public, Private, Domain),
+# the network's name and its addresses never decide. The boundary is the binding (only the web server on
+# 0.0.0.0:3000; API and MongoDB on 127.0.0.1), not a network check or a firewall rule.
 POWERSHELL = shutil.which("powershell.exe")
-TRUSTED_MESSAGE = ("Production HTTP-LAN mode requires the server to be connected to a trusted Private or Domain "
-                   "network.")
+WINDOWS = DEPLOY / "windows"
 
 
-def _lan_exposure_problem(*networks: tuple[str, str, str]) -> str:
-    """Get-LanExposureProblem (cgvms-common.ps1) for simulated Get-NetConnectionProfile results."""
-    fakes = ", ".join(f"[pscustomobject]@{{ Name = '{n}'; InterfaceAlias = '{a}'; NetworkCategory = '{c}' }}"
-                      for n, a, c in networks)
-    script = (f". '{DEPLOY / 'windows' / 'cgvms-common.ps1'}'; "
-              f"[Console]::Out.Write((Get-LanExposureProblem @({fakes})))")
+def _code(text: str) -> str:
+    """The script's code: no help text (above param(), if any), no comment lines."""
+    if "param(" in text:
+        text = text[text.index("param("):]
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+@pytest.mark.parametrize("network_detail", [
+    "NetworkCategory", "Public", "Private", "DomainAuthenticated",       # Windows network profile
+    "Pixel 6a 61", "Gate LAN", "SSID", "netsh",                          # network / Wi-Fi names
+    "192.168.", "10.0.", "172.16.", "172.29.", "PrefixLength", "DefaultGateway", "NextHop",  # addresses, subnets
+])
+def test_starting_production_never_depends_on_the_network(network_detail):
+    for name in ("production.ps1", "cgvms-common.ps1", "check-health.ps1"):
+        assert network_detail not in _code((WINDOWS / name).read_text(encoding="utf-8")), (name, network_detail)
+
+
+def test_the_connected_networks_only_list_the_addresses_for_gate_pcs():
+    code = _code(_production_script())
+    assert "Get-LanExposureProblem" not in code and "$exposure" not in code
+    assert "$networks = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue)" in code
+    assert code.count("$networks") == 2                      # read once, used once: the printed addresses
+    assert "Where-Object { $_.InterfaceIndex -in $networks.InterfaceIndex }" in code
+    start = code.index("Say '[1/4] MongoDB")
+    assert not [line for line in code[:start].splitlines() if "Fail" in line and "network" in line.lower()]
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is needed")
+def test_no_network_profile_guard_is_defined():
+    script = (f". '{WINDOWS / 'cgvms-common.ps1'}'; "
+              "[Console]::Out.Write([bool](Get-Command Get-LanExposureProblem -ErrorAction SilentlyContinue))")
     result = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", script],  # noqa: S603
                             capture_output=True, text=True, timeout=60, check=True)
-    return result.stdout.strip()
-
-
-@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is needed")
-@pytest.mark.parametrize("networks", [
-    [("Gate LAN", "Ethernet", "Private")],
-    [("corp.example", "Ethernet", "DomainAuthenticated")],
-    [("Gate LAN", "Ethernet", "Private"), ("corp.example", "Ethernet 2", "DomainAuthenticated")],
-])
-def test_production_may_listen_on_the_lan_on_private_or_domain_networks(networks):
-    assert _lan_exposure_problem(*networks) == ""
-
-
-@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is needed")
-@pytest.mark.parametrize("networks", [
-    [("Pixel 6a 61", "WiFi", "Public")],
-    [("Gate LAN", "Ethernet", "Private"), ("Pixel 6a 61", "WiFi", "Public")],      # one trusted is not enough
-    [("Unidentified network", "vEthernet (Default Switch)", "Public"), ("corp", "Ethernet", "DomainAuthenticated")],
-])
-def test_production_refuses_the_lan_while_any_network_is_public(networks):
-    problem = _lan_exposure_problem(*networks)
-    assert problem.startswith(TRUSTED_MESSAGE) and "The active network is Public" in problem
-    assert "so the VMS was not started on 0.0.0.0:3000." in problem
-
-
-@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is needed")
-def test_production_refuses_the_lan_without_any_network():
-    assert _lan_exposure_problem().startswith(TRUSTED_MESSAGE)
-
-
-def test_the_network_guard_runs_before_anything_starts():
-    code = _production_script()
-    start = code.index("# ================================================================================================= start")
-    guard = code.index("$exposure = Get-LanExposureProblem $networks", start)
-    assert code.index("if ($exposure) {", guard) < code.index("[1/4] MongoDB", start)
-    assert guard < code.index("dev_mongo.py') start", start) < code.index("'server.mjs', '--hostname', '0.0.0.0'", start)
-    assert "$networks = @(Get-NetConnectionProfile" in code[start:guard]
-    assert "Fail ($exposure" in code[guard:guard + 300]
+    assert result.stdout.strip() == "False"

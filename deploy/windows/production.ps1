@@ -12,10 +12,10 @@
     API       python -m app.serve              production server (no reload, no API docs), 127.0.0.1:8000
     Web       node server.mjs                  production build (npm run build), 0.0.0.0:3000 (plain HTTP);
                                                sets the client address the API sees (frontend\server\forwarding.mjs)
-  Gate PCs use http://<this PC's name or IP>:3000 on the trusted private LAN: no TLS, no certificate, no
-  Caddy. Only the web server listens on the network; the API and MongoDB stay on 127.0.0.1. Start is
-  refused unless every connected network is Private or Domain (never on a Public hotspot). Windows
-  Firewall is not part of this deployment and is never changed. HTTP is not encrypted, and browsers allow
+  Gate PCs use http://<this PC's name or IP>:3000 on the organization's network: no TLS, no certificate, no
+  Caddy. Only the web server listens on the network; the API and MongoDB stay on 127.0.0.1. The Windows
+  network profile (Public, Private, Domain) is not a start requirement. Windows Firewall is not part of
+  this deployment and is never changed. HTTP is not encrypted, and browsers allow
   the webcam fallback only on HTTPS or on this PC itself; the gate cameras (Hikvision) are read by the
   server and still work.
 
@@ -132,13 +132,9 @@ if (-not (Test-Path (Join-Path $app 'frontend\node_modules'))) { $missing += 'fr
 if (-not (Test-Path (Join-Path $app 'backend\.env'))) { $missing += 'backend\.env (copy backend\.env.example)' }
 if ($missing) { Say 'Missing:'; $missing | ForEach-Object { Say "  - $_" }; Fail 'Install the missing parts, then start again.' }
 
-# The web server listens on 0.0.0.0:3000 (plain HTTP): only on a trusted Private/Domain network, never on a
-# Public one (hotspot, guest Wi-Fi). Checked before anything starts, so a refused start leaves nothing running.
+# Connected networks: only to print the addresses gate PCs can use (below). Whatever Windows calls a network
+# (Public, Private or Domain), its name or its addresses never decide whether the VMS starts.
 $networks = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue)
-$exposure = Get-LanExposureProblem $networks
-if ($exposure) {
-    Fail ($exposure + "`n       Connect this PC to the trusted gate LAN (network profile Private or Domain), then start again.")
-}
 $pids = Read-Pids
 
 # Development servers hold the same ports: refuse instead of guessing.

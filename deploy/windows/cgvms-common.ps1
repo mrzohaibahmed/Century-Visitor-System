@@ -27,25 +27,6 @@ function Get-CgvmsLocalConfig {
     }
 }
 
-# Why the production web server must NOT listen on 0.0.0.0:3000 now, or '' when it may.
-# Plain HTTP is only for a trusted LAN: every connected network (Get-NetConnectionProfile) must be Private or
-# Domain. A listener on 0.0.0.0 answers on every interface, so one Public network (a hotspot, a guest Wi-Fi,
-# an unidentified virtual adapter) is enough to refuse; no connected network at all is refused too (fail closed).
-function Get-LanExposureProblem($Profiles) {
-    $all = @($Profiles | Where-Object { $_ })
-    if (-not $all) {
-        return 'Production HTTP-LAN mode requires the server to be connected to a trusted Private or Domain network. ' +
-               'No connected network was found, so the VMS was not started on 0.0.0.0:3000.'
-    }
-    $untrusted = @($all | Where-Object { "$($_.NetworkCategory)" -notin 'Private', 'DomainAuthenticated' })
-    if ($untrusted) {
-        $names = ($untrusted | ForEach-Object { "'$($_.Name)' on $($_.InterfaceAlias) ($($_.NetworkCategory))" }) -join ', '
-        return 'Production HTTP-LAN mode requires the server to be connected to a trusted Private or Domain network. ' +
-               "The active network is Public ($names), so the VMS was not started on 0.0.0.0:3000."
-    }
-    return ''
-}
-
 function Get-StatusDir($cfg) {
     $dir = Join-Path $cfg.Root 'status'
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }

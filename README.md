@@ -270,7 +270,7 @@ webcam works as before).
 ## Production on one Windows 11 PC
 
 The simplest production setup runs this project folder in production mode on one PC, as normal programs, for
-gate PCs on a **trusted private LAN over plain HTTP**:
+gate PCs on the **organization's trusted network over plain HTTP**:
 
 ```
 Gate PC browser ──HTTP :3000──> web server (node server.mjs, 0.0.0.0:3000) ──/api/*──> API (127.0.0.1:8000) ──> MongoDB (127.0.0.1:27018)
@@ -293,11 +293,12 @@ Gate PC browser ──HTTP :3000──> web server (node server.mjs, 0.0.0.0:300
 - **Windows Firewall is not part of this deployment**: no script changes it, and nothing needs to be configured
   in it. The API and MongoDB stay private because they listen on 127.0.0.1 only, not because of firewall rules.
   No subnet is configured anywhere.
-- **`start-production.bat` refuses to start** unless every connected network is Private or Domain: on a Public
-  network (phone hotspot, guest Wi-Fi, an unidentified virtual adapter) the web server would answer on it, so
-  nothing is started. Each time: connect the server to the gate LAN, check that Windows shows that network as
-  Private (Settings → Network & internet → the network → Network profile type) or Domain, start production, and
-  give the gate PCs the `http://<IP>:3000` address it prints. A new LAN needs no configuration change.
+- **Any organization network works.** The VMS is meant for the organization's own trusted network, and it does
+  not check which one: the Windows network profile (Public, Private or Domain), the network or Wi-Fi name and
+  the IP addresses are not start requirements. Node listens on `0.0.0.0:3000` on purpose (every interface);
+  the API and MongoDB stay loopback-only whatever the network. Connect the server to the organization network,
+  start production, and give the gate PCs the `http://<IP>:3000` address it prints. A new network needs no
+  configuration change.
 
 Start with `deploy\windows\start-production.bat`, stop with `stop-production.bat`, restart with
 `restart-production.bat`, check with `check-health.ps1` (it reads `http://127.0.0.1:3000/api/v1/health/ready`
@@ -386,7 +387,7 @@ correlation):
 | Symptom | What to do |
 | --- | --- |
 | Gate PCs show "cannot reach the server" | Run `check-health.ps1` on the server. If something is stopped, `restart-production.bat`. Check the gate PC uses `http://<server IP>:3000` (not `https://`; see the HSTS note above). |
-| `start-production.bat` refuses to start | It names the reason: a Public network (connect the trusted LAN, check its profile is Private or Domain), a port in use (close the development windows), or a missing part. |
+| `start-production.bat` refuses to start | It names the reason: a port in use (close the development windows), or a missing part. |
 | **API stopped** | Read the end of `.prod\logs\api.log`: a configuration problem prints `ERROR: configuration is not valid: <reason>` (no secrets). Fix `backend\.env`, `restart-production.bat`. |
 | **Web stopped** | `.prod\logs\web.log`. Usually a missing build: `restart-production.bat rebuild`. |
 | **MongoDB stopped** | `.dev\mongo\mongod.log` (look for `"s":"F"` / `"s":"E"`). Common: disk full, a newer MongoDB version. `restart-production.bat`. |

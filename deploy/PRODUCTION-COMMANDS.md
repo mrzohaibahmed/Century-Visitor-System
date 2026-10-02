@@ -15,7 +15,7 @@ of it (no script changes it). Backup and restore are not part of this VMS.
 
 Previous run's logs: `*.1.log`. The legacy MongoDB on 27017 is never used or touched.
 
-**Plain HTTP on a trusted private LAN:** gate PCs open `http://<this PC's name or IP>:3000`. No Caddy, no TLS, no
+**Plain HTTP on the organization's trusted network:** gate PCs open `http://<this PC's name or IP>:3000`. No Caddy, no TLS, no
 certificate. Only the web server listens on the network; the API and MongoDB stay on 127.0.0.1. HTTP is not
 encrypted (passwords, session cookies and visitor data cross the LAN in clear text): never expose port 3000 to
 the internet. Gate cameras (Hikvision) work (server-side); the browser webcam fallback and webcam QR scanning
@@ -31,9 +31,9 @@ messages (default: this PC's computer name).
 ### Once
 
 1. Prerequisites already used for development: `backend\.venv`, `frontend\node_modules`, `backend\.env`, MongoDB 8.x.
-2. Connect this PC to the trusted gate LAN and check that Windows shows that network as **Private** (Settings →
-   Network & internet → the network → Network profile type) or Domain. `start-production.bat` refuses to start
-   while any connected network is Public (phone hotspot, guest Wi-Fi). No subnet is configured anywhere.
+2. Connect this PC to the organization's network. Any organization network works: the Windows network profile
+   (Public, Private or Domain), the network name and the IP addresses are not checked, and no subnet is
+   configured anywhere. Node listens on `0.0.0.0:3000`; the API and MongoDB stay on 127.0.0.1 on every network.
 3. Each gate PC: open the `http://<this PC's IP>:3000` address that `start-production.bat` prints, or
    `http://<this PC's name>:3000`. If the name does not resolve, use the IP or add `<this PC's IP> <name>` to the gate
    PC's `C:\Windows\System32\drivers\etc\hosts`. A browser that used the former `https://<name>` address may
