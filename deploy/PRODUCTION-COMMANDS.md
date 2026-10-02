@@ -5,7 +5,7 @@
 The existing project runs in production mode as normal programs: no copy of the application, no Windows services.
 This is the only supported production deployment: `start-production.bat`, plain HTTP, port 3000, gate PCs open
 `http://<this PC's IP>:3000`. There is no Caddy, HTTPS, certificate or port 443, and Windows Firewall is not part
-of it (no script changes it).
+of it (no script changes it). Backup and restore are not part of this VMS.
 
 | Part | Production command (started by `production.ps1`) | Listens on | Log |
 | --- | --- | --- | --- |
@@ -26,7 +26,7 @@ need HTTPS and so only work on this PC itself (`http://localhost:3000`). README,
 `CG_MONGO_LOCALHOST_WITHOUT_LOGIN=true` (the project's database has no login; this is only accepted for a
 database on 127.0.0.1) and `CG_PHOTO_DIR=<project>\.dev\photos` (the existing photos; a `CG_PHOTO_DIR` in
 `backend\.env` wins). `start-dev.bat` keeps working unchanged. Optional: `CGVMS_SITE` = the name gate PCs use in
-messages (default: this PC's computer name), `CGVMS_BACKUP` = backup folder (default `.prod\backups`).
+messages (default: this PC's computer name).
 
 ### Once
 
@@ -47,10 +47,7 @@ messages (default: this PC's computer name), `CGVMS_BACKUP` = backup folder (def
 | Stop | `stop-production.bat` (web, API, then a clean MongoDB shutdown) |
 | Restart | `restart-production.bat` |
 | Health | `powershell -ExecutionPolicy Bypass -File deploy\windows\check-health.ps1` |
-| Backup | `powershell -ExecutionPolicy Bypass -File deploy\windows\backup.ps1` (needs MongoDB Database Tools; database + photos to `.prod\backups` or `CGVMS_BACKUP`) |
 | After an update (`git pull`) | `restart-production.bat rebuild` (runs `npm run build`); if `requirements.txt` changed first `backend\.venv\Scripts\python -m pip install -r backend\requirements.txt`; if the schema changed `cd backend; .venv\Scripts\python -m app.cli migrate` |
 
 The programs keep running when the window closes and stop at sign-out or shutdown. To start them with Windows,
 add a Task Scheduler task "At log on" that runs `start-production.bat` with `CGVMS_NOPAUSE=1` (optional).
-
-Copy `.prod\backups` to another disk or PC regularly: a backup on the same disk is lost with the disk.

@@ -4,8 +4,6 @@ Operator commands (run on the server, never exposed over HTTP):
     python -m app.cli migrate    create/update collections, validators and indexes
     python -m app.cli check      same checks as GET /api/v1/health/ready
     python -m app.cli create-admin --username admin [--display-name "..."] [--password-stdin]
-    python -m app.cli verify-data     read-only: photo files present and unchanged, links intact (exit 1 if not)
-    python -m app.cli restore-check   on a RESTORED COPY only: verify-data + access rules (refuses production)
     python -m app.cli dev-first-admin DEVELOPMENT only: admin / admin1234 when no account exists yet
                                       (must be changed at the first login; start-dev.bat runs it)
     python -m app.cli generate-secrets-key   prints a new key for CG_SECRETS_KEY (nothing is changed)
@@ -71,29 +69,6 @@ async def _check() -> int:
                       "expected_schema_version": SCHEMA_VERSION, "replica_set": bool(hello.get("setName")),
                       "ready": ok}, indent=2))
     return 0 if ok else 1
-
-
-async def _verify_data() -> int:
-    from app.ops import verify_data
-    settings = get_settings()
-    database = Database(settings)
-    try:
-        report = await verify_data(database.db, settings)
-    finally:
-        await database.close()
-    print(json.dumps(report, indent=2))
-    return 0 if report["ok"] else 1
-
-
-async def _restore_check() -> int:
-    from app.ops import restore_check
-    try:
-        report = await restore_check(get_settings())
-    except RuntimeError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        return 2
-    print(json.dumps(report, indent=2, default=str))
-    return 0 if report["ok"] else 1
 
 
 async def _backfill_entry_denials() -> int:
@@ -173,8 +148,6 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate", help="create/update collections, validators and indexes")
     sub.add_parser("check", help="readiness checks")
-    sub.add_parser("verify-data", help="read-only integrity check of the database and the photo folder")
-    sub.add_parser("restore-check", help="checks a restored copy (never production)")
     sub.add_parser("dev-first-admin", help="development only: admin / admin1234 if no account exists")
     sub.add_parser("generate-secrets-key", help="print a new random key for CG_SECRETS_KEY")
     sub.add_parser("backfill-entry-denials",
@@ -209,7 +182,7 @@ def main() -> int:
         if password is None:
             return 2
         return asyncio.run(_create_admin(args.username.strip(), args.display_name.strip(), password))
-    commands = {"migrate": _migrate, "check": _check, "verify-data": _verify_data, "restore-check": _restore_check,
+    commands = {"migrate": _migrate, "check": _check,
                 "dev-first-admin": _dev_first_admin, "backfill-entry-denials": _backfill_entry_denials}
     return asyncio.run(commands[args.command]())
 

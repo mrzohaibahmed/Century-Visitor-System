@@ -19,7 +19,7 @@ Browser ──HTTP :3000──> Next.js web server (frontend/) ──/api/──
 | `backend/` | FastAPI backend (Python 3.12, Pydantic v2, PyMongo async) |
 | `frontend/` | Next.js 16 frontend (App Router, React 19, TypeScript, Tailwind CSS 4) |
 | `scripts/dev_mongo.py` | Starts an isolated local MongoDB replica set for development |
-| `deploy/` | Production on one Windows PC: start/stop scripts, health check, backups (see "Production on one Windows 11 PC") |
+| `deploy/` | Production on one Windows PC: start/stop scripts, health check (see "Production on one Windows 11 PC") |
 | `.dev/` | Local development data and logs (git-ignored) |
 
 ## Local development (Windows)
@@ -147,7 +147,7 @@ file. Files get random 128-bit names (never the CNIC). The `photos` collection h
 The API never returns the name, path or folder: images are only reachable through `GET /api/v1/photos/{id}`,
 which checks the session on every request and is never cached. Administrators may see any photo. Guards may see
 only a visitor's current photo or the photo of a visit still inside (the photos needed at the gate); anything
-else is refused and audited. **Backups must include `CG_PHOTO_DIR` together with the database.** Nothing is
+else is refused and audited. Nothing is
 deleted automatically yet: retention is decided in production hardening (`photos.captured_at` is indexed for it).
 
 ### Pass security
@@ -312,7 +312,8 @@ cannot reach it, but any program or user on this PC can.
 This part is for the administrator who runs the system on the server PC with `start-production.bat` (see
 "Production on one Windows 11 PC" above and `deploy\PRODUCTION-COMMANDS.md`). It assumes no knowledge of the
 code. Everything named `*.ps1` or `*.bat` is in `deploy\windows\`. This is the only supported production
-deployment: there are no Windows services, no Caddy, no HTTPS certificates and no firewall scripts.
+deployment: there are no Windows services, no Caddy, no HTTPS certificates and no firewall scripts. Backup and
+restore are not part of this VMS.
 
 - Gate PCs need **only a browser** (Edge or Chrome) and the `http://<server IP>:3000` address. They never get
   Python, Node.js, MongoDB, source code, `.env` or passwords.
@@ -323,7 +324,7 @@ deployment: there are no Windows services, no Caddy, no HTTPS certificates and n
 ### Configuration reference
 
 Gate cameras: `CG_SECRETS_KEY` (see "Gate cameras" above) is a secret like `CG_MONGO_URI`; keep a copy of it
-with the other secrets, not with the database backups.
+with the other secrets.
 
 `backend\.env` holds the secrets the application uses at runtime. The API **refuses to start in production** if:
 - `CG_MONGO_URI` has no user/password, no `tls=true`, or any of `tlsAllowInvalidCertificates`,
@@ -355,44 +356,13 @@ dashboard's *System status* card shows the same.
 - The API refuses to start if the folder is missing or not writable. It never re-creates a vanished folder: if
   the drive disappears while running, photo uploads fail with a clear message ("continue without a photo"),
   and the health check reports `photo_storage: unavailable`.
-- Photos are part of the data: the backup copies them, and a restore needs them.
-
-### Backups
-
-`backup.ps1` (run by hand, or from a Task Scheduler task you create) backs up to `.prod\backups`, or to the
-folder named by `CGVMS_BACKUP`. It needs the MongoDB Database Tools (`mongodump`).
-
-1. **Database**: `mongodump --oplog` of the whole instance: a consistent point-in-time copy of all
-   collections (users, visitors, visits, watchlist, hosts, departments, gates, audit logs, photo metadata,
-   sessions, settings, counters).
-2. **Photos**: new photo files are copied to `<backup folder>\photos` (after the dump, so every photo in the
-   dump has its file). Existing backup copies are never overwritten or deleted, so a damaged live file cannot
-   spoil the backup.
-3. **Verification**: SHA-256 of the dump recorded in `manifest.json`, re-checked after copying to
-   `<backup folder>\database\cgvms-YYYYMMDD-HHMMSS\`. The photo count in the backup must not be lower than
-   the live count.
-4. **Retention** (only folders named `cgvms-YYYYMMDD-HHMMSS` are ever deleted): every backup of the last 35
-   days, plus the newest backup of each of the last 12 months. Photo backups are kept indefinitely (a retention
-   policy for visitor photos is still to be decided, see *Pending decisions*). The last 3 dumps also stay in
-   `.prod\backup\staging`.
-5. **Result**: exit code, `.prod\status\backup-<date>.log`, `.prod\status\last-backup.json`. The health check
-   reports a problem when the last good backup is older than 26 hours.
-
-Backups contain personal data: copy them to another disk or PC regularly and give access only to the
-administrators. `backend\.env` is not part of the backup: keep a copy of its secrets in the password manager.
-
-**Restore** (not rehearsed in this setup yet): with the application stopped (`stop-production.bat`), start an
-empty database (`backend\.venv\Scripts\python scripts\dev_mongo.py start` with an empty `.dev\mongo`), then
-`mongorestore "--uri=mongodb://127.0.0.1:27018/?directConnection=true" --gzip "--archive=<backup folder>\database\<newest>\mongodb.archive.gz" --oplogReplay`,
-copy the photos back (`robocopy "<backup folder>\photos" "<CG_PHOTO_DIR>" *.jpg /E`), and check with
-`cd backend; .venv\Scripts\python -m app.cli verify-data` (it must say `"ok": true`) before `start-production.bat`.
 
 ### Monitoring
 
 `check-health.ps1` runs at the end of every `start-production.bat` and can be run at any time (or from a Task
 Scheduler task). It checks MongoDB, the API, the database (schema, transactions, photo folder), the web server,
 the way gate PCs reach the API (`http://127.0.0.1:3000/api/v1/health/ready` through the web server), free space
-on every drive holding application data (below 15 % or 10 GB) and the age of the last good backup (26 hours).
+on every drive holding application data (below 15 % or 10 GB).
 The result is written to `.prod\status\health.json`. If an administrator registered the event source once
 (`New-EventLog -LogName Application -Source CenturyGateVMS`), problems also go to the **Windows Application
 event log**:
@@ -400,7 +370,6 @@ event log**:
 | Event ID | Meaning |
 | --- | --- |
 | 1001 / 1000 | health problem found / healthy again (only on a change, and once a day while it lasts) |
-| 2001 / 2000 | backup failed / succeeded |
 
 **Logs** (no passwords, tokens, QR codes, ID numbers or query strings are written; request IDs stay intact for
 correlation):
@@ -410,7 +379,7 @@ correlation):
 | API (JSON lines, one per request) | `.prod\logs\api.log` (previous run: `api.1.log`) |
 | Web | `.prod\logs\web.log`, `web.err.log` |
 | MongoDB | `.dev\mongo\mongod.log` |
-| Backups, health | `.prod\status\*.log`, `.prod\status\*.json` (kept 60 days) |
+| Health | `.prod\status\*.log`, `.prod\status\*.json` |
 
 ### Recovery runbook
 
@@ -421,8 +390,7 @@ correlation):
 | **API stopped** | Read the end of `.prod\logs\api.log`: a configuration problem prints `ERROR: configuration is not valid: <reason>` (no secrets). Fix `backend\.env`, `restart-production.bat`. |
 | **Web stopped** | `.prod\logs\web.log`. Usually a missing build: `restart-production.bat rebuild`. |
 | **MongoDB stopped** | `.dev\mongo\mongod.log` (look for `"s":"F"` / `"s":"E"`). Common: disk full, a newer MongoDB version. `restart-production.bat`. |
-| **Disk full** | Photos and the database grow. Free space or extend the drive; move old `.prod\backup\staging` copies away. MongoDB stops writing when the disk is full: check it afterwards. |
-| **Backup failed** | `.prod\status\backup-<date>.log` names the step. Usual causes: backup folder unreachable, disk full, `mongodump` missing. Fix, then run `backup.ps1` again. |
+| **Disk full** | Photos and the database grow. Free space or extend the drive. MongoDB stops writing when the disk is full: check it afterwards. |
 | **Photo folder unavailable** | Health shows `photo_storage: unavailable`; gates can still check visitors in without photos. Reconnect the drive (same path), `restart-production.bat`. Never create an empty folder in its place. |
 
 ### Hardware acceptance tests (real devices, not yet done)
@@ -463,12 +431,12 @@ the pass security.
 - **Photo policy**: a photo is still optional ("Continue without a photo"). Whether every visitor must have one
   is decided after the hardware tests.
 - **Retention**: how long ID numbers, photos and visit records are kept, and automatic clean-up, are decided
-  later; nothing is deleted automatically yet (the backups keep photos indefinitely until then).
+  later; nothing is deleted automatically yet.
 - **Old desktop history**: not imported; the legacy database stays untouched.
 
 ## Status
 
 Phase 4 (watchlist management, photos, QR passes, badges, scan-to-check-out), production on one Windows PC
-(plain HTTP on the trusted LAN, `start-production.bat`, health check, backups; the former HTTPS/Windows-services
+(plain HTTP on the trusted LAN, `start-production.bat`, health check; the former HTTPS/Windows-services
 setup was removed) and Phase 6A (host arrival notifications: in-app and e-mail) are complete. Next: real deployment and hardware
 testing (see *Hardware acceptance tests*), and a test of the e-mails with the company mail server.

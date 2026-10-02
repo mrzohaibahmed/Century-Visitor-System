@@ -103,7 +103,7 @@ class Settings(BaseSettings):
 
     # --- Secrets kept in the database (gate camera passwords) ----------------------------
     # AES-256-GCM key (base64, 32 bytes): python -m app.cli generate-secrets-key. Only here, in the
-    # server environment; never in the database, the repository or a backup of the database alone.
+    # server environment; never in the database or the repository.
     # Unset: camera passwords cannot be saved (everything else works). Changing it makes saved
     # camera passwords unreadable: they must then be entered again.
     secrets_key: SecretStr | None = None

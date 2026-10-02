@@ -13,8 +13,7 @@
     Web to API   HealthUrl (http://127.0.0.1:3000/api/v1/health/ready) answers "ready" through the web
                  server's /api/* (plain HTTP, no certificate: the way gate PCs reach the API)
   Each part is checked directly, so a problem in one never hides the state of the others. Also:
-    - every drive holding Root, PhotoDir or the database keeps DiskMinFreePercent / DiskMinFreeGB free;
-    - the last successful backup is younger than BackupMaxAgeHours.
+    - every drive holding Root, PhotoDir or the database keeps DiskMinFreePercent / DiskMinFreeGB free.
   Writes status\health.json every run. Writes to the Windows event log (source CenturyGateVMS)
   only when the state changes (1000 = healthy again, 1001 = problem) and once a day while a
   problem continues, so a healthy system does not flood the log. Exit code 0 = healthy, 1 = problem.
@@ -102,18 +101,6 @@ foreach ($d in $drives) {
     }
 }
 if (-not (Test-Path -LiteralPath $cfg.PhotoDir)) { $problems.Add('The photo folder (PhotoDir) is not available.') }
-
-# Backups.
-$last = Join-Path (Get-StatusDir $cfg) 'last-backup.json'
-if (-not (Test-Path -LiteralPath $last)) { $problems.Add('No successful backup has been recorded yet.') }
-else {
-    $lb = Get-Content -LiteralPath $last -Raw | ConvertFrom-Json
-    $age = (Get-Date) - [datetime]$lb.finished
-    $notes.Add("Last good backup: $($lb.name), $([math]::Round($age.TotalHours, 1)) hours ago.")
-    if ($age.TotalHours -gt [double]$cfg.BackupMaxAgeHours) {
-        $problems.Add("The last successful backup ($($lb.name)) is $([math]::Round($age.TotalHours)) hours old.")
-    }
-}
 
 # Result, state changes and a daily reminder while a problem lasts.
 $healthy = $problems.Count -eq 0

@@ -69,7 +69,7 @@ def test_the_former_https_services_deployment_is_gone():
     """Only start-production.bat deploys: no Caddy, Windows services, certificates or firewall scripts."""
     windows = DEPLOY / "windows"
     assert sorted(p.name for p in windows.iterdir()) == [
-        "backup.ps1", "cgvms-common.ps1", "check-health.ps1", "production.ps1",
+        "cgvms-common.ps1", "check-health.ps1", "production.ps1",
         "restart-production.bat", "start-production.bat", "stop-production.bat"]
     assert sorted(p.name for p in DEPLOY.iterdir()) == ["PRODUCTION-COMMANDS.md", "windows"]
     for script in windows.iterdir():
