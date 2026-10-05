@@ -6,13 +6,13 @@ rem
 rem    1. MongoDB   127.0.0.1:27018   the project's database (.dev\mongo)
 rem    2. build     npm run build     only when there is no build yet
 rem    3. API       127.0.0.1:8000    python -m app.serve (no reload)
-rem    4. Web       0.0.0.0:3000      node server.mjs (Next.js production server)
+rem    4. Web       0.0.0.0:6543      node server.mjs (Next.js production server)
 rem    then the health check.
 rem
-rem  Gate PCs open http://<this PC's name or IP>:3000 (plain HTTP on the trusted
+rem  Gate PCs open http://<this PC's name or IP>:6543 (plain HTTP on the trusted
 rem  LAN; no Caddy, no certificate). A double-click is enough; Windows Firewall is
 rem  not changed by this script.
-rem  Logs: .prod\logs.  Details: deploy\windows\production.ps1, deploy\PRODUCTION-COMMANDS.md
+rem  Output: the "CGVMS API" and "CGVMS Web" windows.  Details: deploy\windows\production.ps1, deploy\PRODUCTION-COMMANDS.md
 rem
 rem  Optional:  start-production.bat rebuild    (npm run build first, after an update)
 rem ============================================================================

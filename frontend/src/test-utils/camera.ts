@@ -31,6 +31,7 @@ export function installCamera(options: { fail?: string; secure?: boolean; suppor
   Object.defineProperty(HTMLVideoElement.prototype, "srcObject", { configurable: true, writable: true, value: null });
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
     drawImage: vi.fn(),
+    setTransform: vi.fn(),
     getImageData: (_x: number, _y: number, width: number, height: number) =>
       ({ data: new Uint8ClampedArray(width * height * 4), width, height }),
   } as unknown as CanvasRenderingContext2D);

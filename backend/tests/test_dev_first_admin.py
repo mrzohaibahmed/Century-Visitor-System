@@ -1,4 +1,4 @@
-"""Development first-run account (python -m app.cli dev-first-admin, run by start-dev.bat)."""
+"""First-run account (python -m app.cli first-admin, run by start-dev.bat and production.ps1)."""
 import uuid
 
 import pytest
@@ -22,7 +22,7 @@ def dev_env(monkeypatch, tmp_path):
     MongoClient(TEST_MONGO_URI).drop_database(db_name)
 
 
-def run(monkeypatch, command="dev-first-admin") -> int:
+def run(monkeypatch, command="first-admin") -> int:
     monkeypatch.setattr("sys.argv", ["app.cli", command])
     get_settings.cache_clear()
     return cli.main()
@@ -47,14 +47,21 @@ def test_does_nothing_when_accounts_exist(monkeypatch, dev_env, capsys):
     assert len(users) == 1 and users[0]["password_hash"] == before
 
 
-@pytest.mark.parametrize("environment", ["production", "test"])
-def test_refused_outside_development(monkeypatch, dev_env, environment, capsys):
-    monkeypatch.setenv("CG_ENVIRONMENT", environment)
-    if environment == "production":
-        monkeypatch.setenv("CG_MONGO_URI", "mongodb://u:p@localhost:27018/?tls=true&tlsCAFile=ca.pem")
-    assert run(monkeypatch) == 2
-    assert "only works with CG_ENVIRONMENT=development" in capsys.readouterr().err
-    assert MongoClient(TEST_MONGO_URI)[dev_env].users.count_documents({}) == 0
+def test_works_in_production_as_started_by_production_ps1(monkeypatch, dev_env, capsys):
+    for key, value in {"CG_ENVIRONMENT": "production", "CG_DEPLOYMENT_MODE": "http-lan",
+                       "CG_MONGO_LOCALHOST_WITHOUT_LOGIN": "true"}.items():
+        monkeypatch.setenv(key, value)
+    assert run(monkeypatch, "migrate") == 0
+    assert run(monkeypatch) == 0
+    assert "admin / admin1234" in capsys.readouterr().out
+    user = MongoClient(TEST_MONGO_URI)[dev_env].users.find_one({"username": "admin"})
+    assert user["role"] == "ADMIN" and user["must_change_password"] is True
+
+
+def test_old_command_name_still_works(monkeypatch, dev_env):
+    assert run(monkeypatch, "migrate") == 0
+    assert run(monkeypatch, "dev-first-admin") == 0
+    assert MongoClient(TEST_MONGO_URI)[dev_env].users.count_documents({}) == 1
 
 
 def test_first_login_forces_a_proper_new_password(monkeypatch, dev_env):

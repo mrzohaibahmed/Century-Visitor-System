@@ -57,6 +57,16 @@ describe("LoginForm", () => {
     expect(login).not.toHaveBeenCalled();
   });
 
+  it("toggles the password between hidden and shown", () => {
+    render(<LoginForm next="/dashboard" />);
+    const input = screen.getByLabelText("Password") as HTMLInputElement;
+    expect(input.type).toBe("password");
+    fireEvent.click(screen.getByRole("button", { name: "Show password" }));
+    expect(input.type).toBe("text");
+    fireEvent.click(screen.getByRole("button", { name: "Hide password" }));
+    expect(input.type).toBe("password");
+  });
+
   it("explains why the user was sent to the login page", () => {
     render(<LoginForm next="/dashboard" notice="Your session has expired. Please log in again." />);
     expect(screen.getByText("Your session has expired. Please log in again.")).toBeTruthy();

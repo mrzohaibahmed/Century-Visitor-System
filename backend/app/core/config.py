@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     # --- Visitor passes / badges (Phase 4) ----------------------------------------
     # A pass (QR on the badge) stops working at check-out, when replaced, or after this long.
     pass_valid_hours: int = Field(default=24, ge=1, le=24 * 7)
-    organization_name: str = Field(default="Century Gate", min_length=1, max_length=60)
+    organization_name: str = Field(default="Century Paper & Board Mills", min_length=1, max_length=60)
 
     # --- E-mail to hosts (Phase 6A) ---------------------------------------------------
     # Leave CG_SMTP_HOST empty to switch e-mail off (in-app notifications still work).

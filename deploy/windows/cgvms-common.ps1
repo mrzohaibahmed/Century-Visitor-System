@@ -9,7 +9,7 @@ $script:EventSource = 'CenturyGateVMS'
 # The application runs from this repository as normal processes (start-production.bat).
 # Everything comes from the project itself: backend\.env, the development MongoDB instance on 127.0.0.1:27018
 # (scripts\dev_mongo.py, data in .dev\mongo), runtime files (logs, status) in .prod\. Gate PCs use plain
-# HTTP on port 3000 (no Caddy, no certificate): the health check reads readiness through the web server.
+# HTTP on port 6543 (no Caddy, no certificate): the health check reads readiness through the web server.
 function Get-CgvmsLocalConfig {
     $app = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path.TrimEnd('\')
     $photoDir = Join-Path $app '.dev\photos'                    # the API's own default (core/config.py)
@@ -22,7 +22,7 @@ function Get-CgvmsLocalConfig {
     $root = Join-Path $app '.prod'
     return @{
         AppDir = $app; Root = $root; PhotoDir = $photoDir; MongoPort = 27018
-        SiteName = $site; HealthUrl = 'http://127.0.0.1:3000/api/v1/health/ready'
+        SiteName = $site; HealthUrl = 'http://127.0.0.1:6543/api/v1/health/ready'
         DiskMinFreePercent = 15; DiskMinFreeGB = 10
     }
 }

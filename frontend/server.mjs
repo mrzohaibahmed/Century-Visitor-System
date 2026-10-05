@@ -3,7 +3,7 @@
  * browser's real address reaches the API (server/forwarding.mjs). Everything else is Next.js as
  * under `next start`: pages, static files, and the /api/* rewrite to FastAPI (next.config.ts).
  *
- *     node server.mjs [--hostname 127.0.0.1] [--port 3000]       (after npm run build)
+ *     node server.mjs [--hostname 127.0.0.1] [--port 6543]       (after npm run build)
  *
  * Production only: development keeps `next dev` (npm run dev). Listens on 127.0.0.1 unless told otherwise.
  */
@@ -16,7 +16,7 @@ import { setClientIdentity } from "./server/forwarding.mjs";
 const { values } = parseArgs({
   options: {
     hostname: { type: "string", short: "H", default: "127.0.0.1" },
-    port: { type: "string", short: "p", default: process.env.PORT ?? "3000" },
+    port: { type: "string", short: "p", default: process.env.PORT ?? "6543" },
   },
 });
 const hostname = values.hostname;

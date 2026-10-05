@@ -51,8 +51,11 @@ copy .env.example .env
 .venv\Scripts\python -m uvicorn app.main:create_app --factory --reload --port 8000
 ```
 
-The first administrator can only be created with `create-admin` on the server. There is no web
-"first-run" page, because it would be reachable by anyone on the network.
+The first administrator is created on the server: `start-dev.bat` and `start-production.bat` run
+`python -m app.cli first-admin`, which creates **admin / admin1234** when the database has no account yet
+(a new password must be chosen at the first login; it does nothing once any account exists). `create-admin`
+creates one with your own password instead. There is no web "first-run" page, because it would be reachable by
+anyone on the network.
 
 **Refused entries (reports).** Every entry refused because of the watchlist (at check-in, or at the check-in
 lookup) is recorded in `entry_denials`, after its audit entries and never instead of them: if that reporting
@@ -74,12 +77,12 @@ empty, and refusals at the lookup before version 6 were not recorded at all.
 cd frontend
 npm install
 copy .env.example .env.local
-npm run dev                       # http://localhost:3000 (forwards /api/* to the API)
+npm run dev                       # http://localhost:6543 (forwards /api/* to the API)
 npm run typecheck ; npm run lint ; npm test ; npm run build
 npm run test:e2e                  # end-to-end tests in Microsoft Edge (see below)
 ```
 
-Open the app via **http://localhost:3000**, not 127.0.0.1: the Next.js dev server only serves its
+Open the app via **http://localhost:6543**, not 127.0.0.1: the Next.js dev server only serves its
 scripts to `localhost` by default.
 
 **End-to-end tests** start their own isolated stack (API on :8001 with database `cgvms_e2e`, web on
@@ -95,7 +98,7 @@ Secrets live only in the server environment, never in the frontend or the reposi
 
 - Roles: **Administrator** (everything) and **Guard** (gate work). The API checks the role on every
   request; the frontend only hides what a role cannot use.
-- Passwords: argon2id; at least 10 characters, not containing the username, not a common password.
+- Passwords: argon2id; at least 8 characters, not containing the username, not a common password.
   New and reset accounts must choose their own password at first login.
 - Sessions: HttpOnly `__Host-` cookie (the database stores only its hash), CSRF token on every change,
   15 minutes idle / 12 hours maximum (`CG_SESSION_IDLE_MINUTES`, `CG_SESSION_MAX_HOURS`).
@@ -112,14 +115,14 @@ Secrets live only in the server environment, never in the frontend or the reposi
   *Hosts / Departments / Gates* in the menu. With one gate, every session uses it automatically; with
   several, each user picks the gate they are working at after logging in (shown in the top bar).
 - **Check-in:** ID lookup → register the visitor if new → watchlist and "already inside" checks → host,
-  department, reason, vehicle, belongings → review → confirm. The visit number (`V-YYYY-NNNNNN`) is
-  shown on success. A host who is not in the directory can be typed in; that visit is flagged.
+  department, reason, vehicle, belongings → review → confirm. The visit number (`V-YY-MON-DD-NNN`, e.g. `V-26-OCT-02-001`:
+  the first visit on 2 October 2026; counted per day at the gate) is shown on success. A host who is not in the directory can be typed in; that visit is flagged.
 - **Check-out:** by visit number or ID number (Enter), or from the list of visitors inside. Repeating a
   check-out is harmless.
 - **Visitors / Visit history:** search by name, ID or phone; history filters by date, status, gate and
   department. Opening a visitor's record and every ID lookup is audited (ID numbers are masked in the
   audit log). Only administrators can edit a visitor's details.
-- The database guarantees one active visit per visitor, gap-free visit numbers per year and
+- The database guarantees one active visit per visitor, gap-free visit numbers per day and
   idempotent check-out, even with several gates working at once.
 
 ## Watchlist, photos, passes & badges (Phase 4)
@@ -162,8 +165,8 @@ audited (`PASS_REJECTED`). Scans are sent in the request body, never in a URL (p
 
 ### Badge printing
 
-The badge is a browser print layout: a CR80 card, **54 × 86 mm portrait**, printed through the normal print
-dialog (only the badge is printed). It shows the organisation (`CG_ORGANIZATION_NAME`), visitor name, visit
+The badge is a browser print layout: a CR80 card, **54 × 85.6 mm portrait** (standard ID-card size), printed through the normal print
+dialog (only the badge is printed). It shows the organisation (`CG_ORGANIZATION_NAME`) and site address at the top, visitor name, visit
 number, host, department, check-in time and gate, the QR and its validity. It never shows the ID number or
 phone. For other label stock, change the sizes in `frontend/src/app/globals.css` (section "Visitor badge").
 
@@ -273,35 +276,35 @@ The simplest production setup runs this project folder in production mode on one
 gate PCs on the **organization's trusted network over plain HTTP**:
 
 ```
-Gate PC browser ──HTTP :3000──> web server (node server.mjs, 0.0.0.0:3000) ──/api/*──> API (127.0.0.1:8000) ──> MongoDB (127.0.0.1:27018)
+Gate PC browser ──HTTP :3000──> web server (node server.mjs, 0.0.0.0:6543) ──/api/*──> API (127.0.0.1:8000) ──> MongoDB (127.0.0.1:27018)
                                                                                         API ──> gate cameras (Hikvision)
 ```
 
-- Gate PCs open `http://<this PC's name or IP>:3000`. No TLS, no certificate, no Caddy.
+- Gate PCs open `http://<this PC's name or IP>:6543`. No TLS, no certificate, no Caddy.
 - Only the web server listens on the network. The API (8000) and MongoDB (27018, the project's own database in
   `.dev\mongo`) listen on 127.0.0.1 only and are never exposed; the browser reaches the API only through `/api/*`.
 - The API runs with `CG_ENVIRONMENT=production` and `CG_DEPLOYMENT_MODE=http-lan`: the session cookies lose only
   their `Secure` flag (see *Configuration reference*). HTTP is **not encrypted**: passwords, session cookies and
-  visitor data cross the LAN in clear text. Use it only on a network you trust; never expose port 3000 to the
+  visitor data cross the LAN in clear text. Use it only on a network you trust; never expose port 6543 to the
   internet.
 - Gate cameras (Hikvision) are read by the server and work over HTTP. Browsers allow the **webcam fallback** (and
   webcam QR scanning) only on HTTPS or on this PC itself, so a gate without a working gate camera has no photo
   capture or QR scanning on HTTP.
 - A browser that opened the former HTTPS address (`https://<name>`) remembers HSTS for that name for up to a
-  year and will refuse `http://<name>:3000`: use the IP address on that PC, or clear the HSTS entry for the name
+  year and will refuse `http://<name>:6543`: use the IP address on that PC, or clear the HSTS entry for the name
   (Edge: `edge://net-internals/#hsts`, Chrome: `chrome://net-internals/#hsts`).
 - **Windows Firewall is not part of this deployment**: no script changes it, and nothing needs to be configured
   in it. The API and MongoDB stay private because they listen on 127.0.0.1 only, not because of firewall rules.
   No subnet is configured anywhere.
 - **Any organization network works.** The VMS is meant for the organization's own trusted network, and it does
   not check which one: the Windows network profile (Public, Private or Domain), the network or Wi-Fi name and
-  the IP addresses are not start requirements. Node listens on `0.0.0.0:3000` on purpose (every interface);
+  the IP addresses are not start requirements. Node listens on `0.0.0.0:6543` on purpose (every interface);
   the API and MongoDB stay loopback-only whatever the network. Connect the server to the organization network,
-  start production, and give the gate PCs the `http://<IP>:3000` address it prints. A new network needs no
+  start production, and give the gate PCs the `http://<IP>:6543` address it prints. A new network needs no
   configuration change.
 
 Start with `deploy\windows\start-production.bat`, stop with `stop-production.bat`, restart with
-`restart-production.bat`, check with `check-health.ps1` (it reads `http://127.0.0.1:3000/api/v1/health/ready`
+`restart-production.bat`, check with `check-health.ps1` (it reads `http://127.0.0.1:6543/api/v1/health/ready`
 through the web server). Step by step: `deploy\PRODUCTION-COMMANDS.md`.
 
 In this mode the database has no login: production allows that only with `CG_MONGO_LOCALHOST_WITHOUT_LOGIN=true`
@@ -316,7 +319,7 @@ code. Everything named `*.ps1` or `*.bat` is in `deploy\windows\`. This is the o
 deployment: there are no Windows services, no Caddy, no HTTPS certificates and no firewall scripts. Backup and
 restore are not part of this VMS.
 
-- Gate PCs need **only a browser** (Edge or Chrome) and the `http://<server IP>:3000` address. They never get
+- Gate PCs need **only a browser** (Edge or Chrome) and the `http://<server IP>:6543` address. They never get
   Python, Node.js, MongoDB, source code, `.env` or passwords.
 - The **legacy desktop MongoDB service (port 27017, database `century_gate_system`) is not used, changed or
   stopped**. The web application runs its own MongoDB instance on port 27018. The scripts never use port 27017,
@@ -344,7 +347,7 @@ setting: session cookies are host-only and SameSite=Strict, and every change nee
 
 The web server has no secrets; no `NEXT_PUBLIC_*` variables exist.
 
-Health in a browser: `http://<server IP>:3000/api/v1/health/ready` answers `{"status":"ready", ...}` with the
+Health in a browser: `http://<server IP>:6543/api/v1/health/ready` answers `{"status":"ready", ...}` with the
 state of the database, schema, transactions and photo storage. It never shows host names, paths or errors. The
 dashboard's *System status* card shows the same.
 
@@ -362,7 +365,7 @@ dashboard's *System status* card shows the same.
 
 `check-health.ps1` runs at the end of every `start-production.bat` and can be run at any time (or from a Task
 Scheduler task). It checks MongoDB, the API, the database (schema, transactions, photo folder), the web server,
-the way gate PCs reach the API (`http://127.0.0.1:3000/api/v1/health/ready` through the web server), free space
+the way gate PCs reach the API (`http://127.0.0.1:6543/api/v1/health/ready` through the web server), free space
 on every drive holding application data (below 15 % or 10 GB).
 The result is written to `.prod\status\health.json`. If an administrator registered the event source once
 (`New-EventLog -LogName Application -Source CenturyGateVMS`), problems also go to the **Windows Application
@@ -377,8 +380,8 @@ correlation):
 
 | Log | Where |
 | --- | --- |
-| API (JSON lines, one per request) | `.prod\logs\api.log` (previous run: `api.1.log`) |
-| Web | `.prod\logs\web.log`, `web.err.log` |
+| API (JSON lines, one per request) | the **CGVMS API** window (live; not saved to a file) |
+| Web | the **CGVMS Web** window (live; not saved to a file) |
 | MongoDB | `.dev\mongo\mongod.log` |
 | Health | `.prod\status\*.log`, `.prod\status\*.json` |
 
@@ -386,22 +389,22 @@ correlation):
 
 | Symptom | What to do |
 | --- | --- |
-| Gate PCs show "cannot reach the server" | Run `check-health.ps1` on the server. If something is stopped, `restart-production.bat`. Check the gate PC uses `http://<server IP>:3000` (not `https://`; see the HSTS note above). |
+| Gate PCs show "cannot reach the server" | Run `check-health.ps1` on the server. If something is stopped, `restart-production.bat`. Check the gate PC uses `http://<server IP>:6543` (not `https://`; see the HSTS note above). |
 | `start-production.bat` refuses to start | It names the reason: a port in use (close the development windows), or a missing part. |
-| **API stopped** | Read the end of `.prod\logs\api.log`: a configuration problem prints `ERROR: configuration is not valid: <reason>` (no secrets). Fix `backend\.env`, `restart-production.bat`. |
-| **Web stopped** | `.prod\logs\web.log`. Usually a missing build: `restart-production.bat rebuild`. |
+| **API stopped** | Read the **CGVMS API** window (it stays open when the API stops): a configuration problem prints `ERROR: configuration is not valid: <reason>` (no secrets). Fix `backend\.env`, `restart-production.bat`. |
+| **Web stopped** | Read the **CGVMS Web** window. Usually a missing build: `restart-production.bat rebuild`. If the window was closed, `start-production.bat` starts it again. |
 | **MongoDB stopped** | `.dev\mongo\mongod.log` (look for `"s":"F"` / `"s":"E"`). Common: disk full, a newer MongoDB version. `restart-production.bat`. |
 | **Disk full** | Photos and the database grow. Free space or extend the drive. MongoDB stops writing when the disk is full: check it afterwards. |
 | **Photo folder unavailable** | Health shows `photo_storage: unavailable`; gates can still check visitors in without photos. Reconnect the drive (same path), `restart-production.bat`. Never create an empty folder in its place. |
 
 ### Hardware acceptance tests (real devices, not yet done)
 
-Do these on **each gate PC**, at `http://<server IP>:3000`, with the real badge printer and scanner. Nothing
+Do these on **each gate PC**, at `http://<server IP>:6543`, with the real badge printer and scanner. Nothing
 here has been tested on real hardware yet.
 
 **Webcam** (browsers allow it only on HTTPS or on the server itself, so on a gate PC over plain HTTP the
 webcam fallback and webcam QR scanning are not available; the gate cameras work). On the server PC at
-`http://localhost:3000`, check in a visitor and at the photo step:
+`http://localhost:6543`, check in a visitor and at the photo step:
 - first use: the browser asks for camera permission; allow it (and check the permission is remembered);
 - the photo is sharp and the face recognisable in the gate's lighting;
 - deny the permission once: the page explains how to allow it;

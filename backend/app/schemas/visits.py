@@ -26,7 +26,9 @@ class VisitStatus(StrEnum):
     CHECKED_OUT = "CHECKED_OUT"
 
 
-VISIT_NUMBER = re.compile(r"^V-\d{4}-\d{6,}$")
+# V-26-OCT-02-001: year, month and day at the gate, then that day's count. Visits numbered in the
+# earlier formats (V-26-0210-001, V-2026-000123) keep them and can still be looked up and checked out.
+VISIT_NUMBER = re.compile(r"^V-(\d{2}-[A-Z]{3}-\d{2}-\d{3,}|\d{2}-\d{4}-\d{3,}|\d{4}-\d{6,})$")
 Belonging = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
 
 
@@ -78,7 +80,7 @@ class CheckOutLookup(StrictModel):
         if bool(self.visit_number) == bool(self.identity):
             raise ValueError("Give either a visit number or an ID number.")
         if self.visit_number and not VISIT_NUMBER.match(self.visit_number):
-            raise ValueError("A visit number looks like V-2026-000123.")
+            raise ValueError("A visit number looks like V-26-OCT-02-001.")
         return self
 
 

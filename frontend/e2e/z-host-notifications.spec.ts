@@ -50,7 +50,7 @@ test("a host's visitor arrival reaches the linked app account's bell", async ({ 
   await page.getByRole("button", { name: "Review" }).click();
   await page.getByRole("button", { name: "Continue without a photo" }).click();
   await page.getByRole("button", { name: "Confirm check-in" }).click();
-  await expect(page.getByTestId("visit-number")).toHaveText(/^V-\d{4}-\d{6}$/);
+  await expect(page.getByTestId("visit-number")).toHaveText(/^V-\d{2}-[A-Z]{3}-\d{2}-\d{3}$/);
 
   // The bell shows it (counted by the server), and it can be read.
   await page.reload();

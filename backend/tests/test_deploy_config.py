@@ -20,16 +20,16 @@ def _production_script() -> str:
 
 
 def test_the_local_production_start_runs_the_web_server_on_the_lan():
-    """server.mjs (sets the client address the API sees) on all interfaces, plain HTTP, port 3000."""
+    """server.mjs (sets the client address the API sees) on all interfaces, plain HTTP, port 6543."""
     script = _production_script()
-    assert "-ArgumentList 'server.mjs', '--hostname', '0.0.0.0', '--port', '3000'" in script
+    assert "server.mjs --hostname 0.0.0.0 --port 6543' -f $node" in script
     assert "next\\dist\\bin\\next" not in script and "next dev" not in script
 
 
 def test_the_local_production_start_keeps_api_and_database_on_loopback():
     script = _production_script()
-    assert "-ArgumentList '-m', 'app.serve', '--host', '127.0.0.1', '--port', '8000'" in script
-    assert script.count("'--host', ") == 1 and "--reload" not in script
+    assert "python.exe -m app.serve --host 127.0.0.1 --port 8000'" in script
+    assert script.count("--host ") == 1 and "--reload" not in script
     dev_mongo = (DEPLOY.parent / "scripts" / "dev_mongo.py").read_text(encoding="utf-8")
     assert 'HOST = "127.0.0.1"' in dev_mongo and '"--bind_ip", HOST' in dev_mongo and "bind_ip_all" not in dev_mongo
 
@@ -59,7 +59,7 @@ def test_the_local_production_start_needs_no_caddy_certificate_or_firewall_chang
 
 def test_the_local_health_check_reads_readiness_over_http_through_the_web_server():
     common = (DEPLOY / "windows" / "cgvms-common.ps1").read_text(encoding="utf-8")
-    assert "HealthUrl = 'http://127.0.0.1:3000/api/v1/health/ready'" in common and "https://" not in common
+    assert "HealthUrl = 'http://127.0.0.1:6543/api/v1/health/ready'" in common and "https://" not in common
     health = (DEPLOY / "windows" / "check-health.ps1").read_text(encoding="utf-8")
     assert "$cfg = Get-CgvmsLocalConfig" in health and "Get-Url $cfg.HealthUrl" in health
     assert "https" not in health.lower() and "SslStream" not in health and "CGVMS-" not in health
@@ -93,7 +93,7 @@ def test_secret_files_are_ignored_by_git():
 # ---------------------------------------------------------------- any organization network
 # The VMS starts on whatever network the organization uses: Windows' network profile (Public, Private, Domain),
 # the network's name and its addresses never decide. The boundary is the binding (only the web server on
-# 0.0.0.0:3000; API and MongoDB on 127.0.0.1), not a network check or a firewall rule.
+# 0.0.0.0:6543; API and MongoDB on 127.0.0.1), not a network check or a firewall rule.
 POWERSHELL = shutil.which("powershell.exe")
 WINDOWS = DEPLOY / "windows"
 

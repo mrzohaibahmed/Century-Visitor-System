@@ -15,7 +15,7 @@ import secrets
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
-MIN_PASSWORD_LENGTH = 10
+MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 128
 
 _COMMON_PASSWORDS = {

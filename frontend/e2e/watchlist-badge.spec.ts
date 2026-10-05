@@ -161,7 +161,7 @@ test("guard checks a visitor in with a photo, a pass and a printed badge", async
   await page.getByRole("button", { name: "Print badge" }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { prints: number }).prints)).toBe(1);
 
-  // What the printer receives: one 54 × 86 mm page with only the badge on it.
+  // What the printer receives: one 54 × 85.6 mm page with only the badge on it.
   await page.emulateMedia({ media: "print" });
   const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
   // Kept in test-results/ for a visual check: what the printer would receive.
@@ -171,7 +171,7 @@ test("guard checks a visitor in with a photo, a pass and a printed badge", async
   const box = text.match(/\/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)\s*\]/);
   expect(box, "page size in the PDF").not.toBeNull();
   expect(Number(box![1])).toBeCloseTo(153.07, 0);                    // 54 mm in points
-  expect(Number(box![2])).toBeCloseTo(243.78, 0);                    // 86 mm in points
+  expect(Number(box![2])).toBeCloseTo(242.65, 0);                    // 85.6 mm in points
   expect(text.match(/\/Type\s*\/Page[^s]/g)?.length).toBe(1);
 });
 

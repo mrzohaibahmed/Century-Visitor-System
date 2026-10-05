@@ -18,10 +18,6 @@ def day_bounds_utc(day_from: date | None, day_to: date | None, tz_name: str) -> 
     return start, end
 
 
-def local_year(moment: datetime, tz_name: str) -> int:
-    return moment.astimezone(ZoneInfo(tz_name)).year
-
-
 def local_today(tz_name: str, now: datetime | None = None) -> date:
     """Today's date at the gate (not in UTC): 00:30 in Karachi is already the next day."""
     return (now or datetime.now(UTC)).astimezone(ZoneInfo(tz_name)).date()

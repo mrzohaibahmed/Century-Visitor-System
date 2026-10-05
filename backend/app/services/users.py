@@ -48,7 +48,7 @@ async def get_user(db: AsyncDatabase, user_id: str) -> dict:
 async def create_user(db: AsyncDatabase, *, actor: dict | None, meta: RequestMeta | None, username: str,
                       display_name: str, role: Role, password: str, must_change_password: bool = True,
                       enforce_policy: bool = True, source: str = "cli") -> dict:
-    # enforce_policy=False only for the development first-run account (app.cli dev-first-admin): its
+    # enforce_policy=False only for the first-run account (app.cli first-admin): its
     # temporary password has to be replaced at the first login, so the policy is never skipped otherwise.
     if enforce_policy or not must_change_password:
         _check_password(password, username)

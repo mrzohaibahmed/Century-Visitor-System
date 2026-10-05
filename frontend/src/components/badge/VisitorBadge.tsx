@@ -13,7 +13,7 @@ import { photoUrl } from "@/lib/api/photos";
 import { formatDateTime } from "@/lib/format";
 
 /**
- * The printed visitor badge: a CR80 card (54 × 86 mm, portrait), the common size
+ * The printed visitor badge: a CR80 card (54 × 85.6 mm, portrait), the standard ID-card size
  * for badge printers and card holders. Change BADGE_SIZE in globals.css for
  * other label stock. Only what the gate needs is printed: no ID number, phone or
  * address. The QR holds only the random pass token.
@@ -44,6 +44,9 @@ type BadgePhoto = { url: string } | "none" | "failed";
 
 /** The site's emergency number, printed on every badge. */
 export const EMERGENCY_NUMBER = "76666";
+
+/** The site's address, printed under the organisation name at the top of every badge. */
+export const SITE_ADDRESS = "62-KM, Lahore-Multan Highway N-5";
 
 /** Name sizes (pt), largest first. Below the first, the name may take one more line (.badge-name[data-small]). */
 const NAME_SIZES = [11, 10, 9, 8];
@@ -79,6 +82,7 @@ function BadgeCard({ issued, qr, photo, onPhotoError, nameSize, onScreen = false
   return (
     <div className="badge-card" data-testid={id("badge-card")}>
       <p className="badge-org">{b.organization}</p>
+      <p className="badge-address">{SITE_ADDRESS}</p>
       <p className="badge-band">VISITOR</p>
       <div className="badge-id">
         {typeof photo === "object" ? (
@@ -94,10 +98,11 @@ function BadgeCard({ issued, qr, photo, onPhotoError, nameSize, onScreen = false
         <div className="badge-who">
           <p className="badge-name" style={{ fontSize: `${nameSize}pt` }} data-small={nameSize < NAME_SIZES[0] ? "" : undefined}
              data-testid={id("badge-name")}>{b.visitor_name}</p>
-          <p className="badge-number" data-testid={id("badge-visit-number")}>{b.visit_number}</p>
           {b.gate_name && <p className="badge-gate">{b.gate_name}</p>}
         </div>
       </div>
+      {/* Its own full-width line: V-26-OCT-02-001 is too wide for the column beside the photo. */}
+      <p className="badge-number" data-testid={id("badge-visit-number")}>{b.visit_number}</p>
       <div className="badge-bottom">
         <dl className="badge-facts">
           <div><dt>Host</dt><dd>{b.host_name ?? "—"}</dd></div>

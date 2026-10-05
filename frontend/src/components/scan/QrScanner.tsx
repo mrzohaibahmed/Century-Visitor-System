@@ -260,7 +260,8 @@ function WebcamQrScanner({ onScan, onCancel, extra }: {
       )}
       {notAPass && !problem && <Alert tone="warn">{NOT_A_PASS}</Alert>}
       <div className="relative mx-auto aspect-[4/3] w-full max-w-md overflow-hidden rounded-2xl bg-brand-900">
-        <video ref={videoRef} muted playsInline aria-label="QR scanner camera" className="size-full object-cover" />
+        {/* Shown like a mirror, so the badge moves the way the hand does. Display only: the QR is read from the camera's own frames. */}
+        <video ref={videoRef} muted playsInline aria-label="QR scanner camera" className="size-full -scale-x-100 object-cover" />
         {problem ? (
           <div aria-hidden="true" className="absolute inset-0 flex items-center justify-center text-white/70">
             <CameraOff className="size-10" />

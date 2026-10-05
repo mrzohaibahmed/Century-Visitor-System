@@ -235,12 +235,13 @@ body {
 
 /*
  * Visitor badge (components/badge/VisitorBadge.tsx). BADGE SIZE: CR80 card,
- * 54 × 86 mm portrait. For other label stock change the two sizes below
+ * 54 × 85.6 mm portrait (ID-1). For other label stock change the two sizes below
  * (--badge-w / --badge-h and @page badge) and test on the real printer.
  *
- * Layout, top to bottom (content area 48 × 81.5 mm):
- *   organisation + VISITOR band                 ~11 mm
- *   photo 26 × 36 mm | name (11 pt, ≤ 3 lines; down to 8 pt, ≤ 4 lines, so words stay whole), visit number, gate
+ * Layout, top to bottom (content area 48 × 81.1 mm):
+ *   organisation, site address + VISITOR band   ~13 mm
+ *   photo 26 × 30 mm | name (11 pt, ≤ 3 lines; down to 8 pt, ≤ 4 lines, so words stay whole), gate
+ *   visit number (V-26-OCT-02-001), full width, 10 pt
  *   host / department / check-in | QR code 20 × 20 mm (quiet zone included; ~0.54 mm modules, camera-scannable)
  *   emergency number, footer (≤ 2 lines)
  * Nothing may shrink and every text block is clamped, so long names or
@@ -248,7 +249,7 @@ body {
  */
 .badge-card {
   --badge-w: 54mm;
-  --badge-h: 86mm;
+  --badge-h: 85.6mm;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -264,6 +265,9 @@ body {
   text-align: center;
   line-height: 1.15;
   text-transform: uppercase;          /* all printed text in capitals (the QR is an image: unaffected) */
+  /* Print the black VISITOR band even when "Background graphics" is off in the print dialog. */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 .badge-card > * { flex-shrink: 0; }
 /* Fixed colours, not theme tokens: the preview must look like the white card in both themes. */
@@ -282,9 +286,19 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.badge-address {
+  width: 100%;
+  margin-top: 0.3mm;
+  font-size: 5.5pt;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .badge-band {
   width: 100%;
-  margin: 1.2mm 0 1.5mm;
+  margin: 1mm 0 1.2mm;
   padding: 0.6mm 0;
   background: #000;
   color: #fff;
@@ -300,13 +314,13 @@ body {
   width: 100%;
   text-align: left;
 }
-/* Portrait (about 5:7), as large as the card allows. object-fit: cover crops the stored (usually 16:9 landscape) photo instead of
+/* Portrait (about 6:7), as large as the card allows. object-fit: cover crops the stored (usually 16:9 landscape) photo instead of
    stretching it; the crop is centred, a little above the middle, where the camera guide puts the face.
    The browser scales the stored JPEG straight to printer resolution: no re-encoding on the way. */
 .badge-photo {
   box-sizing: border-box;
   width: 26mm;
-  height: 36mm;
+  height: 30mm;
   border: 0.3mm solid #000;
   border-radius: 1mm;
   background: #e5e7eb;
@@ -344,10 +358,12 @@ body {
 /* Smaller than 11 pt (long names or long words): one more line, rather than cutting the name short. */
 .badge-name[data-small] { -webkit-line-clamp: 4; }
 .badge-number {
-  margin-top: 1.5mm;
+  width: 100%;
+  margin-top: 1mm;
   font-family: var(--font-mono);
-  font-size: 8pt;
+  font-size: 10pt;
   font-weight: 700;
+  letter-spacing: 0.02em;
   white-space: nowrap;
 }
 .badge-gate {
@@ -403,7 +419,7 @@ body {
 .badge-print-root { display: none; }
 
 @page badge {
-  size: 54mm 86mm;
+  size: 54mm 85.6mm;
   margin: 0;
 }
 

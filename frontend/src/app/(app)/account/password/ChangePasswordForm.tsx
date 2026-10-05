@@ -10,7 +10,7 @@ import { TextField } from "@/components/ui/TextField";
 import { changePassword } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
 
-export const PASSWORD_HINT = "At least 10 characters. Must not contain the username or be a common password.";
+export const PASSWORD_HINT = "At least 8 characters. Must not contain the username or be a common password.";
 
 export function ChangePasswordForm() {
   const { user, refresh } = useSession();

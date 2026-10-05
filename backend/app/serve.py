@@ -11,8 +11,8 @@ Production API server (what start-production.bat runs):
 - No auto-reload, no debug. The interactive API docs stay off (CG_API_DOCS).
 - Listens on 127.0.0.1 only: the web server's /api/* forwarding (server.mjs)
   on the same server is the only way in. Gate PCs never reach this port.
-- Logs are JSON lines on stderr; start-production.bat writes them to
-  .prod/logs/api.log.
+- Logs are JSON lines on stderr, shown in the "CGVMS API" window that
+  start-production.bat opens.
 
 Development still uses:  uvicorn app.main:create_app --factory --reload
 """

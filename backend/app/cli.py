@@ -4,15 +4,16 @@ Operator commands (run on the server, never exposed over HTTP):
     python -m app.cli migrate    create/update collections, validators and indexes
     python -m app.cli check      same checks as GET /api/v1/health/ready
     python -m app.cli create-admin --username admin [--display-name "..."] [--password-stdin]
-    python -m app.cli dev-first-admin DEVELOPMENT only: admin / admin1234 when no account exists yet
-                                      (must be changed at the first login; start-dev.bat runs it)
+    python -m app.cli first-admin    admin / admin1234 when no account exists yet (must be changed at the
+                                      first login; start-dev.bat and production.ps1 run it; the old name
+                                      dev-first-admin still works)
     python -m app.cli generate-secrets-key   prints a new key for CG_SECRETS_KEY (nothing is changed)
     python -m app.cli backfill-entry-denials creates the missing entry_denials documents from WATCHLIST_MATCH
                                       audit entries; repeatable and safe to run concurrently (also repairs
                                       a denial whose reporting write failed at the gate)
 
-create-admin is the only way to create the first administrator: there is no
-web "first-run" page, because such a page would be reachable by anyone on the
+The first administrator is created on the server (first-admin or create-admin): there
+is no web "first-run" page, because such a page would be reachable by anyone on the
 network. Whoever can run commands on the server is already trusted.
 
 Later phases add: create-gate, purge-retention.
@@ -83,29 +84,24 @@ async def _backfill_entry_denials() -> int:
     return 1 if report.failed else 0
 
 
-DEV_ADMIN_USERNAME = "admin"
-DEV_ADMIN_PASSWORD = "admin1234"         # noqa: S105 - documented development default, changed at first login
+FIRST_ADMIN_USERNAME = "admin"
+FIRST_ADMIN_PASSWORD = "admin1234"       # noqa: S105 - documented default, must be changed at the first login
 
 
-async def _dev_first_admin() -> int:
+async def _first_admin() -> int:
     from app.core.permissions import Role
     from app.services.users import create_user
-    settings = get_settings()
-    if settings.environment != "development":
-        print("ERROR: dev-first-admin only works with CG_ENVIRONMENT=development. "
-              "Use create-admin (with your own password) for any other database.", file=sys.stderr)
-        return 2
-    database = Database(settings)
+    database = Database(get_settings())
     try:
         if await database.db.users.estimated_document_count():
             print("Accounts already exist: nothing changed.")
             return 0
-        await create_user(database.db, actor=None, meta=None, username=DEV_ADMIN_USERNAME,
-                          display_name="Administrator", role=Role.ADMIN, password=DEV_ADMIN_PASSWORD,
-                          must_change_password=True, enforce_policy=False, source="dev-first-admin")
+        await create_user(database.db, actor=None, meta=None, username=FIRST_ADMIN_USERNAME,
+                          display_name="Administrator", role=Role.ADMIN, password=FIRST_ADMIN_PASSWORD,
+                          must_change_password=True, enforce_policy=False, source="first-admin")
     finally:
         await database.close()
-    print(f"First administrator created: {DEV_ADMIN_USERNAME} / {DEV_ADMIN_PASSWORD} "
+    print(f"First administrator created: {FIRST_ADMIN_USERNAME} / {FIRST_ADMIN_PASSWORD} "
           "(a new password must be chosen at the first login).")
     return 0
 
@@ -148,7 +144,8 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate", help="create/update collections, validators and indexes")
     sub.add_parser("check", help="readiness checks")
-    sub.add_parser("dev-first-admin", help="development only: admin / admin1234 if no account exists")
+    sub.add_parser("first-admin", aliases=["dev-first-admin"],
+                   help="admin / admin1234 (changed at the first login) if no account exists")
     sub.add_parser("generate-secrets-key", help="print a new random key for CG_SECRETS_KEY")
     sub.add_parser("backfill-entry-denials",
                    help="create missing entry_denials from WATCHLIST_MATCH audit entries (repeatable)")
@@ -182,8 +179,8 @@ def main() -> int:
         if password is None:
             return 2
         return asyncio.run(_create_admin(args.username.strip(), args.display_name.strip(), password))
-    commands = {"migrate": _migrate, "check": _check,
-                "dev-first-admin": _dev_first_admin, "backfill-entry-denials": _backfill_entry_denials}
+    commands = {"migrate": _migrate, "check": _check, "first-admin": _first_admin, "dev-first-admin": _first_admin,
+                "backfill-entry-denials": _backfill_entry_denials}
     return asyncio.run(commands[args.command]())
 
 

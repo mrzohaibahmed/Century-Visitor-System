@@ -77,9 +77,10 @@ export function checkOut(id: string): Promise<CheckOutResult> {
   return apiRequest<CheckOutResult>(`/visits/${encodeURIComponent(id)}/check-out`, { method: "POST" });
 }
 
-export const VISIT_NUMBER_PATTERN = /^V-\d{4}-\d{6,}$/i;
+/** V-26-OCT-02-001 (year, month, day, that day's count), or the older V-26-0210-001 and V-2026-000123. */
+export const VISIT_NUMBER_PATTERN = /^V-(\d{2}-[A-Z]{3}-\d{2}-\d{3,}|\d{2}-\d{4}-\d{3,}|\d{4}-\d{6,})$/i;
 
-/** Check-out by a typed or scanned value: a visit number (V-2026-000123) or the visitor's ID number. */
+/** Check-out by a typed or scanned value: a visit number (V-26-OCT-02-001) or the visitor's ID number. */
 export function checkOutBy(value: { visit_number: string } | { identity: Identity }): Promise<CheckOutResult> {
   return apiRequest<CheckOutResult>("/visits/check-out", { method: "POST", body: value });
 }

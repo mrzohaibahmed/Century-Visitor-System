@@ -22,7 +22,7 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.identity import identifier, mask_identity
 from app.core.pagination import decode_cursor, encode_cursor
-from app.core.timeutil import day_bounds_utc, local_year
+from app.core.timeutil import day_bounds_utc, local_today
 from app.db.transactions import run_in_transaction
 from app.schemas.visits import VISIT_NUMBER, CheckInRequest
 from app.services import audit
@@ -37,6 +37,8 @@ from app.services.auth import AuthContext, RequestMeta, session_gate
 ACTIVE_LIMIT = 500
 PAGE_LIMIT_MAX = 100
 NOT_FOUND = AppError(404, "not_found", "Visit not found.")
+# Month in visit numbers: fixed English capitals, whatever the server's locale.
+MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 # Lists never return large or secret fields.
 LIST_PROJECTION = {"pass": 0}
 
@@ -99,7 +101,7 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
     photo_id = await photos_svc.for_check_in(db, visitor, body.photo_id) if body.photo_id else None
 
     now = datetime.now(UTC)
-    year = local_year(now, settings.timezone)
+    day = local_today(settings.timezone, now)
     visit = {
         "visitor_id": visitor["_id"], "host_id": host_id, "host_unlisted": host_id is None,
         "department_id": department["_id"], "gate_id": gate["_id"], "checkout_gate_id": None,
@@ -115,10 +117,11 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
     }
 
     async def work(s: AsyncClientSession):
+        # Counted per day at the gate: V-26-OCT-02-001 is the first visit on 2 October 2026.
         counter = await db.counters.find_one_and_update(
-            {"_id": f"visit_number:{year}"}, {"$inc": {"seq": 1}}, upsert=True,
+            {"_id": f"visit_number:{day.isoformat()}"}, {"$inc": {"seq": 1}}, upsert=True,
             return_document=ReturnDocument.AFTER, session=s)
-        visit["visit_number"] = f"V-{year}-{counter['seq']:06d}"
+        visit["visit_number"] = f"V-{day:%y}-{MONTHS[day.month - 1]}-{day:%d}-{counter['seq']:03d}"
         visit["_id"] = (await db.visits.insert_one(visit, session=s)).inserted_id
         if photo_id:
             # The visit where the photo was taken (a later visit may reuse the visitor's current photo).

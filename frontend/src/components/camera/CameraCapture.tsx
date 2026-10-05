@@ -21,6 +21,7 @@ const CAPTURE_MAX_SIDE = 1280;
 
 /**
  * Start camera → live preview → capture → preview → retake or confirm (upload).
+ * The webcam is shown like a mirror (as people expect of a camera facing them), and the photo is saved the same way.
  * The camera is released as soon as a picture is taken, and whenever the
  * component goes away (step changed, page left).
  */
@@ -102,7 +103,10 @@ export function CameraCapture({ onConfirm, confirmLabel = "Use this photo" }: {
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(video.videoWidth * scale);
     canvas.height = Math.round(video.videoHeight * scale);
-    canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const context = canvas.getContext("2d");
+    // Saved as the guard saw it in the mirrored preview, so the photo does not flip on capture.
+    context?.setTransform(-1, 0, 0, 1, canvas.width, 0);
+    context?.drawImage(video, 0, 0, canvas.width, canvas.height);
     canvas.toBlob((blob) => {
       release();
       if (!mounted.current) return;
@@ -139,7 +143,7 @@ export function CameraCapture({ onConfirm, confirmLabel = "Use this photo" }: {
       <div className="relative mx-auto aspect-[4/3] w-full max-w-lg overflow-hidden rounded-2xl bg-brand-900 shadow-card">
         <video ref={videoRef} muted playsInline aria-label="Camera preview"
                onLoadedMetadata={markReady} onLoadedData={markReady} onResize={markReady}
-               className={`size-full object-cover ${live ? "" : "hidden"}`} />
+               className={`size-full -scale-x-100 object-cover ${live ? "" : "hidden"}`} />
         {canCapture && (
           // Framing guide only; the whole frame is captured.
           <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center">

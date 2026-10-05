@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from bson import ObjectId
 
+from app.core.timeutil import local_today
+from app.services.visits import MONTHS
 from tests.test_visitors import CNIC, new_visitor
 
 pytestmark = pytest.mark.anyio
@@ -31,13 +33,14 @@ async def check_in(client, visitor_id, directory, **overrides):
 
 
 # ---------------------------------------------------------------- check-in
-async def test_check_in(harness, guard, directory):
+async def test_check_in(harness, settings, guard, directory):
     v = await new_visitor(guard)
     r = await check_in(guard, v["id"], directory)
     assert r.status_code == 201, r.text
     visit = r.json()
-    year = datetime.now(UTC).year
-    assert visit["visit_number"] == f"V-{year}-000001" and visit["status"] == "CHECKED_IN"
+    day = local_today(settings.timezone)                          # V-26-OCT-02-001: first visit of the day
+    assert visit["visit_number"] == f"V-{day:%y}-{MONTHS[day.month - 1]}-{day:%d}-001"
+    assert visit["status"] == "CHECKED_IN"
     assert visit["visitor"]["name"] == "Ali Khan" and visit["host"]["name"] == "Sara Ahmed"
     assert visit["department"]["name"] == "HR"                    # taken from the host
     assert visit["gate"]["name"] == "Main Gate"                   # taken from the session, not the request
@@ -68,13 +71,13 @@ async def test_two_gates_checking_in_the_same_person_at_once(harness, admin, gua
     assert await harness.db.visits.count_documents({"status": "CHECKED_IN"}) == 1
 
 
-async def test_visit_numbers_are_unique_and_gap_free_under_load(harness, guard, directory):
+async def test_visit_numbers_are_unique_and_gap_free_under_load(harness, settings, guard, directory):
     visitors = [await new_visitor(guard, name=f"Person {chr(65 + i)}", number=f"35201-00000{i:02d}-1", phone=None)
                 for i in range(8)]
     results = await asyncio.gather(*(check_in(guard, v["id"], directory) for v in visitors))
     numbers = sorted(r.json()["visit_number"] for r in results)
-    year = datetime.now(UTC).year
-    assert numbers == [f"V-{year}-{i:06d}" for i in range(1, 9)]
+    day = local_today(settings.timezone)
+    assert numbers == [f"V-{day:%y}-{MONTHS[day.month - 1]}-{day:%d}-{i:03d}" for i in range(1, 9)]
 
 
 async def test_watchlist_blocks_entry_in_any_id_format(harness, guard, directory):

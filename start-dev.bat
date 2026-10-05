@@ -8,7 +8,7 @@ rem    2. database migration   (safe to repeat) and, on a brand-new database onl
 rem       the first administrator:  admin / admin1234  (a new password must be
 rem       chosen at the first login)
 rem    3. API                  http://127.0.0.1:8000  (own window, auto-reload)
-rem    4. web                  http://localhost:3000  (own window, auto-reload)
+rem    4. web                  http://localhost:6543  (own window, auto-reload)
 rem    5. opens the browser
 rem
 rem  Anything already running is left alone. Close the "CGVMS API" and
@@ -80,8 +80,8 @@ if not errorlevel 1 (
 
 rem ---- 4. web ------------------------------------------------------------------
 echo.
-echo [4/5] Web on port 3000 ...
-netstat -ano | findstr /R /C:":3000 .*LISTENING" >nul
+echo [4/5] Web on port 6543 ...
+netstat -ano | findstr /R /C:":6543 .*LISTENING" >nul
 if not errorlevel 1 (
     echo       already running - left as it is.
 ) else (
@@ -92,14 +92,14 @@ if not errorlevel 1 (
 rem ---- 5. browser --------------------------------------------------------------
 echo.
 echo [5/5] Waiting for the application (up to 2 minutes) ...
-powershell -NoProfile -Command "$end=(Get-Date).AddMinutes(2); while((Get-Date) -lt $end){ try { $r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 http://localhost:3000/login; if($r.StatusCode -eq 200){ exit 0 } } catch {}; Start-Sleep -Seconds 2 }; exit 1"
+powershell -NoProfile -Command "$end=(Get-Date).AddMinutes(2); while((Get-Date) -lt $end){ try { $r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 http://localhost:6543/login; if($r.StatusCode -eq 200){ exit 0 } } catch {}; Start-Sleep -Seconds 2 }; exit 1"
 if errorlevel 1 (
     echo WARNING: The web page did not answer yet. Check the "CGVMS Web" and "CGVMS API" windows.
     goto :end
 )
-start "" http://localhost:3000
+start "" http://localhost:6543
 echo.
-echo Century Gate VMS is running:  http://localhost:3000
+echo Century Gate VMS is running:  http://localhost:6543
 echo First login on a new database:  admin / admin1234  (you then choose your own password)
 echo (Use localhost, not 127.0.0.1: the development web server only serves localhost.)
 goto :end

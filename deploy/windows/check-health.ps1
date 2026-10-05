@@ -9,8 +9,8 @@
     MongoDB      listening on 127.0.0.1:<MongoPort>
     API          http://127.0.0.1:8000/api/v1/health/ready answers "ready"
     Database     (from the API) database reachable, schema up to date, transactions, photo folder
-    Web          http://127.0.0.1:3000/login answers
-    Web to API   HealthUrl (http://127.0.0.1:3000/api/v1/health/ready) answers "ready" through the web
+    Web          http://127.0.0.1:6543/login answers
+    Web to API   HealthUrl (http://127.0.0.1:6543/api/v1/health/ready) answers "ready" through the web
                  server's /api/* (plain HTTP, no certificate: the way gate PCs reach the API)
   Each part is checked directly, so a problem in one never hides the state of the others. Also:
     - every drive holding Root, PhotoDir or the database keeps DiskMinFreePercent / DiskMinFreeGB free.
@@ -71,9 +71,9 @@ if ($apiReady) {
 
 # Web
 $p = ''
-$r = Get-Url 'http://127.0.0.1:3000/login'
-if ($r.status -ne 200) { $p = "http://127.0.0.1:3000/login answered $($r.status) $($r.error)" }
-Part 'Web' (-not $p) $(if ($p) { $p } else { 'running on 127.0.0.1:3000' })
+$r = Get-Url 'http://127.0.0.1:6543/login'
+if ($r.status -ne 200) { $p = "http://127.0.0.1:6543/login answered $($r.status) $($r.error)" }
+Part 'Web' (-not $p) $(if ($p) { $p } else { 'running on 127.0.0.1:6543' })
 
 # The way in that gate PCs use, end to end: plain HTTP through the web server's /api/* to the API and the database.
 $p = ''

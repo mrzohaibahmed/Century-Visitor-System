@@ -7,12 +7,13 @@
       powershell -NoProfile -ExecutionPolicy Bypass -File production.ps1 -Action stop
       powershell -NoProfile -ExecutionPolicy Bypass -File production.ps1 -Action status
 
-  Runs the EXISTING project from this folder as normal processes (no Windows services, no copy):
+  Runs the EXISTING project from this folder as normal processes (no Windows services, no copy), the API
+  and the web server each in its own console window ("CGVMS API", "CGVMS Web") as start-dev.bat does:
     MongoDB   scripts\dev_mongo.py start       the project's own instance, 127.0.0.1:27018, data in .dev\mongo
     API       python -m app.serve              production server (no reload, no API docs), 127.0.0.1:8000
-    Web       node server.mjs                  production build (npm run build), 0.0.0.0:3000 (plain HTTP);
+    Web       node server.mjs                  production build (npm run build), 0.0.0.0:6543 (plain HTTP);
                                                sets the client address the API sees (frontend\server\forwarding.mjs)
-  Gate PCs use http://<this PC's name or IP>:3000 on the organization's network: no TLS, no certificate, no
+  Gate PCs use http://<this PC's name or IP>:6543 on the organization's network: no TLS, no certificate, no
   Caddy. Only the web server listens on the network; the API and MongoDB stay on 127.0.0.1. The Windows
   network profile (Public, Private, Domain) is not a start requirement. Windows Firewall is not part of
   this deployment and is never changed. HTTP is not encrypted, and browsers allow
@@ -27,8 +28,8 @@
     CG_PHOTO_DIR=<project>\.dev\photos      the existing photos (unless backend\.env sets CG_PHOTO_DIR)
   Optional: CGVMS_SITE (the name gate PCs use in messages; default: this PC's computer name).
 
-  Runtime files in .prod\: logs\api.log, logs\web.log (previous run: *.1.log).
-  MongoDB log: .dev\mongo\mongod.log.
+  Output: live in the "CGVMS API" and "CGVMS Web" windows (closing one stops that server).
+  Runtime files in .prod\: processes.json. MongoDB log: .dev\mongo\mongod.log.
 #>
 param(
     [Parameter(Mandatory = $true)][ValidateSet('start', 'stop', 'status')][string]$Action,
@@ -40,7 +41,6 @@ param(
 $cfg = Get-CgvmsLocalConfig
 $app = $cfg.AppDir
 $run = $cfg.Root                                            # .prod
-$logs = Join-Path $run 'logs'
 $pidFile = Join-Path $run 'processes.json'
 $python = Join-Path $app 'backend\.venv\Scripts\python.exe'
 $site = $cfg.SiteName
@@ -72,10 +72,24 @@ function Get-Ours([string]$Name, [string]$Program) {
     return $null
 }
 
-function New-Log([string]$Name) {
-    $file = Join-Path $logs "$Name.log"
-    if (Test-Path -LiteralPath $file) { Move-Item -LiteralPath $file -Destination (Join-Path $logs "$Name.1.log") -Force }
-    return $file
+# A server in its own console window, as start-dev.bat does: its output shows live there. cmd /k keeps the
+# window open if the server stops, so the error stays readable. Remembers the window and, once the server
+# answers, the process that listens on the port (what Get-Ours and the stop below look for).
+function Start-Window([string]$Name, [string]$Title, [string]$Dir, [string]$Command, [int]$Port, [string]$ReadyUrl) {
+    $w = Start-Process -FilePath $env:ComSpec -WorkingDirectory $Dir -PassThru `
+        -ArgumentList '/s', '/k', ('"title {0} & {1}"' -f $Title, $Command)
+    $pids["$Name window"] = $w.Id; Save-Pids $pids
+    Wait-Until { Test-Url $ReadyUrl } $null 60 $Name "the `"$Title`" window"
+    $pids[$Name] = (Get-PortOwner $Port).Id; Save-Pids $pids
+}
+
+# Closes the window and everything started in it (taskkill /T), or the server alone if its window is gone.
+function Stop-Window([string]$Name, [string]$Program) {
+    $w = Get-Ours "$Name window" 'cmd'
+    $p = Get-Ours $Name $Program
+    if ($w) { & taskkill.exe /T /F /PID $w.Id 2>&1 | Out-Null }
+    if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+    if ($w -or $p) { Say "  $Name stopped." } else { Say "  $Name was not running." }
 }
 
 function Wait-Until([scriptblock]$Ready, [Diagnostics.Process]$Process, [int]$Seconds, [string]$What, [string]$Log) {
@@ -98,11 +112,8 @@ function Test-Url([string]$Url, [int]$Expect = 200) {
 
 # ================================================================================================= stop
 if ($Action -eq 'stop') {
-    foreach ($item in @(@('Web', 'node'), @('API', 'python'))) {
-        $name, $program = $item
-        $p = Get-Ours $name $program
-        if ($p) { Stop-Process -Id $p.Id -Force; Say "  $name stopped." } else { Say "  $name was not running." }
-    }
+    Stop-Window 'Web' 'node'
+    Stop-Window 'API' 'python'
     # A Caddy started by an earlier version of this script (the former HTTPS setup) is not part of the
     # application any more; stop it as well so it does not keep answering on 443. Nothing waits for it.
     $legacy = Get-Ours 'Caddy' 'caddy'
@@ -122,7 +133,7 @@ if ($Action -eq 'status') {
 }
 
 # ================================================================================================= start
-New-Item -ItemType Directory -Force -Path $logs | Out-Null
+New-Item -ItemType Directory -Force -Path $run | Out-Null
 $node = Join-Path 'C:\Program Files\nodejs' 'node.exe'
 if (-not (Test-Path -LiteralPath $node)) { $cmd = Get-Command node.exe -ErrorAction SilentlyContinue; if ($cmd) { $node = $cmd.Source } }
 $missing = @()
@@ -138,7 +149,7 @@ $networks = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue)
 $pids = Read-Pids
 
 # Development servers hold the same ports: refuse instead of guessing.
-foreach ($item in @(@('API', 'python', 8000), @('Web', 'node', 3000))) {
+foreach ($item in @(@('API', 'python', 8000), @('Web', 'node', 6543))) {
     $name, $program, $port = $item
     if ((Get-PortOwner $port) -and -not (Get-Ours $name $program)) {
         Fail "Port $port is already in use (a development server from start-dev.bat?). Close the 'CGVMS API' / 'CGVMS Web' windows first."
@@ -180,36 +191,35 @@ if (Get-Ours 'API' 'python') {
     $env:CG_MONGO_LOCALHOST_WITHOUT_LOGIN = 'true'
     if ($envText -notmatch '(?m)^\s*CG_PHOTO_DIR\s*=') { $env:CG_PHOTO_DIR = $cfg.PhotoDir }
     $env:PYTHONUNBUFFERED = '1'
-    $apiLog = New-Log 'api'
-    $p = Start-Process -FilePath $python -ArgumentList '-m', 'app.serve', '--host', '127.0.0.1', '--port', '8000' `
-        -WorkingDirectory (Join-Path $app 'backend') -WindowStyle Hidden -PassThru `
-        -RedirectStandardError $apiLog -RedirectStandardOutput (Join-Path $logs 'api.out.log')
-    $pids['API'] = $p.Id; Save-Pids $pids
-    Wait-Until { Test-Url 'http://127.0.0.1:8000/api/v1/health/live' } $p 60 'The API' $apiLog
-    Say "      started (log: $apiLog)."
+    # First run only: admin / admin1234, which must be changed at the first login (does nothing once accounts exist).
+    Push-Location (Join-Path $app 'backend')
+    $ErrorActionPreference = 'Continue'
+    & $python -m app.cli first-admin
+    $adminExit = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    Pop-Location
+    if ($adminExit -ne 0) { Fail 'Could not check for or create the first administrator (see above).' }
+    Start-Window 'API' 'CGVMS API' (Join-Path $app 'backend') '.venv\Scripts\python.exe -m app.serve --host 127.0.0.1 --port 8000' `
+        8000 'http://127.0.0.1:8000/api/v1/health/live'
+    Say '      started in the window "CGVMS API".'
 }
 
 Say ''
-Say '[4/4] Web (http://0.0.0.0:3000, server.mjs) ...'
+Say '[4/4] Web (http://0.0.0.0:6543, server.mjs) ...'
 if (Get-Ours 'Web' 'node') {
     Say '      already running.'
 } else {
     $env:NODE_ENV = 'production'
     $env:NEXT_TELEMETRY_DISABLED = '1'
-    $webLog = New-Log 'web'
-    $p = Start-Process -FilePath $node `
-        -ArgumentList 'server.mjs', '--hostname', '0.0.0.0', '--port', '3000' `
-        -WorkingDirectory (Join-Path $app 'frontend') -WindowStyle Hidden -PassThru `
-        -RedirectStandardOutput $webLog -RedirectStandardError (Join-Path $logs 'web.err.log')
-    $pids['Web'] = $p.Id; Save-Pids $pids
-    Wait-Until { Test-Url 'http://127.0.0.1:3000/login' } $p 60 'The web server' $webLog
-    Say "      started (log: $webLog)."
+    Start-Window 'Web' 'CGVMS Web' (Join-Path $app 'frontend') ('"{0}" server.mjs --hostname 0.0.0.0 --port 6543' -f $node) `
+        6543 'http://127.0.0.1:6543/login'
+    Say '      started in the window "CGVMS Web".'
 }
 
 if (Get-Ours 'Caddy' 'caddy') {
     Say '      NOTE: Caddy from the former HTTPS setup is still running on 443; stop-production.bat stops it.'
 }
-# Only the web server (3000) listens on the network; the API (8000) and MongoDB (27018) on 127.0.0.1 only.
+# Only the web server (6543) listens on the network; the API (8000) and MongoDB (27018) on 127.0.0.1 only.
 $lanIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object { $_.InterfaceIndex -in $networks.InterfaceIndex } | ForEach-Object { $_.IPAddress })
 
@@ -217,9 +227,10 @@ Say ''
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'check-health.ps1')
 Say ''
 Say 'Century Gate VMS is running in production mode.'
-foreach ($ip in $lanIps) { Say "  Gate PCs:   http://${ip}:3000   (plain HTTP on the trusted LAN)" }
-Say "             http://${site}:3000   (this PC's name, if the gate PCs can resolve it)"
-Say '  This PC:    http://localhost:3000'
-Say "  Logs:       $logs   and   $app\.dev\mongo\mongod.log"
-Say 'The programs keep running when this window closes; they stop at sign-out or shutdown (stop-production.bat stops them).'
+foreach ($ip in $lanIps) { Say "  Gate PCs:   http://${ip}:6543   (plain HTTP on the trusted LAN)" }
+Say "             http://${site}:6543   (this PC's name, if the gate PCs can resolve it)"
+Say '  This PC:    http://localhost:6543'
+Say "  Output:     the `"CGVMS API`" and `"CGVMS Web`" windows; MongoDB log: $app\.dev\mongo\mongod.log"
+Say 'Closing the "CGVMS API" or "CGVMS Web" window stops that server; closing this window does not.'
+Say 'They also stop at sign-out or shutdown (stop-production.bat stops everything).'
 exit 0

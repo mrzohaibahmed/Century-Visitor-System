@@ -27,7 +27,7 @@ function rawValues(req, name) {
 
 describe("setClientIdentity (fake browser sockets)", () => {
   it("replaces a spoofed X-Forwarded-For with the socket address", () => {
-    const req = fakeRequest("192.168.1.50", ["Host", "vms:3000", "X-Forwarded-For", "10.10.10.10"]);
+    const req = fakeRequest("192.168.1.50", ["Host", "vms:6543", "X-Forwarded-For", "10.10.10.10"]);
     expect(setClientIdentity(req)).toBe("192.168.1.50");
     expect(req.headers["x-forwarded-for"]).toBe("192.168.1.50");
     expect(rawValues(req, "x-forwarded-for")).toEqual(["192.168.1.50"]);
@@ -35,7 +35,7 @@ describe("setClientIdentity (fake browser sockets)", () => {
   });
 
   it("adds the socket address when the browser sends none", () => {
-    const req = fakeRequest("192.168.1.50", ["Host", "vms:3000"]);
+    const req = fakeRequest("192.168.1.50", ["Host", "vms:6543"]);
     setClientIdentity(req);
     expect(req.headers["x-forwarded-for"]).toBe("192.168.1.50");
   });
@@ -102,7 +102,7 @@ async function rawRequest(port, headerLines) {
   const socket = connect(port, "127.0.0.1");
   await once(socket, "connect");
   // write, not end: a half-closed socket counts as a client that went away, and the proxy gives up.
-  socket.write(`GET /api/v1/echo HTTP/1.1\r\nHost: vms:3000\r\nConnection: close\r\n${headerLines.join("\r\n")}\r\n\r\n`);
+  socket.write(`GET /api/v1/echo HTTP/1.1\r\nHost: vms:6543\r\nConnection: close\r\n${headerLines.join("\r\n")}\r\n\r\n`);
   let text = "";
   for await (const chunk of socket) text += chunk;
   return JSON.parse(text.slice(text.indexOf("\r\n\r\n") + 4));

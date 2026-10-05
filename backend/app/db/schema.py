@@ -122,7 +122,9 @@ COLLECTIONS: list[CollectionSpec] = [
         "visits",
         _schema(["visit_number", "visitor_id", "status", "check_in_at", "checked_in_by", "snapshot",
                  "created_at", "updated_at"], {
-            "visit_number": {"bsonType": "string", "pattern": "^V-[0-9]{4}-[0-9]{6,}$"},
+            # V-26-OCT-02-001, or the earlier V-26-0210-001 and V-2026-000123 (schemas/visits.py).
+            "visit_number": {"bsonType": "string", "pattern": "^V-([0-9]{2}-[A-Z]{3}-[0-9]{2}-[0-9]{3,}"
+                                                              "|[0-9]{2}-[0-9]{4}-[0-9]{3,}|[0-9]{4}-[0-9]{6,})$"},
             "visitor_id": OBJECT_ID,
             "host_id": OPTIONAL_OBJECT_ID,
             "department_id": OPTIONAL_OBJECT_ID,

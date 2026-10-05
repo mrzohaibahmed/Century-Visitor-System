@@ -204,7 +204,7 @@ def _production(**overrides) -> Settings:
 
 @pytest.fixture
 async def lan():
-    async for h in _harness(_production(deployment_mode="http-lan"), "http://vms-server:3000"):
+    async for h in _harness(_production(deployment_mode="http-lan"), "http://vms-server:6543"):
         yield h
 
 

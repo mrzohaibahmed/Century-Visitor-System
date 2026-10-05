@@ -340,7 +340,7 @@ function FindVisitor({ focusKey, onDone, onPass, onStart, onScanWithCamera }: {
         <form ref={form} onSubmit={onSubmit} noValidate className="space-y-4">
           <TextField label="Visit number or ID number" value={value} onChange={(e) => setValue(e.target.value)} size="lg"
                      hint="A USB badge scanner can scan into this box."
-                     placeholder="V-2026-000123" autoComplete="off" spellCheck={false} autoFocus error={error ?? undefined} />
+                     placeholder="V-26-OCT-02-001" autoComplete="off" spellCheck={false} autoFocus error={error ?? undefined} />
           <SelectField label="ID type" value={idType} hint="Only used for an ID number, not a visit number."
                        onChange={(e) => setIdType(e.target.value as IdentityType)}>
             {(Object.keys(IDENTITY_LABELS) as IdentityType[]).map((t) => <option key={t} value={t}>{IDENTITY_LABELS[t]}</option>)}
