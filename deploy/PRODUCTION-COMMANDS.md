@@ -44,15 +44,14 @@ messages (default: this PC's computer name).
    PC's `C:\Windows\System32\drivers\etc\hosts`. A browser that used the former `https://<name>` address may
    force HTTPS for that name (HSTS): use the IP, or clear the name at `edge://net-internals/#hsts`.
 
-### Daily operations (double-click in `deploy\windows\`)
+### Daily operations (double-click in project root folder)
 
 | Task | Command |
 | --- | --- |
 | Start | `start-production.bat` (ends with the health check) |
 | Stop | `stop-production.bat` (web, API, then a clean MongoDB shutdown) |
-| Restart | `restart-production.bat` |
 | Health | `powershell -ExecutionPolicy Bypass -File deploy\windows\check-health.ps1` |
-| After an update (`git pull`) | `restart-production.bat rebuild` (runs `npm run build`); if `requirements.txt` changed first `backend\.venv\Scripts\python -m pip install -r backend\requirements.txt`; if the schema changed `cd backend; .venv\Scripts\python -m app.cli migrate` |
+| After an update (`git pull`) | `stop-production.bat` then `start-production.bat rebuild` (runs `npm run build`); if `requirements.txt` changed first `backend\.venv\Scripts\python -m pip install -r backend\requirements.txt`; if the schema changed `cd backend; .venv\Scripts\python -m app.cli migrate` |
 
 The programs keep running when the start window closes (not when their own CGVMS API / CGVMS Web window is
 closed) and stop at sign-out or shutdown. To start them with Windows,
