@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { Host } from "@/lib/api/directory";
 
-import { EMPTY_DRAFT, toCheckIn, validateDraft } from "./draft";
+import {
+  emptyBelongingItem, EMPTY_DRAFT, emptyPersonalMaterial, formatBelonging, toCheckIn, validateDraft,
+} from "./draft";
 
 const HOST: Host = {
   id: "h1", name: "Sara Ahmed", email: null, phone: null, department_id: "d1", department_name: "HR", is_active: true, linked_user: null,
@@ -28,18 +30,38 @@ describe("validateDraft", () => {
   });
 
   it("limits belongings to ten items", () => {
-    const belongings = Array.from({ length: 11 }, (_, i) => `item${i}`).join(",");
-    expect(validateDraft({ ...EMPTY_DRAFT, host: HOST, reason: "INTERVIEW", belongings }).belongings).toBeDefined();
+    const items = Array.from({ length: 11 }, (_, i) => ({
+      ...emptyBelongingItem(), description: `item${i}`, qtyIn: "1",
+    }));
+    const personalMaterial = { ...emptyPersonalMaterial(), items };
+    expect(validateDraft({ ...EMPTY_DRAFT, host: HOST, reason: "INTERVIEW", personalMaterial }).belongings).toBeDefined();
+  });
+});
+
+describe("formatBelonging", () => {
+  it("appends quantity in when present", () => {
+    expect(formatBelonging({ description: "Laptop", qtyIn: "01", qtyOut: "" })).toBe("Laptop (01)");
+  });
+
+  it("uses the description alone when quantity is empty", () => {
+    expect(formatBelonging({ description: "Bag", qtyIn: "", qtyOut: "" })).toBe("Bag");
   });
 });
 
 describe("toCheckIn", () => {
   it("builds the request for a listed host", () => {
+    const personalMaterial = {
+      ...emptyPersonalMaterial(),
+      items: [
+        { description: "laptop", qtyIn: "", qtyOut: "" },
+        { description: "bag", qtyIn: "2", qtyOut: "" },
+      ],
+    };
     expect(toCheckIn("v1", {
-      ...EMPTY_DRAFT, host: HOST, reason: "INTERVIEW", vehicle: " lea 1234 ", belongings: "laptop, bag",
+      ...EMPTY_DRAFT, host: HOST, reason: "INTERVIEW", vehicle: " lea 1234 ", personalMaterial,
     })).toEqual({
       visitor_id: "v1", host_id: "h1", unlisted_host_name: null, department_id: "d1", reason_code: "INTERVIEW",
-      reason_note: null, vehicle_registration: "lea 1234", belongings: ["laptop", "bag"],
+      reason_note: null, vehicle_registration: "lea 1234", belongings: ["laptop", "bag (2)"],
     });
   });
 

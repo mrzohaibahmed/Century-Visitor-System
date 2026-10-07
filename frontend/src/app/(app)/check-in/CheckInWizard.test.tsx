@@ -228,9 +228,8 @@ describe("CheckInWizard", () => {
   it("clears an error as soon as its field is corrected, and adds none before Review", async () => {
     api.lookupVisitor.mockResolvedValue(CLEAR);
     findVisitor();
-    fireEvent.change(await screen.findByLabelText("Belongings (optional)"), { target: { value: "a,b,c,d,e,f,g,h,i,j,k" } });
-    expect(screen.queryByText("At most 10 items.")).toBeNull();                        // nothing new before Review
-    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(screen.queryByText("Choose the person being visited.")).toBeNull();           // nothing new before Review
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
     expect(screen.getByText("Choose the person being visited.")).toBeTruthy();
     expect(screen.getByText("Choose the department being visited.")).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: /Sara Ahmed/ }));
@@ -239,9 +238,17 @@ describe("CheckInWizard", () => {
     expect(screen.getByText("Choose the reason for the visit.")).toBeTruthy();         // still wrong: still shown
     fireEvent.change(screen.getByLabelText("Reason for visit"), { target: { value: "INTERVIEW" } });
     expect(screen.queryByText("Choose the reason for the visit.")).toBeNull();
-    expect(screen.getByText("At most 10 items.")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Belongings (optional)"), { target: { value: "laptop" } });
-    expect(screen.queryByText("At most 10 items.")).toBeNull();
+  });
+
+  it("opens the personal material returnable form from belongings", async () => {
+    api.lookupVisitor.mockResolvedValue(CLEAR);
+    findVisitor();
+    fireEvent.click(await screen.findByRole("button", { name: /Add personal material/i }));
+    expect(await screen.findByRole("heading", { name: "Personal Material Returnable", hidden: true })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Description 1"), { target: { value: "Laptop" } });
+    fireEvent.change(screen.getByLabelText("Quantity in 1"), { target: { value: "01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save belongings", hidden: true }));
+    expect(await screen.findByText("Laptop")).toBeTruthy();
   });
 
   it("goes back from review to edit the visit details without losing them", async () => {

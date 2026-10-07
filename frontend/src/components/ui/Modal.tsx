@@ -3,16 +3,23 @@
 import { X } from "lucide-react";
 import { useEffect, useId, useRef } from "react";
 
+const WIDTH = {
+  md: "max-w-lg",
+  xl: "max-w-3xl",
+} as const;
+
 /** Accessible modal built on the native <dialog> (focus trap, Escape to close).
  *  m-auto: Tailwind's reset removes the browser default margin that centres a dialog.
  *  `dismissible={false}` hides the close button and ignores Escape (a choice that must be made).
- *  A click on the backdrop never closes it: that would lose what was typed into a form. */
-export function Modal({ open, title, description, onClose, dismissible = true, children }: {
+ *  A click on the backdrop never closes it: that would lose what was typed into a form.
+ *  `size="xl"` fits wider forms (tables); default stays compact. */
+export function Modal({ open, title, description, onClose, dismissible = true, size = "md", children }: {
   open: boolean;
   title: string;
   description?: string;
   onClose: () => void;
   dismissible?: boolean;
+  size?: keyof typeof WIDTH;
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -31,8 +38,8 @@ export function Modal({ open, title, description, onClose, dismissible = true, c
       aria-labelledby={`${id}-title`}
       aria-describedby={description ? `${id}-description` : undefined}
       onCancel={(e) => { e.preventDefault(); if (dismissible) onClose(); }}
-      className="m-auto max-h-[90vh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface-elevated p-0
-        text-ink shadow-overlay backdrop:bg-overlay open:animate-dialog-in"
+      className={`m-auto max-h-[90vh] w-[calc(100%-2rem)] ${WIDTH[size]} overflow-y-auto rounded-2xl border border-border
+        bg-surface-elevated p-0 text-ink shadow-overlay backdrop:bg-overlay open:animate-dialog-in`}
     >
       {open && (
         <div className="p-6">

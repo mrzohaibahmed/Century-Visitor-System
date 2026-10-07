@@ -1,8 +1,8 @@
 "use client";
 
 import {
-  ArrowLeft, ArrowRight, Camera, Check, ClipboardCheck, ClipboardList, IdCard, LogOut, Pencil, Printer, RotateCcw, Search,
-  ShieldAlert, ShieldX, TriangleAlert, UserPlus, Users,
+  ArrowLeft, ArrowRight, Briefcase, Camera, Check, ClipboardCheck, ClipboardList, IdCard, LogOut, Pencil, Printer,
+  RotateCcw, Search, ShieldAlert, ShieldX, TriangleAlert, UserPlus, Users,
 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
@@ -37,10 +37,14 @@ import {
   type VisitorWithStatus,
 } from "@/lib/api/visitors";
 import { checkIn, checkOut, reasonLabel, type Visit, VISIT_REASONS, type VisitReason } from "@/lib/api/visits";
-import { formatDateTime, parseList } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 
-import { type DraftErrors, EMPTY_DRAFT, effectiveDepartmentId, toCheckIn, validateDraft, type VisitDraft } from "./draft";
+import {
+  belongingsList, type DraftErrors, EMPTY_DRAFT, effectiveDepartmentId, emptyPersonalMaterial, filledBelongings,
+  toCheckIn, validateDraft, type VisitDraft,
+} from "./draft";
 import { HostPicker } from "./HostPicker";
+import { PersonalMaterialForm } from "./PersonalMaterialForm";
 
 type Step =
   | { kind: "identify" }
@@ -72,14 +76,16 @@ export function CheckInWizard() {
   const [step, setStep] = useState<Step>({ kind: "identify" });
   const [idType, setIdType] = useState<IdentityType>("CNIC");
   const [idNumber, setIdNumber] = useState("");
-  const [draft, setDraft] = useState<VisitDraft>(EMPTY_DRAFT);
+  const [draft, setDraft] = useState<VisitDraft>(() => (
+    { ...EMPTY_DRAFT, personalMaterial: emptyPersonalMaterial() }
+  ));
   /** The photo uploaded during this check-in (so the photo step does not call it one from an earlier visit). */
   const [capturedPhotoId, setCapturedPhotoId] = useState<string | null>(null);
 
   function restart() {
     setStep({ kind: "identify" });
     setIdNumber("");
-    setDraft(EMPTY_DRAFT);
+    setDraft({ ...EMPTY_DRAFT, personalMaterial: emptyPersonalMaterial() });
     setCapturedPhotoId(null);
   }
 
@@ -394,6 +400,7 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
   const [departmentsFailed, setDepartmentsFailed] = useState(false);
   const [departmentsAttempt, setDepartmentsAttempt] = useState(0);
   const [errors, setErrors] = useState<DraftErrors>({});
+  const [belongingsOpen, setBelongingsOpen] = useState(false);
   const set = (changes: Partial<VisitDraft>) => {
     const next = { ...draft, ...changes };
     onChange(next);
@@ -403,6 +410,10 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
       return Object.fromEntries(Object.keys(shown).filter((k) => k in now).map((k) => [k, now[k as keyof DraftErrors]]));
     });
   };
+  const belongingItems = filledBelongings(draft.personalMaterial);
+  const defaultContact = draft.unlistedHost
+    ? draft.unlistedHostName.trim()
+    : (draft.host?.name ?? "");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -467,8 +478,39 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
           <div className="grid gap-5 sm:grid-cols-2">
             <TextField label="Vehicle registration (optional)" value={draft.vehicle} autoComplete="off" size="lg" caps
                        onChange={(e) => set({ vehicle: e.target.value })} placeholder="LEA-1234" />
-            <TextField label="Belongings (optional)" value={draft.belongings} error={errors.belongings} size="lg" caps
-                       onChange={(e) => set({ belongings: e.target.value })} hint="Separate items with commas." />
+            <div>
+              <span className="mb-1.5 block text-sm font-medium text-ink">Belongings (optional)</span>
+              <button
+                type="button"
+                onClick={() => setBelongingsOpen(true)}
+                aria-haspopup="dialog"
+                aria-expanded={belongingsOpen}
+                className={`flex w-full min-h-14 items-center gap-3 rounded-xl border bg-surface px-3.5 text-left transition-colors
+                  hover:border-ink-muted/50 focus-visible:border-brand-600 focus-visible:outline-2
+                  focus-visible:outline-offset-0 focus-visible:outline-brand-600
+                  ${errors.belongings ? "border-danger" : "border-border-strong"}`}
+              >
+                <Briefcase aria-hidden="true" className="size-5 shrink-0 text-ink-muted" />
+                <span className="min-w-0 flex-1">
+                  {belongingItems.length === 0 ? (
+                    <span className="text-lg text-ink-muted/70">Add personal material…</span>
+                  ) : (
+                    <span className="caps block truncate text-lg text-ink">
+                      {belongingItems.map((b) => b.description.trim()).join(", ")}
+                    </span>
+                  )}
+                </span>
+                <span className="shrink-0 text-sm font-semibold text-brand-700">
+                  {belongingItems.length === 0 ? "Open form" : "Edit"}
+                </span>
+              </button>
+              {errors.belongings && (
+                <p className="mt-1.5 text-sm text-danger">{errors.belongings}</p>
+              )}
+              {!errors.belongings && (
+                <p className="mt-1.5 text-sm text-ink-muted">Opens the personal material returnable slip.</p>
+              )}
+            </div>
           </div>
         </FieldGroup>
         <div className="flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:justify-between">
@@ -479,6 +521,19 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
           </Button>
         </div>
       </form>
+
+      <PersonalMaterialForm
+        open={belongingsOpen}
+        value={draft.personalMaterial}
+        vehicle={draft.vehicle}
+        defaultContact={defaultContact}
+        error={errors.belongings}
+        onClose={() => setBelongingsOpen(false)}
+        onSave={({ personalMaterial, vehicle }) => {
+          set({ personalMaterial, vehicle });
+          setBelongingsOpen(false);
+        }}
+      />
     </Card>
   );
 }
@@ -529,7 +584,7 @@ function ReviewStep({ visitor, draft, photoId, onBack, onEditDetails, onDenied, 
   const departmentId = effectiveDepartmentId(draft);
   const departmentName = departments.find((d) => d.id === departmentId)?.name
     ?? (draft.host?.department_id === departmentId ? draft.host?.department_name : null) ?? "—";
-  const belongings = parseList(draft.belongings);
+  const belongings = belongingsList(draft.personalMaterial);
   const vehicle = draft.vehicle.trim().toUpperCase();
   const note = draft.reasonNote.trim();
   // Only what the check-in will actually record (the same values toCheckIn sends).
