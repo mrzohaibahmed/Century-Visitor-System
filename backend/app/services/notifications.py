@@ -1,5 +1,5 @@
 """
-Notifications (Phase 6A): "your visitor has arrived", for the visit's host and the visited department.
+Notifications (Phase 6A): arrival and overstay messages for the visit's host and department.
 
 Flow
     check-in transaction ── visit + audit + notification (all or nothing)
@@ -12,10 +12,14 @@ Flow
                             "Notification email", for listed and unlisted hosts alike; skipped when it is
                             the host's own address
 
-- The notification is written in the check-in transaction, so it exists exactly when the visit does:
-  never for a check-in that failed, never lost if the API stops right after the check-in.
-- One notification per visit and kind: event_key "HOST_VISITOR_ARRIVAL:<visit id>" (and
-  "DEPARTMENT_VISITOR_ARRIVAL:<visit id>") is unique in the database.
+    OverstayWorker (background) ── visits still CHECKED_IN after pass.expires_at
+                                   ├── HOST_VISITOR_OVERSTAY (in-app + e-mail, same as arrival)
+                                   └── DEPARTMENT_VISITOR_OVERSTAY (e-mail only)
+
+- The arrival notification is written in the check-in transaction, so it exists exactly when the visit
+  does: never for a check-in that failed, never lost if the API stops right after the check-in.
+- One notification per visit and kind: event_key "HOST_VISITOR_ARRIVAL:<visit id>" (and the department /
+  overstay variants) is unique in the database.
 - The check-in never waits for e-mail. The `notifications` collection is the e-mail queue:
   PENDING -> SENDING (claimed atomically, so several API processes never send the same e-mail)
   -> SENT, or back to PENDING for a retry (after 1, 5, 15 and 60 minutes), or FAILED after
@@ -33,6 +37,7 @@ from bson import ObjectId
 from pymongo import ReturnDocument
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.database import AsyncDatabase
+from pymongo.errors import DuplicateKeyError
 
 from app.core.config import Settings
 from app.core.errors import AppError
@@ -45,12 +50,22 @@ log = logging.getLogger(__name__)
 
 HOST_ARRIVAL = "HOST_VISITOR_ARRIVAL"
 DEPARTMENT_ARRIVAL = "DEPARTMENT_VISITOR_ARRIVAL"       # e-mail only, to the department's address
+HOST_OVERSTAY = "HOST_VISITOR_OVERSTAY"
+DEPARTMENT_OVERSTAY = "DEPARTMENT_VISITOR_OVERSTAY"     # e-mail only, to the department's address
 RETRY_DELAYS = (timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=15), timedelta(minutes=60))
 MAX_ATTEMPTS = len(RETRY_DELAYS) + 1            # 5 attempts over about 81 minutes, then FAILED
 LEASE = timedelta(minutes=2)                     # longer than one SMTP attempt can take
 POLL_SECONDS = 30
 PAGE_SIZE = 20
+OVERSTAY_BATCH = 50
 NOT_FOUND = AppError(404, "not_found", "Notification not found.")
+
+_MESSAGE_BUILDERS = {
+    HOST_ARRIVAL: email_svc.host_arrival_message,
+    DEPARTMENT_ARRIVAL: email_svc.department_arrival_message,
+    HOST_OVERSTAY: email_svc.host_overstay_message,
+    DEPARTMENT_OVERSTAY: email_svc.department_overstay_message,
+}
 
 
 def event_key(visit_id: ObjectId) -> str:
@@ -116,6 +131,91 @@ async def create_department_arrival(db: AsyncDatabase, settings: Settings, visit
     }
     doc["_id"] = (await db.notifications.insert_one(doc, session=session)).inserted_id
     return doc
+
+
+def _overstay_data(visit: dict) -> dict:
+    snap = visit.get("snapshot") or {}
+    expires = (visit.get("pass") or {}).get("expires_at")
+    return {
+        "visitor_name": snap.get("visitor_name"), "host_name": snap.get("host_name"),
+        "gate_name": snap.get("gate_name"), "department_name": snap.get("department_name"),
+        "reason_code": visit.get("reason_code"), "check_in_at": visit.get("check_in_at"),
+        "expires_at": expires,
+    }
+
+
+async def create_host_overstay(db: AsyncDatabase, settings: Settings, visit: dict,
+                               host: dict) -> dict | None:
+    """Queue an overstay notice for a registered host (in-app and/or e-mail). Idempotent via event_key."""
+    recipient = None
+    if host.get("linked_user_id"):
+        user = await db.users.find_one({"_id": host["linked_user_id"], "is_active": True}, {"_id": 1})
+        recipient = user["_id"] if user else None
+    address = host.get("email")
+    if recipient is None and not address:
+        return None
+
+    now = datetime.now(UTC)
+    if address and await email_settings.active(db, settings):
+        email = {"status": "PENDING", "to": address, "attempts": 0, "next_attempt_at": now}
+    else:
+        email = {"status": "NONE", "to": None, "attempts": 0,
+                 "reason": "email_disabled" if address else "no_address"}
+    doc = {
+        "event_key": f"{HOST_OVERSTAY}:{visit['_id']}", "type": HOST_OVERSTAY, "recipient_user_id": recipient,
+        "visit_id": visit["_id"], "visitor_id": visit["visitor_id"], "host_id": host["_id"],
+        "data": _overstay_data(visit), "created_at": now, "read_at": None, "email": email,
+    }
+    try:
+        doc["_id"] = (await db.notifications.insert_one(doc)).inserted_id
+    except DuplicateKeyError:
+        return None
+    return doc
+
+
+async def create_department_overstay(db: AsyncDatabase, settings: Settings, visit: dict,
+                                     department: dict, host: dict | None) -> dict | None:
+    """E-mail the department when a visitor is still inside after badge expiry. Idempotent via event_key."""
+    address = department.get("notification_email")
+    if not address:
+        return None
+    if host and (host.get("email") or "").strip().lower() == address.strip().lower():
+        return None
+    if not await email_settings.active(db, settings):
+        return None
+
+    now = datetime.now(UTC)
+    doc = {
+        "event_key": f"{DEPARTMENT_OVERSTAY}:{visit['_id']}", "type": DEPARTMENT_OVERSTAY,
+        "recipient_user_id": None, "visit_id": visit["_id"], "visitor_id": visit["visitor_id"],
+        "host_id": visit.get("host_id"), "data": _overstay_data(visit), "created_at": now, "read_at": None,
+        "email": {"status": "PENDING", "to": address, "attempts": 0, "next_attempt_at": now},
+    }
+    try:
+        doc["_id"] = (await db.notifications.insert_one(doc)).inserted_id
+    except DuplicateKeyError:
+        return None
+    return doc
+
+
+async def queue_overstays(db: AsyncDatabase, settings: Settings, *, limit: int = OVERSTAY_BATCH) -> int:
+    """Find visitors still inside after their badge expired and queue host + department overstay notices.
+    Returns how many notification documents were inserted (0 when nothing new)."""
+    now = datetime.now(UTC)
+    visits = await db.visits.find(
+        {"status": "CHECKED_IN", "pass.expires_at": {"$lte": now}},
+    ).limit(limit).to_list(length=limit)
+    created = 0
+    for visit in visits:
+        host = await db.hosts.find_one({"_id": visit["host_id"]}) if visit.get("host_id") else None
+        department = await db.departments.find_one({"_id": visit["department_id"]}) if visit.get("department_id") else None
+        if host is not None:
+            if await create_host_overstay(db, settings, visit, host):
+                created += 1
+        if department is not None:
+            if await create_department_overstay(db, settings, visit, department, host):
+                created += 1
+    return created
 
 
 # ------------------------------------------------------------------------------------------ in-app
@@ -201,8 +301,7 @@ async def dispatch_due(db: AsyncDatabase, settings: Settings, *, send=email_svc.
                 raise email_svc.EmailError(unusable.lower(), permanent=False, reason=unusable)
             if config is None:                        # switched off since the e-mail was queued
                 raise email_svc.EmailError("email_disabled", permanent=True, reason="EMAIL_NOT_CONFIGURED")
-            build = (email_svc.department_arrival_message if doc["type"] == DEPARTMENT_ARRIVAL
-                     else email_svc.host_arrival_message)
+            build = _MESSAGE_BUILDERS.get(doc["type"], email_svc.host_arrival_message)
             message = build(settings, config, doc["email"]["to"], doc["data"])
             await asyncio.wait_for(asyncio.to_thread(send, config, message),
                                    timeout=config.timeout_seconds + 10)
@@ -251,3 +350,26 @@ class EmailWorker:
             except TimeoutError:
                 pass
             self._wake.clear()
+
+
+class OverstayWorker:
+    """Looks for visitors still inside after badge expiry and queues overstay e-mails (host + department)."""
+
+    def __init__(self, db: AsyncDatabase, settings: Settings, *, on_queued=None):
+        self._db = db
+        self._settings = settings
+        self._on_queued = on_queued          # typically EmailWorker.wake
+
+    async def run(self) -> None:
+        log.info("Overstay checker started (every %d s)", self._settings.overstay_poll_seconds)
+        while True:
+            try:
+                created = await queue_overstays(self._db, self._settings)
+                if created and self._on_queued is not None:
+                    self._on_queued()
+            except asyncio.CancelledError:
+                raise
+            except Exception:                    # noqa: BLE001 - e.g. database briefly unreachable
+                log.exception("Overstay check failed; retrying in %d seconds",
+                              self._settings.overstay_poll_seconds)
+            await asyncio.sleep(self._settings.overstay_poll_seconds)

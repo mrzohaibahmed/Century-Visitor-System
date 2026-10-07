@@ -163,6 +163,50 @@ def department_arrival_message(settings: Settings, config: SmtpConfig, to: str, 
                             visiting=host or "your department", extra_rows=(("Host", host),))
 
 
+def _overstay_message(settings: Settings, config: SmtpConfig, to: str, data: dict, *, greeting: str,
+                      extra_rows: tuple = ()) -> EmailMessage:
+    visitor = data.get("visitor_name") or "A visitor"
+    rows = [("Visitor", visitor), *extra_rows,
+            ("Arrived", _local(data["check_in_at"], settings) if data.get("check_in_at") else None),
+            ("Badge valid until", _local(data["expires_at"], settings) if data.get("expires_at") else None),
+            ("Gate", data.get("gate_name")), ("Department", data.get("department_name")),
+            ("Reason", REASON_LABELS.get(data.get("reason_code") or "", None))]
+    rows = [(label, value) for label, value in rows if value]
+    org = settings.organization_name
+
+    text = "\n".join([
+        f"Dear {greeting},", "",
+        f"{visitor} is still on site after their badge expired (gate closing). Please arrange check-out.", "",
+        *[f"{label}: {value}" for label, value in rows], "",
+        f"{org} visitor management. This message was sent automatically; please do not reply.",
+    ])
+    e = html.escape
+    table = "".join(f'<tr><td style="padding:4px 16px 4px 0;color:#5b6573">{e(label)}</td>'
+                    f'<td style="padding:4px 0;font-weight:600;color:#111827">{e(str(value))}</td></tr>'
+                    for label, value in rows)
+    body = _template("visitor_overstay.html").substitute(
+        org_upper=e(org.upper()), org=e(org), greeting=e(greeting), visitor=e(visitor), rows=table)
+
+    message = EmailMessage()
+    message["Subject"] = f"Visitor overstay: {visitor}"
+    _headers(message, config, to)
+    message.set_content(text)
+    message.add_alternative(body, subtype="html")
+    return message
+
+
+def host_overstay_message(settings: Settings, config: SmtpConfig, to: str, data: dict) -> EmailMessage:
+    return _overstay_message(settings, config, to, data, greeting=data.get("host_name") or "colleague")
+
+
+def department_overstay_message(settings: Settings, config: SmtpConfig, to: str, data: dict) -> EmailMessage:
+    department = data.get("department_name")
+    host = data.get("host_name")
+    return _overstay_message(settings, config, to, data,
+                             greeting=f"{department} team" if department else "colleagues",
+                             extra_rows=(("Host", host),))
+
+
 def _safe_code(error: Exception) -> str:
     code = getattr(error, "smtp_code", None)
     if isinstance(error, smtplib.SMTPRecipientsRefused):

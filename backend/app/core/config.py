@@ -84,9 +84,13 @@ class Settings(BaseSettings):
     photo_max_bytes: int = Field(default=2 * 1024 * 1024, ge=10_000, le=10 * 1024 * 1024)
 
     # --- Visitor passes / badges (Phase 4) ----------------------------------------
-    # A pass (QR on the badge) stops working at check-out, when replaced, or after this long.
-    pass_valid_hours: int = Field(default=24, ge=1, le=24 * 7)
+    # The badge QR stops working at check-out, when replaced, or at this local clock time
+    # (organisation time zone): same day until closing for daytime check-ins.
+    pass_day_end_hour: int = Field(default=16, ge=0, le=23)
+    pass_day_end_minute: int = Field(default=30, ge=0, le=59)
     organization_name: str = Field(default="Century Paper & Board Mills", min_length=1, max_length=60)
+    # How often to look for visitors still inside after their badge expired (overstay e-mails).
+    overstay_poll_seconds: int = Field(default=60, ge=15, le=3600)
 
     # --- E-mail to hosts (Phase 6A) ---------------------------------------------------
     # Leave CG_SMTP_HOST empty to switch e-mail off (in-app notifications still work).

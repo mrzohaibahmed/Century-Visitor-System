@@ -19,7 +19,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.core.security import burn_verify_time
 from app.db.client import Database
-from app.services.notifications import EmailWorker
+from app.services.notifications import EmailWorker, OverstayWorker
 from app.services.photos import check_photo_dir
 
 log = logging.getLogger(__name__)
@@ -44,18 +44,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Host e-mails (Phase 6A): sent in the background, never during a request. Always running, so
         # SMTP settings saved later by an administrator work without a restart; with e-mail off it
         # finds nothing to send.
-        app.state.email_worker, sender = None, None
+        app.state.email_worker, sender, overstay = None, None, None
+        background: list[asyncio.Task] = []
         if settings.email_worker:
             app.state.email_worker = EmailWorker(app.state.database.db, settings)
             sender = asyncio.create_task(app.state.email_worker.run())
+            background.append(sender)
+            # Overstay e-mails reuse the same SMTP queue; wake the sender when new rows are queued.
+            overstay_worker = OverstayWorker(app.state.database.db, settings,
+                                             on_queued=app.state.email_worker.wake)
+            overstay = asyncio.create_task(overstay_worker.run())
+            background.append(overstay)
         try:
             yield
         finally:
             warm_up.cancel()
-            if sender is not None:
-                sender.cancel()
+            for task in background:
+                task.cancel()
+            for task in background:
                 with contextlib.suppress(asyncio.CancelledError):
-                    await sender
+                    await task
             await app.state.database.close()
             log.info("API stopped")
 

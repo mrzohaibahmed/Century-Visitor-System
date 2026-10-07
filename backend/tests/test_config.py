@@ -52,7 +52,9 @@ def test_production_requires_an_explicit_photo_folder():
 
 def test_phase_4_defaults():
     s = Settings(_env_file=None)
-    assert s.photo_max_bytes == 2 * 1024 * 1024 and s.pass_valid_hours == 24
+    assert s.photo_max_bytes == 2 * 1024 * 1024
+    assert s.pass_day_end_hour == 16 and s.pass_day_end_minute == 30
+    assert s.overstay_poll_seconds == 60
     assert s.photo_dir.name == "photos" and "web" not in s.photo_dir.parts
 
 

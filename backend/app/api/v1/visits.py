@@ -8,7 +8,9 @@ from app.core.config import Settings
 from app.core.permissions import Permission
 from app.db.client import Database
 from app.schemas.common import Page
-from app.schemas.visits import ActiveVisits, CheckInRequest, CheckOutLookup, CheckOutResult, VisitOut, VisitStatus
+from app.schemas.visits import (
+    ActiveVisits, CheckInRequest, CheckOutLookup, CheckOutResult, UpdateBelongingsRequest, VisitOut, VisitStatus,
+)
 from app.services import visits as svc
 from app.services.auth import AuthContext
 
@@ -65,6 +67,15 @@ async def check_out_by_lookup(body: CheckOutLookup, request: Request,
 async def get_visit(visit_id: str, ctx: AuthContext = Depends(require(Permission.VISIT_READ)),
                     database: Database = Depends(get_database)) -> VisitOut:
     return VisitOut.from_doc(await svc.get_visit(database.db, visit_id))
+
+
+@router.patch("/{visit_id}/belongings", response_model=VisitOut)
+async def update_belongings(visit_id: str, body: UpdateBelongingsRequest, request: Request,
+                            ctx: AuthContext = Depends(require(Permission.VISIT_CHECK_IN)),
+                            database: Database = Depends(get_database)) -> VisitOut:
+    """Update personal material on an active visit (same slip used at check-in)."""
+    visit = await svc.update_belongings(database.db, ctx, request_meta(request), visit_id, body)
+    return VisitOut.from_doc(visit)
 
 
 @router.post("/{visit_id}/check-out", response_model=CheckOutResult)

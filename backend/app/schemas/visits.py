@@ -70,6 +70,22 @@ class CheckInRequest(StrictModel):
         return self
 
 
+class UpdateBelongingsRequest(StrictModel):
+    """Update personal material recorded on an active visit (gate forgot items at check-in, or corrected them)."""
+    belongings: list[Belonging] = Field(default_factory=list, max_length=10)
+    vehicle_registration: str | None = None
+
+    @field_validator("vehicle_registration")
+    @classmethod
+    def _vehicle(cls, v):
+        if not v or not v.strip():
+            return None
+        compact = re.sub(r"\s+", "", v).upper()
+        if not re.fullmatch(r"[A-Z0-9-]{2,15}", compact):
+            raise ValueError("The vehicle registration may only contain letters, digits and hyphens (2–15).")
+        return compact
+
+
 class CheckOutLookup(StrictModel):
     """Check-out by typed / scanned value: the visit number or the visitor's ID."""
     visit_number: Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True)] | None = None

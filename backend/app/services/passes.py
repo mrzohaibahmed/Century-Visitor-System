@@ -14,7 +14,7 @@ Lifecycle (on the visit's `pass` sub-document):
     issued at check-in ── ACTIVE ──┬─ visit checked out ─> no longer valid (scan shows "already checked out")
                                    ├─ reissued (lost / damaged badge) ─> old token REPLACED
                                    ├─ revoked ─> REVOKED
-                                   └─ older than pass_valid_hours ─> EXPIRED
+                                   └─ past gate closing (pass_day_end) ─> EXPIRED
 
 A pass only ever identifies its own visit. It is used at check-out; check-in
 never accepts one, so a pass cannot be replayed to enter again. Scanning never
@@ -23,7 +23,7 @@ changes anything by itself: the guard confirms the check-out.
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.database import AsyncDatabase
@@ -31,6 +31,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.security import hash_token
+from app.core.timeutil import pass_expires_at
 from app.db.transactions import run_in_transaction
 from app.services import audit
 from app.services import visits as visits_svc
@@ -70,7 +71,8 @@ async def issue(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: R
     oid = visits_svc.object_id(visit_id)
     token = secrets.token_hex(32).upper()
     now = datetime.now(UTC)
-    expires_at = now + timedelta(hours=settings.pass_valid_hours)
+    expires_at = pass_expires_at(settings.timezone, hour=settings.pass_day_end_hour,
+                                 minute=settings.pass_day_end_minute, now=now)
     result: dict = {}
 
     async def work(s: AsyncClientSession):

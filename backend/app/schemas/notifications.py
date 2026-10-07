@@ -29,9 +29,15 @@ class NotificationOut(BaseModel):
     @classmethod
     def from_doc(cls, d: dict) -> "NotificationOut":
         data = d["data"]
+        overstay = d["type"] in ("HOST_VISITOR_OVERSTAY", "DEPARTMENT_VISITOR_OVERSTAY")
+        if overstay:
+            title, message = "Visitor overstay", (
+                f"{data['visitor_name']} is still on site after their badge expired.")
+        else:
+            title, message = "Visitor arrived", (
+                f"{data['visitor_name']} has arrived to visit {data.get('host_name') or 'you'}.")
         return cls(
-            id=str(d["_id"]), type=d["type"], title="Visitor arrived",
-            message=f"{data['visitor_name']} has arrived to visit {data.get('host_name') or 'you'}.",
+            id=str(d["_id"]), type=d["type"], title=title, message=message,
             created_at=d["created_at"], read=d.get("read_at") is not None, read_at=d.get("read_at"),
             arrival=ArrivalOut(visitor_name=data["visitor_name"], host_name=data.get("host_name"),
                                gate_name=data.get("gate_name"), department_name=data.get("department_name"),

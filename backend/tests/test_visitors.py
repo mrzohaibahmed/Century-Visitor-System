@@ -17,9 +17,9 @@ async def new_visitor(client, name="Ali Khan", number=CNIC, id_type="CNIC", phon
 
 
 async def test_create_normalises_identity_phone_and_name(guard):
-    v = await new_visitor(guard, name="  ali   KHAN ", number="3520112345671", phone="+92 300 1234567")
+    v = await new_visitor(guard, name="  ali   KHAN ", number="3520112345671", phone="0300-1234567")
     assert v["full_name"] == "ali KHAN" and v["identity"] == {"type": "CNIC", "number": CNIC}
-    assert v["phone"] == "+923001234567"
+    assert v["phone"] == "03001234567"
 
 
 async def test_same_identity_in_another_format_is_the_same_person(guard):

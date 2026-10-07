@@ -5,7 +5,10 @@ import { ApiError } from "@/lib/api/client";
 import type { Visitor, VisitorWithStatus } from "@/lib/api/visitors";
 import type { Visit } from "@/lib/api/visits";
 
-const api = { getVisitor: vi.fn(), updateVisitor: vi.fn(), visitorVisits: vi.fn() };
+const api = {
+  getVisitor: vi.fn(), updateVisitor: vi.fn(), visitorVisits: vi.fn(),
+  getVisit: vi.fn(), updateVisitBelongings: vi.fn(),
+};
 const session = { canEdit: true };
 const toastSuccess = vi.fn();
 vi.mock("@/lib/api/visitors", async (original) => ({
@@ -13,6 +16,11 @@ vi.mock("@/lib/api/visitors", async (original) => ({
   getVisitor: (...a: unknown[]) => api.getVisitor(...a),
   updateVisitor: (...a: unknown[]) => api.updateVisitor(...a),
   visitorVisits: (...a: unknown[]) => api.visitorVisits(...a),
+}));
+vi.mock("@/lib/api/visits", async (original) => ({
+  ...(await original<typeof import("@/lib/api/visits")>()),
+  getVisit: (...a: unknown[]) => api.getVisit(...a),
+  updateVisitBelongings: (...a: unknown[]) => api.updateVisitBelongings(...a),
 }));
 vi.mock("@/components/session/SessionProvider", () => ({
   useSession: () => ({ hasPermission: (p: string) => p === "visitor:edit" && session.canEdit }),
@@ -41,6 +49,7 @@ beforeEach(() => {
   session.canEdit = true;
   api.getVisitor.mockResolvedValue(CLEAR);
   api.visitorVisits.mockResolvedValue({ items: [VISIT], next_cursor: null });
+  api.getVisit.mockResolvedValue({ ...VISIT, status: "CHECKED_IN", check_out_at: null, belongings: ["Laptop"] });
 });
 afterEach(cleanup);
 
@@ -62,6 +71,17 @@ describe("VisitorDetail", () => {
     expect(await screen.findByText("Current visit")).toBeTruthy();
     expect(screen.queryByText("Phone")).toBeNull();
     expect(screen.getByText(/Inside since .* \(V-2026-000050\)/)).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Belongings" })).toBeTruthy();
+    expect(await screen.findByText("Laptop")).toBeTruthy();
+  });
+
+  it("opens the personal material form from belongings while the visitor is inside", async () => {
+    api.getVisitor.mockResolvedValue({ ...CLEAR, visitor: { ...VISITOR,
+      active_visit: { id: "a1", visit_number: "V-2026-000050", check_in_at: "2026-09-27T10:00:00Z", gate_name: "Main Gate" } } });
+    api.getVisit.mockResolvedValue({ ...VISIT, id: "a1", status: "CHECKED_IN", check_out_at: null, belongings: [] });
+    render(<VisitorDetail id="v1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Add personal material/i }));
+    expect(await screen.findByRole("heading", { name: "Personal Material Returnable", hidden: true })).toBeTruthy();
   });
 
   it("warns when the visitor is on the watchlist", async () => {

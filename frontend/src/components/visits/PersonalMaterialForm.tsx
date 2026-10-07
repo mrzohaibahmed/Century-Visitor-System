@@ -14,7 +14,7 @@ import {
   filledBelongings,
   MAX_BELONGINGS,
   type PersonalMaterial,
-} from "./draft";
+} from "@/lib/belongings";
 
 /** Compact cell input for the items table (no outer label; header supplies the name). */
 function CellInput({ label, value, onChange, caps = false, className = "", ...props }: {

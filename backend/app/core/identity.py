@@ -71,8 +71,8 @@ def normalize_phone(raw: str | None) -> str | None:
     value = raw.strip()
     plus = value.startswith("+")
     digits = re.sub(r"\D", "", value)
-    if not 7 <= len(digits) <= 15 or re.search(r"[^\d\s\-+()]", value):
-        raise ValueError("The phone number must have 7–15 digits.")
+    if len(digits) != 11 or re.search(r"[^\d\s\-+()]", value):
+        raise ValueError("The phone number must have 11 digits.")
     return ("+" if plus else "") + digits
 
 

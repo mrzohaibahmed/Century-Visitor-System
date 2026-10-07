@@ -38,13 +38,14 @@ import {
 } from "@/lib/api/visitors";
 import { checkIn, checkOut, reasonLabel, type Visit, VISIT_REASONS, type VisitReason } from "@/lib/api/visits";
 import { formatDateTime } from "@/lib/format";
+import { normalizePhone, phoneError } from "@/lib/phone";
 
 import {
   belongingsList, type DraftErrors, EMPTY_DRAFT, effectiveDepartmentId, emptyPersonalMaterial, filledBelongings,
   toCheckIn, validateDraft, type VisitDraft,
 } from "./draft";
 import { HostPicker } from "./HostPicker";
-import { PersonalMaterialForm } from "./PersonalMaterialForm";
+import { PersonalMaterialForm } from "@/components/visits/PersonalMaterialForm";
 
 type Step =
   | { kind: "identify" }
@@ -221,14 +222,19 @@ function RegisterStep({ idType, idNumber, onBack, onRegistered }: {
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
-    setErrors({});
-    if (!name.trim()) return setErrors({ full_name: "Enter the visitor's full name." });
+    const next: Record<string, string> = {};
+    if (!name.trim()) next.full_name = "Enter the visitor's full name.";
+    const badPhone = phoneError(phone);
+    if (badPhone) next.phone = badPhone;
+    setErrors(next);
+    if (Object.keys(next).length) return;
+
     setSaving(true);
     try {
       const identity = { type: idType, number: idNumber };
       let visitorId: string;
       try {
-        visitorId = (await createVisitor({ full_name: name, identity, phone: phone.trim() || null })).id;
+        visitorId = (await createVisitor({ full_name: name, identity, phone: normalizePhone(phone) })).id;
       } catch (e) {
         // Registered at another gate a moment ago: continue with that record.
         if (!(e instanceof ApiError && e.code === "visitor_exists")) throw e;
@@ -262,8 +268,16 @@ function RegisterStep({ idType, idNumber, onBack, onRegistered }: {
         {(errors.identity || errors._form) && <Alert tone="danger">{errors.identity || errors._form}</Alert>}
         <TextField label="Full name" value={name} onChange={(e) => setName(e.target.value)} error={errors.full_name}
                    size="lg" autoComplete="off" autoFocus caps />
-        <TextField label="Phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} error={errors.phone}
-                   size="lg" inputMode="tel" autoComplete="off" />
+        <TextField label="Phone (optional)" value={phone}
+                   onChange={(e) => {
+                     setPhone(e.target.value);
+                     if (errors.phone) setErrors((prev) => {
+                       const { phone: _drop, ...rest } = prev;
+                       return rest;
+                     });
+                   }}
+                   error={errors.phone} size="lg" inputMode="tel" autoComplete="off"
+                   hint="11 digits. Spaces and dashes are fine." />
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
           {/* Not while registering: the result would move the wizard on from wherever Back led. */}
           <Button type="button" variant="secondary" size="lg" onClick={onBack} disabled={saving}>

@@ -30,6 +30,8 @@ import {
 } from "@/lib/api/visitors";
 import { formatDateTime, formatTime } from "@/lib/format";
 
+import { VisitorBelongings } from "./VisitorBelongings";
+
 function BackToVisitors() {
   return (
     <ButtonLink href="/visitors" variant="ghost" className="-ml-3">
@@ -156,6 +158,8 @@ export function VisitorDetail({ id }: { id: string }) {
       <Card title="Details" divided={false}>
         <DescriptionList items={details} />
       </Card>
+
+      {active && <VisitorBelongings visitId={active.id} />}
 
       <section aria-labelledby="visits-heading" className="space-y-3">
         <h2 id="visits-heading" className="text-heading text-ink">Visits</h2>

@@ -171,6 +171,24 @@ describe("CheckInWizard", () => {
     expect((screen.getByRole("button", { name: "Back" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("rejects an invalid phone on the new-visitor form before calling the API", async () => {
+    api.lookupVisitor.mockRejectedValue(new ApiError(404, "not_found", "No visitor is registered with this ID number."));
+    findVisitor();
+    fireEvent.change(await screen.findByLabelText("Full name"), { target: { value: "Ali Khan" } });
+    fireEvent.change(screen.getByLabelText("Phone (optional)"), { target: { value: "123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Register and continue" }));
+    expect(await screen.findByText("Enter a valid phone number (11 digits).")).toBeTruthy();
+    expect(api.createVisitor).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Phone (optional)"), { target: { value: "0300-1234567" } });
+    expect(screen.queryByText("Enter a valid phone number (11 digits).")).toBeNull();
+    api.createVisitor.mockResolvedValue({ id: "v1" });
+    api.getVisitor.mockResolvedValue(CLEAR);
+    fireEvent.click(screen.getByRole("button", { name: "Register and continue" }));
+    await waitFor(() => expect(api.createVisitor).toHaveBeenCalledWith(expect.objectContaining({
+      phone: "03001234567",
+    })));
+  });
+
   it("titles a lookup failure and keeps the ID number for another try", async () => {
     api.lookupVisitor.mockRejectedValueOnce(new ApiError(0, "network_error", "Cannot reach the server.")).mockResolvedValue(CLEAR);
     findVisitor();

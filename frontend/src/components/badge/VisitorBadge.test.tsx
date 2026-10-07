@@ -29,7 +29,8 @@ describe("BadgePreview", () => {
   it("shows the gate information and a QR code, never an ID number", async () => {
     render(<BadgePreview issued={ISSUED} visitId="visit1" photoId={null} />);
     const card = screen.getByTestId("badge-card");
-    expect(card.textContent).toMatch(/Century Gate.*VISITOR.*Ali Khan.*V-2026-000042.*Main Gate.*Sara Ahmed.*HR/);
+    // Gate sits under the name; visit number is on its own full-width line below the photo row.
+    expect(card.textContent).toMatch(/Century Gate.*VISITOR.*Ali Khan.*Main Gate.*V-2026-000042.*Sara Ahmed.*HR/);
     expect(card.textContent).not.toMatch(/35201|CNIC|CGP1/);
     const qr = await screen.findByTestId("badge-qr");
     expect(qr.getAttribute("src")).toMatch(/^data:image\/png;base64,/);

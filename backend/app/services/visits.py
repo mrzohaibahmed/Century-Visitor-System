@@ -24,7 +24,7 @@ from app.core.identity import identifier, mask_identity
 from app.core.pagination import decode_cursor, encode_cursor
 from app.core.timeutil import day_bounds_utc, local_today
 from app.db.transactions import run_in_transaction
-from app.schemas.visits import VISIT_NUMBER, CheckInRequest
+from app.schemas.visits import VISIT_NUMBER, CheckInRequest, UpdateBelongingsRequest
 from app.services import audit
 from app.services import directory as directory_svc
 from app.services import entry_denials as entry_denials_svc
@@ -204,6 +204,37 @@ async def get_visit(db: AsyncDatabase, visit_id: str) -> dict:
     if doc is None:
         raise NOT_FOUND
     return doc
+
+
+async def update_belongings(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta,
+                            visit_id: str, body: UpdateBelongingsRequest) -> dict:
+    """Replace belongings (and optional vehicle) on a visit that is still checked in."""
+    oid = _oid(visit_id)
+    now = datetime.now(UTC)
+    fields = {"belongings": list(body.belongings), "vehicle_registration": body.vehicle_registration,
+              "updated_at": now}
+
+    async def work(s: AsyncClientSession):
+        doc = await db.visits.find_one_and_update(
+            {"_id": oid, "status": "CHECKED_IN"}, {"$set": fields},
+            return_document=ReturnDocument.AFTER, projection=LIST_PROJECTION, session=s)
+        if doc is None:
+            return
+        await audit.record(db, AuditAction.VISIT_BELONGINGS_UPDATED, actor=actor_from_user(ctx.user),
+                           ip=meta.ip, resource_type="visit", resource_id=oid,
+                           metadata={"visit_number": doc["visit_number"],
+                                     "belongings_count": len(body.belongings),
+                                     "has_vehicle": body.vehicle_registration is not None}, session=s)
+        return doc
+
+    updated = await run_in_transaction(db, work)
+    if updated is not None:
+        return updated
+    existing = await db.visits.find_one({"_id": oid}, LIST_PROJECTION)
+    if existing is None:
+        raise NOT_FOUND
+    raise AppError(409, "not_checked_in",
+                   "Belongings can only be updated while the visitor is still inside.")
 
 
 async def list_active(db: AsyncDatabase) -> tuple[list[dict], int]:

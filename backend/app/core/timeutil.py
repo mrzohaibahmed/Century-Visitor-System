@@ -23,6 +23,21 @@ def local_today(tz_name: str, now: datetime | None = None) -> date:
     return (now or datetime.now(UTC)).astimezone(ZoneInfo(tz_name)).date()
 
 
+def pass_expires_at(tz_name: str, *, hour: int = 16, minute: int = 30,
+                    now: datetime | None = None) -> datetime:
+    """When a visitor badge stops working: the next gate closing time in the organisation's zone.
+
+    Before closing (default 16:30): expires at today's closing. At or after closing: the next day's
+    closing, so a late check-in still gets a usable pass until the following afternoon.
+    Returned as UTC (everything is stored in UTC).
+    """
+    local = (now or datetime.now(UTC)).astimezone(ZoneInfo(tz_name))
+    closing = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if local >= closing:
+        closing = closing + timedelta(days=1)
+    return closing.astimezone(UTC)
+
+
 # ------------------------------------------------------------------------------------------ report ranges
 class RangePreset(StrEnum):
     TODAY = "today"

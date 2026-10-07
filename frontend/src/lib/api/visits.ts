@@ -72,6 +72,14 @@ export function getVisit(id: string, signal?: AbortSignal): Promise<Visit> {
   return apiRequest<Visit>(`/visits/${encodeURIComponent(id)}`, { signal });
 }
 
+/** Update personal material on a visit that is still checked in. */
+export function updateVisitBelongings(id: string, body: {
+  belongings: string[];
+  vehicle_registration?: string | null;
+}): Promise<Visit> {
+  return apiRequest<Visit>(`/visits/${encodeURIComponent(id)}/belongings`, { method: "PATCH", body });
+}
+
 /** Idempotent: checking out a visit that is already out returns it with already_checked_out = true. */
 export function checkOut(id: string): Promise<CheckOutResult> {
   return apiRequest<CheckOutResult>(`/visits/${encodeURIComponent(id)}/check-out`, { method: "POST" });

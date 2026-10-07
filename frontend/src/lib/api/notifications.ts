@@ -3,9 +3,15 @@ import { apiRequest } from "./client";
 /** Mirrors app/schemas/notifications.py. The server only ever returns the signed-in user's own. */
 export type EmailStatus = "NONE" | "PENDING" | "SENDING" | "SENT" | "FAILED";
 
+export type NotificationType =
+  | "HOST_VISITOR_ARRIVAL"
+  | "DEPARTMENT_VISITOR_ARRIVAL"
+  | "HOST_VISITOR_OVERSTAY"
+  | "DEPARTMENT_VISITOR_OVERSTAY";
+
 export type AppNotification = {
   id: string;
-  type: "HOST_VISITOR_ARRIVAL";
+  type: NotificationType;
   title: string;
   message: string;
   created_at: string;

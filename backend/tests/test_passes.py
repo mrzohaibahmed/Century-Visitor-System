@@ -172,10 +172,13 @@ async def test_an_expired_pass_is_refused(harness, guard, inside):
     assert (await harness.db.audit_logs.find_one({"action": "PASS_REJECTED"}))["metadata"]["reason"] == "expired"
 
 
-async def test_pass_validity_follows_the_setting(settings, guard, inside):
+async def test_pass_validity_is_gate_closing_today(settings, guard, inside):
+    from app.core.timeutil import pass_expires_at
+
     issued = await issue(guard, inside)
     expires = datetime.fromisoformat(issued["expires_at"])
-    expected = datetime.now(UTC) + timedelta(hours=settings.pass_valid_hours)
+    expected = pass_expires_at(settings.timezone, hour=settings.pass_day_end_hour,
+                               minute=settings.pass_day_end_minute)
     assert abs((expires - expected).total_seconds()) < 60
 
 

@@ -444,3 +444,47 @@ def test_smtp_settings_are_checked(overrides, message):
 
 def test_email_is_off_unless_a_server_is_configured():
     assert Settings(_env_file=None).email_enabled is False
+
+
+# ---------------------------------------------------------------------------------------------- overstay
+async def test_overstay_emails_host_and_department_once(harness, settings, admin, guard, directory):
+    await _department_email(admin, directory)
+    visit = await check_in(guard, directory)
+    await guard.post(f"/api/v1/visits/{visit['id']}/pass")
+    # Still inside, badge already past gate closing → overstay notices.
+    await harness.db.visits.update_one(
+        {"_id": ObjectId(visit["id"])},
+        {"$set": {"pass.expires_at": datetime.now(UTC) - timedelta(minutes=1)}})
+
+    assert await svc.queue_overstays(harness.db, settings) == 2
+    assert await svc.queue_overstays(harness.db, settings) == 0          # idempotent
+
+    host_n = await harness.db.notifications.find_one({"type": "HOST_VISITOR_OVERSTAY"})
+    dept_n = await harness.db.notifications.find_one({"type": "DEPARTMENT_VISITOR_OVERSTAY"})
+    assert host_n["event_key"] == f"HOST_VISITOR_OVERSTAY:{visit['id']}"
+    assert host_n["email"]["status"] == "PENDING" and host_n["email"]["to"] == HOST_EMAIL
+    assert dept_n["email"]["to"] == DEPT_EMAIL and dept_n["recipient_user_id"] is None
+
+    with FakeSMTP(port=SMTP_PORT) as smtp:
+        # Arrival (host + dept) may still be PENDING too; dispatch everything due.
+        await svc.dispatch_due(harness.db, settings, limit=10)
+    subjects = {m["Subject"] for m in smtp.messages}
+    assert "Visitor overstay: Ali Khan" in subjects
+    overstay = next(m for m in smtp.messages if m["Subject"].startswith("Visitor overstay"))
+    text = overstay.get_payload(0).get_payload(decode=True).decode()
+    assert "still on site after their badge expired" in text
+    assert CNIC not in overstay.as_string()
+
+    # Host overstay appears in the linked account's bell.
+    r = await admin.get(LIST)
+    types = [n["type"] for n in r.json()["items"]]
+    assert "HOST_VISITOR_OVERSTAY" in types
+    item = next(n for n in r.json()["items"] if n["type"] == "HOST_VISITOR_OVERSTAY")
+    assert item["title"] == "Visitor overstay" and "badge expired" in item["message"]
+
+
+async def test_no_overstay_while_the_badge_is_still_valid(harness, settings, guard, directory):
+    visit = await check_in(guard, directory)
+    await guard.post(f"/api/v1/visits/{visit['id']}/pass")
+    assert await svc.queue_overstays(harness.db, settings) == 0
+    assert await harness.db.notifications.count_documents({"type": {"$regex": "OVERSTAY"}}) == 0

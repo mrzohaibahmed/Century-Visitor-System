@@ -160,7 +160,7 @@ database stores only the SHA-256 of the token, so a copy of the database cannot 
 looks the token up on every scan; nothing in it can be edited to point at another visit, and no signature is
 needed because the QR carries no claims. A pass stops working when the visitor is checked out (a replayed scan
 only shows "already checked out"), when a badge is reprinted (`pass_replaced`), when revoked (`pass_revoked`)
-or after `CG_PASS_VALID_HOURS` (default 24, `pass_expired`). Check-in never accepts a pass. Rejected scans are
+or after gate closing (`CG_PASS_DAY_END_HOUR`/`MINUTE`, default 16:30 local, `pass_expired`). Check-in never accepts a pass. Rejected scans are
 audited (`PASS_REJECTED`). Scans are sent in the request body, never in a URL (proxy logs).
 
 ### Badge printing
@@ -341,7 +341,7 @@ with the other secrets.
   both cookies lose only `Secure` (HttpOnly, SameSite=Strict, CSRF and sessions are unchanged). HTTP gives no
   transport confidentiality. Development and test refuse `http-lan`. `production.ps1` sets it for the API.
 It prints only the reason, never the value. E-mail to hosts: see *Host arrival notifications*. Other settings: `CG_ORGANIZATION_NAME` (badges), `CG_SESSION_IDLE_MINUTES`
-(15), `CG_SESSION_MAX_HOURS` (12), `CG_PASS_VALID_HOURS` (24), `CG_LOG_LEVEL` (INFO), `CG_TIMEZONE`
+(15), `CG_SESSION_MAX_HOURS` (12), `CG_PASS_DAY_END_HOUR`/`MINUTE` (16:30), `CG_LOG_LEVEL` (INFO), `CG_TIMEZONE`
 (Asia/Karachi), `CG_TRUSTED_PROXIES` (the local web server). There is no separate "public origin" or CSRF
 setting: session cookies are host-only and SameSite=Strict, and every change needs the CSRF token.
 
@@ -425,7 +425,8 @@ webcam fallback and webcam QR scanning are not available; the gate cameras work)
 - printed, laminated, and worn/creased badges;
 - scan the same badge after check-out: "already checked out", nothing changes;
 - *Badge* (reprint) on a visitor inside, then scan the OLD badge: "replaced"; the new badge works;
-- a badge older than `CG_PASS_VALID_HOURS`: "expired", check-out by visit number still works.
+- a badge past gate closing (`CG_PASS_DAY_END_HOUR`/`MINUTE`, default 16:30): "expired", check-out by visit number still works;
+  the host and department are e-mailed about the overstay.
 
 A failing hardware test is a reason to adjust the device or its settings (print dialog, focus, lighting), not
 the pass security.
