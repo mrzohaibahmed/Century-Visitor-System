@@ -55,6 +55,17 @@ def test_the_local_production_start_fails_when_final_health_check_fails():
     assert failure in script
 
 
+def test_local_operational_data_uses_one_cgvms_folder():
+    common = (DEPLOY / "windows" / "cgvms-common.ps1").read_text(encoding="utf-8")
+    mongo = (REPO / "scripts" / "dev_mongo.py").read_text(encoding="utf-8")
+    config = (REPO / "backend" / "app" / "core" / "config.py").read_text(encoding="utf-8")
+    assert "Join-Path $app '.cgvms'" in common
+    assert 'ROOT / ".cgvms" / "data" / "mongo"' in mongo
+    assert 'API_DIR.parent / ".cgvms" / "data" / "photos"' in config
+    assert ".dev\\mongo" not in common + _production_script()
+    assert ".prod" not in common + _production_script()
+
+
 def test_the_local_production_start_needs_no_caddy_certificate_or_firewall_change():
     script = _production_script()
     for gone in ("Find-Caddy", "caddy.exe", "Caddyfile", "Start-Process -FilePath $caddy", "Import-Certificate",

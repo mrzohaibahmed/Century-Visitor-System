@@ -178,7 +178,7 @@ century-gate-vms/
 
 ### Step 1: Start Isolated Development Database
 
-The development stack requires a local MongoDB replica set running on port `27018` with data stored in `.dev/mongo/` (isolated from any legacy database on port 27017).
+The development stack requires a local MongoDB replica set running on port `27018` with data stored in `.cgvms/data/mongo/` (isolated from any legacy database on port 27017). All machine-local operational data lives under `.cgvms/`.
 
 ```powershell
 # Start local development MongoDB replica set on 127.0.0.1:27018
@@ -250,7 +250,7 @@ All backend API settings are managed via environment variables prefixed with `CG
 | `CG_MONGO_URI` | `mongodb://127.0.0.1:27018/?replicaSet=cgvms-dev` | MongoDB connection URI string |
 | `CG_MONGO_DB` | `century_gate_vms` | Database name (refuses legacy `century_gate_system`) |
 | `CG_MONGO_LOCALHOST_WITHOUT_LOGIN` | `false` | Set to `true` by deployment scripts for 127.0.0.1 DBs without auth |
-| `CG_PHOTO_DIR` | `.dev/photos` | Private filesystem directory for visitor photos |
+| `CG_PHOTO_DIR` | `.cgvms/data/photos` | Private filesystem directory for visitor photos |
 | `CG_PHOTO_MAX_BYTES` | `2097152` (2 MB) | Maximum permitted photo file upload size |
 | `CG_COOKIE_SECURE` | `true` | Requires HTTPS secure cookies (`false` automatically in `http-lan`) |
 | `CG_SECRETS_KEY` | *(Secret)* | AES-256-GCM 32-byte key for hardware credential encryption |
@@ -344,7 +344,7 @@ Run `deploy\windows\check-health.ps1` to inspect system integrity. It evaluates:
 | **Gate PCs cannot reach server** | Network issue or Web service offline | Run `check-health.ps1`. If services are down, execute `stop-production.bat` then `start-production.bat`. Verify gate PCs use `http://<SERVER_IP>:6543`. |
 | **API fails to start** | Environment variable configuration invalid | Inspect **CGVMS API** terminal window for exact validation error. Update `backend\.env` and run `start-production.bat`. |
 | **Photo upload failure** | `CG_PHOTO_DIR` folder unavailable or disk full | Verify path in `CG_PHOTO_DIR`. Check disk space on server. Restart services once path is mounted. |
-| **MongoDB process stopped** | Disk space exhausted or lock conflict | Inspect `.dev\mongo\mongod.log` for severe errors (`"s":"F"`). Free disk space and execute `start-production.bat`. |
+| **MongoDB process stopped** | Disk space exhausted or lock conflict | Inspect `.cgvms\data\mongo\mongod.log` for severe errors (`"s":"F"`). Free disk space and execute `start-production.bat`. |
 
 ---
 
@@ -382,4 +382,3 @@ npm run build
 # Run Playwright End-to-End browser tests (in Microsoft Edge)
 npm run test:e2e
 ```
-

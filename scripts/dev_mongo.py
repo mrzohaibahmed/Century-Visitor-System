@@ -2,7 +2,7 @@
 Local development MongoDB for the Century Gate VMS web application.
 
 Starts a SEPARATE mongod process on 127.0.0.1:27018 as a single-node replica
-set (transactions need a replica set), with its data in .dev/mongo/ inside this
+set (transactions need a replica set), with its data in .cgvms/data/mongo/ inside this
 repository. It never connects to, reconfigures or restarts the MongoDB Windows
 service on port 27017, which holds the legacy desktop database.
 
@@ -27,7 +27,7 @@ from pymongo import MongoClient
 from pymongo.errors import AutoReconnect, ConnectionFailure, OperationFailure
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE_DIR = ROOT / ".dev" / "mongo"
+BASE_DIR = ROOT / ".cgvms" / "data" / "mongo"
 DATA_DIR = BASE_DIR / "data"
 LOG_FILE = BASE_DIR / "mongod.log"
 HOST = "127.0.0.1"

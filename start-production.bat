@@ -2,7 +2,7 @@
 rem ============================================================================
 rem  Century Gate VMS - start the application in PRODUCTION mode on this PC:
 rem
-rem    1. MongoDB   127.0.0.1:27018   the project's database (.dev\mongo)
+rem    1. MongoDB   127.0.0.1:27018   the project's database (.cgvms\data\mongo)
 rem    2. build     npm run build     only when there is no build yet
 rem    3. API       127.0.0.1:8000    python -m app.serve (no reload)
 rem    4. Web       0.0.0.0:6543      node server.mjs (Next.js production server)

@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     # Private folder on the API server; never served directly, never inside frontend/.
     # Files have random names; the database holds only that name. Back this folder up
     # together with the database. Production must set it explicitly.
-    photo_dir: Path = API_DIR.parent / ".dev" / "photos"
+    photo_dir: Path = API_DIR.parent / ".cgvms" / "data" / "photos"
     photo_max_bytes: int = Field(default=2 * 1024 * 1024, ge=10_000, le=10 * 1024 * 1024)
 
     # --- Visitor passes / badges (Phase 4) ----------------------------------------

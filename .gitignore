@@ -11,9 +11,10 @@ secrets/
 *.pfx
 *.uri.txt
 
-# Local development database, logs, scratch
+# Local database, photos, logs and operational runtime state
+.cgvms/
+# Ignore obsolete layouts too, so an old script cannot accidentally add generated data.
 .dev/
-# start-production.bat runtime files: logs, status (and leftovers of the former Caddy setup)
 .prod/
 *.log
 

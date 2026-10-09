@@ -87,7 +87,7 @@ if (-not $viaWeb) {
 Part 'Web to API (HTTP)' (-not $p) $(if ($p) { $p } else { "$($cfg.HealthUrl) ready" })
 
 # Disk space on every drive that holds application data.
-$paths = @($cfg.Root, $cfg.PhotoDir, (Join-Path $cfg.AppDir '.dev\mongo'))
+$paths = @($cfg.Root, $cfg.PhotoDir, $cfg.MongoDir)
 $drives = $paths | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Get-Item -LiteralPath $_).PSDrive.Name } | Sort-Object -Unique
 foreach ($d in $drives) {
     $info = Get-PSDrive -Name $d

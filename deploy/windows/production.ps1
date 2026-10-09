@@ -9,7 +9,7 @@
 
   Runs the EXISTING project from this folder as normal processes (no Windows services, no copy), the API
   and the web server each in its own console window ("CGVMS API", "CGVMS Web") as start-dev.bat does:
-    MongoDB   scripts\dev_mongo.py start       the project's own instance, 127.0.0.1:27018, data in .dev\mongo
+    MongoDB   scripts\dev_mongo.py start       the project's own instance, 127.0.0.1:27018, data in .cgvms\data\mongo
     Schema    python -m app.cli migrate         idempotent database validators and indexes
     API       python -m app.serve               production server (no reload, no API docs), 127.0.0.1:8000
     Web       node server.mjs                   production build (npm run build), 0.0.0.0:6543 (plain HTTP);
@@ -26,11 +26,11 @@
     CG_ENVIRONMENT=production
     CG_DEPLOYMENT_MODE=http-lan             plain HTTP on the LAN: cookies without Secure (README)
     CG_MONGO_LOCALHOST_WITHOUT_LOGIN=true   the project's database has no login (allowed on 127.0.0.1 only)
-    CG_PHOTO_DIR=<project>\.dev\photos      the existing photos (unless backend\.env sets CG_PHOTO_DIR)
+    CG_PHOTO_DIR=<project>\.cgvms\data\photos  the existing photos (unless backend\.env sets CG_PHOTO_DIR)
   Optional: CGVMS_SITE (the name gate PCs use in messages; default: this PC's computer name).
 
   Output: live in the "CGVMS API" and "CGVMS Web" windows (closing one stops that server).
-  Runtime files in .prod\: processes.json. MongoDB log: .dev\mongo\mongod.log.
+  All local operational data is in .cgvms\: database, photos, process state, logs and health status.
 #>
 param(
     [Parameter(Mandatory = $true)][ValidateSet('start', 'stop', 'status')][string]$Action,
@@ -41,7 +41,7 @@ param(
 
 $cfg = Get-CgvmsLocalConfig
 $app = $cfg.AppDir
-$run = $cfg.Root                                            # .prod
+$run = $cfg.RunDir
 $pidFile = Join-Path $run 'processes.json'
 $python = Join-Path $app 'backend\.venv\Scripts\python.exe'
 $site = $cfg.SiteName
@@ -158,12 +158,12 @@ foreach ($item in @(@('API', 'python', 8000), @('Web', 'node', 6543))) {
 }
 
 Say ''
-Say '[1/5] MongoDB (127.0.0.1:27018, data in .dev\mongo) ...'
+Say '[1/5] MongoDB (127.0.0.1:27018, data in .cgvms\data\mongo) ...'
 $ErrorActionPreference = 'Continue'
 & $python (Join-Path $app 'scripts\dev_mongo.py') start
 $mongoExit = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
-if ($mongoExit -ne 0) { Fail "MongoDB did not start; see $app\.dev\mongo\mongod.log" }
+if ($mongoExit -ne 0) { Fail "MongoDB did not start; see $($cfg.MongoDir)\mongod.log" }
 
 $envText = Get-Content -LiteralPath (Join-Path $app 'backend\.env') -Raw
 $env:CG_ENVIRONMENT = 'production'
@@ -244,7 +244,7 @@ Say 'Century Gate VMS is running in production mode.'
 foreach ($ip in $lanIps) { Say "  Gate PCs:   http://${ip}:6543   (plain HTTP on the trusted LAN)" }
 Say "             http://${site}:6543   (this PC's name, if the gate PCs can resolve it)"
 Say '  This PC:    http://localhost:6543'
-Say "  Output:     the `"CGVMS API`" and `"CGVMS Web`" windows; MongoDB log: $app\.dev\mongo\mongod.log"
+Say "  Output:     the `"CGVMS API`" and `"CGVMS Web`" windows; MongoDB log: $($cfg.MongoDir)\mongod.log"
 Say 'Closing the "CGVMS API" or "CGVMS Web" window stops that server; closing this window does not.'
 Say 'They also stop at sign-out or shutdown (stop-production.bat stops everything).'
 exit 0

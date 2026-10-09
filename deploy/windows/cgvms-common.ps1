@@ -7,21 +7,23 @@ Set-StrictMode -Version 3
 $script:EventSource = 'CenturyGateVMS'
 
 # The application runs from this repository as normal processes (start-production.bat).
-# Everything comes from the project itself: backend\.env, the development MongoDB instance on 127.0.0.1:27018
-# (scripts\dev_mongo.py, data in .dev\mongo), runtime files (logs, status) in .prod\. Gate PCs use plain
+# Everything comes from the project itself: backend\.env and all local operational data under .cgvms\.
+# MongoDB remains isolated on 127.0.0.1:27018. Gate PCs use plain
 # HTTP on port 6543 (no Caddy, no certificate): the health check reads readiness through the web server.
 function Get-CgvmsLocalConfig {
     $app = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path.TrimEnd('\')
-    $photoDir = Join-Path $app '.dev\photos'                    # the API's own default (core/config.py)
+    $root = Join-Path $app '.cgvms'
+    $dataDir = Join-Path $root 'data'
+    $photoDir = Join-Path $dataDir 'photos'                    # the API's own default (core/config.py)
     $envFile = Join-Path $app 'backend\.env'
     if (Test-Path -LiteralPath $envFile) {
         $line = Get-Content -LiteralPath $envFile | Where-Object { $_ -match '^\s*CG_PHOTO_DIR\s*=' } | Select-Object -Last 1
         if ($line) { $photoDir = ($line -replace '^\s*CG_PHOTO_DIR\s*=\s*', '').Trim().Trim('"') }
     }
     $site = if ($env:CGVMS_SITE) { $env:CGVMS_SITE } else { $env:COMPUTERNAME.ToLowerInvariant() }
-    $root = Join-Path $app '.prod'
     return @{
-        AppDir = $app; Root = $root; PhotoDir = $photoDir; MongoPort = 27018
+        AppDir = $app; Root = $root; DataDir = $dataDir; RunDir = (Join-Path $root 'run')
+        PhotoDir = $photoDir; MongoDir = (Join-Path $dataDir 'mongo'); MongoPort = 27018
         SiteName = $site; HealthUrl = 'http://127.0.0.1:6543/api/v1/health/ready'
         DiskMinFreePercent = 15; DiskMinFreeGB = 10
     }

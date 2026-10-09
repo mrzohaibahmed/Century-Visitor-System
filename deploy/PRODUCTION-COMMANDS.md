@@ -9,7 +9,7 @@ of it (no script changes it). Backup and restore are not part of this VMS.
 
 | Part | Production command (started by `production.ps1`) | Listens on | Log |
 | --- | --- | --- | --- |
-| MongoDB | `scripts\dev_mongo.py start` (the project's own database, data in `.dev\mongo`) | 127.0.0.1:27018 | `.dev\mongo\mongod.log` |
+| MongoDB | `scripts\dev_mongo.py start` (the project's own database, data in `.cgvms\data\mongo`) | 127.0.0.1:27018 | `.cgvms\data\mongo\mongod.log` |
 | API | `backend\.venv\Scripts\python -m app.serve --host 127.0.0.1 --port 8000` (no reload, no API docs) | 127.0.0.1:8000 | the **CGVMS API** window (JSON lines) |
 | Web | `npm run build`, then `node server.mjs --hostname 0.0.0.0 --port 6543` (Next.js production server; sets the client address the API sees) | 0.0.0.0:6543 (plain HTTP) | the **CGVMS Web** window |
 
@@ -27,7 +27,7 @@ need HTTPS and so only work on this PC itself (`http://localhost:6543`). README,
 **Settings:** `backend\.env` as it is. For the API process only, `production.ps1` sets
 `CG_ENVIRONMENT=production`, `CG_DEPLOYMENT_MODE=http-lan` (cookies without `Secure`, for plain HTTP),
 `CG_MONGO_LOCALHOST_WITHOUT_LOGIN=true` (the project's database has no login; this is only accepted for a
-database on 127.0.0.1) and `CG_PHOTO_DIR=<project>\.dev\photos` (the existing photos; a `CG_PHOTO_DIR` in
+database on 127.0.0.1) and `CG_PHOTO_DIR=<project>\.cgvms\data\photos` (the existing photos; a `CG_PHOTO_DIR` in
 `backend\.env` wins). `start-dev.bat` keeps working unchanged. Optional: `CGVMS_SITE` = the name gate PCs use in
 messages (default: this PC's computer name).
 
