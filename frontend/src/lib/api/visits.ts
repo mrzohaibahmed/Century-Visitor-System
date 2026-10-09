@@ -1,5 +1,6 @@
 import { apiRequest } from "./client";
 import type { Identity } from "./visitors";
+import type { StoredPersonalMaterial } from "../belongings";
 
 /** Mirrors app/schemas/visits.py. */
 export type Page<T> = { items: T[]; next_cursor: string | null };
@@ -38,6 +39,7 @@ export type Visit = {
   reason_note: string | null;
   vehicle_registration: string | null;
   belongings: string[];
+  personal_material?: StoredPersonalMaterial | null;
   check_in_at: string;
   check_out_at: string | null;
   checked_in_by: Ref;
@@ -55,6 +57,7 @@ export type CheckIn = {
   reason_note?: string | null;
   vehicle_registration?: string | null;
   belongings?: string[];
+  personal_material?: StoredPersonalMaterial | null;
   photo_id?: string | null;
 };
 
@@ -75,6 +78,7 @@ export function getVisit(id: string, signal?: AbortSignal): Promise<Visit> {
 /** Update personal material on a visit that is still checked in. */
 export function updateVisitBelongings(id: string, body: {
   belongings: string[];
+  personal_material?: StoredPersonalMaterial | null;
   vehicle_registration?: string | null;
 }): Promise<Visit> {
   return apiRequest<Visit>(`/visits/${encodeURIComponent(id)}/belongings`, { method: "PATCH", body });

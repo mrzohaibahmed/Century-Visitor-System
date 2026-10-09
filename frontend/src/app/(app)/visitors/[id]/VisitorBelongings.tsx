@@ -10,6 +10,7 @@ import { errorMessage } from "@/lib/api/client";
 import { getVisit, updateVisitBelongings, type Visit } from "@/lib/api/visits";
 import {
   belongingsList, emptyPersonalMaterial, filledBelongings, personalMaterialFromVisit, type PersonalMaterial,
+  storedPersonalMaterial,
 } from "@/lib/belongings";
 
 /** Belongings for the visitor's current visit: opens the Personal Material Returnable slip. */
@@ -26,7 +27,7 @@ export function VisitorBelongings({ visitId }: { visitId: string }) {
     try {
       const v = await getVisit(visitId);
       setVisit(v);
-      setDraft(personalMaterialFromVisit(v.belongings, v.host.name ?? ""));
+      setDraft(personalMaterialFromVisit(v.belongings, v.host.name ?? "", v.personal_material));
       setVehicle(v.vehicle_registration ?? "");
     } catch (e) {
       setLoadError(errorMessage(e));
@@ -34,6 +35,8 @@ export function VisitorBelongings({ visitId }: { visitId: string }) {
   }, [visitId]);
 
   useEffect(() => {
+    // Initial load: state is updated by the asynchronous request completion.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
@@ -45,10 +48,13 @@ export function VisitorBelongings({ visitId }: { visitId: string }) {
     try {
       const updated = await updateVisitBelongings(visitId, {
         belongings: belongingsList(next.personalMaterial),
+        personal_material: storedPersonalMaterial(next.personalMaterial),
         vehicle_registration: next.vehicle.trim() || null,
       });
       setVisit(updated);
-      setDraft(personalMaterialFromVisit(updated.belongings, updated.host.name ?? ""));
+      setDraft(personalMaterialFromVisit(
+        updated.belongings, updated.host.name ?? "", updated.personal_material,
+      ));
       setVehicle(updated.vehicle_registration ?? "");
       setOpen(false);
       toast.success("Belongings updated.");
@@ -99,6 +105,8 @@ export function VisitorBelongings({ visitId }: { visitId: string }) {
         value={draft}
         vehicle={vehicle}
         defaultContact={hostName}
+        visitorName={visit?.visitor.name ?? undefined}
+        visitNumber={visit?.visit_number}
         error={savingError}
         onClose={() => setOpen(false)}
         onSave={(next) => { void onSave(next); }}

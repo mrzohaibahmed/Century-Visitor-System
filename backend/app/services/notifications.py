@@ -208,7 +208,8 @@ async def queue_overstays(db: AsyncDatabase, settings: Settings, *, limit: int =
     created = 0
     for visit in visits:
         host = await db.hosts.find_one({"_id": visit["host_id"]}) if visit.get("host_id") else None
-        department = await db.departments.find_one({"_id": visit["department_id"]}) if visit.get("department_id") else None
+        department = (await db.departments.find_one({"_id": visit["department_id"]})
+                      if visit.get("department_id") else None)
         if host is not None:
             if await create_host_overstay(db, settings, visit, host):
                 created += 1

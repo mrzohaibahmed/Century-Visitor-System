@@ -107,6 +107,7 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
         "department_id": department["_id"], "gate_id": gate["_id"], "checkout_gate_id": None,
         "reason_code": str(body.reason_code), "reason_note": body.reason_note,
         "vehicle_registration": body.vehicle_registration, "belongings": body.belongings,
+        "personal_material": body.personal_material.model_dump(mode="json") if body.personal_material else None,
         "status": "CHECKED_IN", "check_in_at": now, "check_out_at": None,
         "checked_in_by": ctx.user["_id"], "checked_out_by": None, "checkout_method": None, "pass": None,
         "photo_id": photo_id,
@@ -213,6 +214,9 @@ async def update_belongings(db: AsyncDatabase, ctx: AuthContext, meta: RequestMe
     now = datetime.now(UTC)
     fields = {"belongings": list(body.belongings), "vehicle_registration": body.vehicle_registration,
               "updated_at": now}
+    if "personal_material" in body.model_fields_set:
+        fields["personal_material"] = (body.personal_material.model_dump(mode="json")
+                                       if body.personal_material else None)
 
     async def work(s: AsyncClientSession):
         doc = await db.visits.find_one_and_update(

@@ -417,6 +417,7 @@ body {
 
 /* The print copy lives in .badge-print-root directly under <body>; it is the only thing printed. */
 .badge-print-root { display: none; }
+.belongings-print-root { display: none; }
 
 @page badge {
   size: 54mm 85.6mm;
@@ -428,4 +429,50 @@ body {
   body:has(> .badge-print-root) { background: #fff; }
   .badge-print-root { display: block; page: badge; }
   .badge-print-root .badge-card { break-inside: avoid; }
+}
+
+@page belongings {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
+@media print {
+  body:has(> .belongings-print-root) > *:not(.belongings-print-root) { display: none !important; }
+  body:has(> .belongings-print-root) { background: #fff; }
+  .belongings-print-root {
+    display: block;
+    page: belongings;
+    color: #000;
+    font-family: Arial, sans-serif;
+    font-size: 10pt;
+  }
+  .belongings-print-sheet { width: 100%; }
+  .belongings-print-header { margin-bottom: 8mm; text-align: center; }
+  .belongings-print-header p { margin: 0 0 2mm; font-size: 11pt; font-weight: 700; text-transform: uppercase; }
+  .belongings-print-header .belongings-print-title { margin: 0; font-size: 17pt; text-transform: uppercase; }
+  .belongings-print-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3mm 8mm;
+    margin: 0 0 7mm;
+  }
+  .belongings-print-facts div:last-child { grid-column: 1 / -1; }
+  .belongings-print-facts dt,
+  .belongings-print-signatures dt { font-size: 8pt; font-weight: 700; text-transform: uppercase; }
+  .belongings-print-facts dd { min-height: 5mm; margin: 1mm 0 0; border-bottom: 1px solid #000; }
+  .belongings-print-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .belongings-print-table th,
+  .belongings-print-table td { height: 9mm; border: 1px solid #000; padding: 2mm; text-align: left; }
+  .belongings-print-table th { font-size: 8pt; text-transform: uppercase; }
+  .belongings-print-table th:first-child,
+  .belongings-print-table td:first-child { width: 12mm; text-align: center; }
+  .belongings-print-table th:nth-child(3),
+  .belongings-print-table td:nth-child(3),
+  .belongings-print-table th:nth-child(4),
+  .belongings-print-table td:nth-child(4) { width: 20mm; text-align: center; }
+  .belongings-print-remarks { min-height: 22mm; margin-top: 7mm; border: 1px solid #000; padding: 3mm; }
+  .belongings-print-remarks h2 { margin: 0 0 2mm; font-size: 8pt; text-transform: uppercase; }
+  .belongings-print-remarks p { margin: 0; white-space: pre-wrap; }
+  .belongings-print-signatures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8mm; margin-top: 18mm; }
+  .belongings-print-signatures dd { min-height: 7mm; margin: 1mm 0 0; border-bottom: 1px solid #000; }
 }

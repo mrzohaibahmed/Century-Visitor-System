@@ -6,6 +6,7 @@ import {
   emptyPersonalMaterial,
   filledBelongings,
   MAX_BELONGINGS,
+  storedPersonalMaterial,
   type PersonalMaterial,
 } from "@/lib/belongings";
 
@@ -62,5 +63,6 @@ export function toCheckIn(visitorId: string, d: VisitDraft): CheckIn {
     reason_note: d.reasonNote.trim() || null,
     vehicle_registration: d.vehicle.trim() || null,
     belongings: belongingsList(d.personalMaterial),
+    personal_material: storedPersonalMaterial(d.personalMaterial),
   };
 }

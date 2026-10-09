@@ -65,15 +65,19 @@ def mask_sensitive(value: str | None) -> str | None:
 
 
 def normalize_phone(raw: str | None) -> str | None:
-    """Digits only (a leading + is kept). None if empty. Raises ValueError if implausible."""
+    """Pakistani local (0XXXXXXXXXX) or international (+92XXXXXXXXXX) phone. None if empty."""
     if raw is None or not raw.strip():
         return None
     value = raw.strip()
-    plus = value.startswith("+")
+    if re.search(r"[^\d\s\-+()]", value) or "+" in value[1:]:
+        raise ValueError("Enter a valid Pakistani phone number (11 digits, or +92 followed by 10 digits).")
     digits = re.sub(r"\D", "", value)
-    if len(digits) != 11 or re.search(r"[^\d\s\-+()]", value):
-        raise ValueError("The phone number must have 11 digits.")
-    return ("+" if plus else "") + digits
+    if value.startswith("+"):
+        if len(digits) == 12 and digits.startswith("92") and digits[2] != "0":
+            return "+" + digits
+    elif len(digits) == 11 and digits.startswith("0"):
+        return digits
+    raise ValueError("Enter a valid Pakistani phone number (11 digits, or +92 followed by 10 digits).")
 
 
 def normalize_name(raw: str) -> str:

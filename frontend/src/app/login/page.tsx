@@ -72,7 +72,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           </div>
 
           <p className="hidden text-xs font-semibold tracking-[0.3em] text-ink-muted lg:block">CENTURY GATE</p>
-          <h1 className="mt-2 text-title text-ink max-lg:text-center">Welcome back</h1>
+          <h1 className="mt-2 text-title text-ink max-lg:text-center">Welcome</h1>
           <p className="mt-2 mb-8 text-sm text-ink-muted max-lg:text-center">
             Log in to Visitor Management to continue.
           </p>

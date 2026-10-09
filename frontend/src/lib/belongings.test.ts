@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  belongingsFromStored, belongingsList, formatBelonging, personalMaterialFromVisit,
+  belongingsFromStored, belongingsList, formatBelonging, personalMaterialFromVisit, storedPersonalMaterial,
 } from "./belongings";
 
 describe("formatBelonging / belongingsList", () => {
   it("appends quantity in when present", () => {
     expect(formatBelonging({ description: "Laptop", qtyIn: "01", qtyOut: "" })).toBe("Laptop (01)");
+  });
+
+  it("keeps the quantity when a description reaches the storage limit", () => {
+    expect(formatBelonging({ description: "x".repeat(40), qtyIn: "1234", qtyOut: "" }))
+      .toBe(`${"x".repeat(33)} (1234)`);
   });
 });
 
@@ -21,5 +26,15 @@ describe("belongingsFromStored", () => {
   it("round-trips through belongingsList", () => {
     const pm = personalMaterialFromVisit(["Laptop (2)", "Charger"]);
     expect(belongingsList(pm)).toEqual(["Laptop (2)", "Charger"]);
+  });
+
+  it("round-trips every field in a structured slip", () => {
+    const original = {
+      contactName: "Sara Ahmed", date: "2026-10-09",
+      items: [{ description: "Laptop", qtyIn: "1", qtyOut: "1" }],
+      remarks: "Seal checked", authorisedBy: "Manager", issuedBy: "Guard One", gateOfficer: "Guard Two",
+    };
+    const stored = storedPersonalMaterial(original);
+    expect(personalMaterialFromVisit([], "ignored", stored)).toEqual(original);
   });
 });

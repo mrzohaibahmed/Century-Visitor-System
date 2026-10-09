@@ -138,10 +138,25 @@ describe("VisitorDetail", () => {
       [{ field: "body.phone", message: "Enter a valid phone number." }]));
     render(<VisitorDetail id="v1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit details" }));
-    fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "0300 999 8888" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes", hidden: true }));
     expect(await screen.findByText("Enter a valid phone number.")).toBeTruthy();
-    expect((screen.getByLabelText("Phone") as HTMLInputElement).value).toBe("12");
+    expect((screen.getByLabelText("Phone") as HTMLInputElement).value).toBe("0300 999 8888");
     expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid phone locally and normalises a valid international number", async () => {
+    api.updateVisitor.mockResolvedValue({ ...VISITOR, phone: "+923001234567" });
+    render(<VisitorDetail id="v1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit details" }));
+
+    fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "13001234567" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes", hidden: true }));
+    expect(await screen.findByText(/valid Pakistani phone number/i)).toBeTruthy();
+    expect(api.updateVisitor).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "+92 300 1234567" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes", hidden: true }));
+    await waitFor(() => expect(api.updateVisitor).toHaveBeenCalledWith("v1", { phone: "+923001234567" }));
   });
 });

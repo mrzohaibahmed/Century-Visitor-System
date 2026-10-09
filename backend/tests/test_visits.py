@@ -49,6 +49,20 @@ async def test_check_in(harness, settings, guard, directory):
     assert entry["metadata"]["visit_number"] == visit["visit_number"]
 
 
+async def test_check_in_stores_the_complete_personal_material_slip(guard, directory):
+    visitor = await new_visitor(guard)
+    material = {
+        "contact_name": "Sara Ahmed", "date": "2026-10-09",
+        "items": [{"description": "Laptop", "qty_in": "1", "qty_out": "1"}],
+        "remarks": "Seal checked", "authorised_by": "Manager", "issued_by": "Guard One",
+        "gate_officer": "Guard Two",
+    }
+    response = await check_in(guard, visitor["id"], directory, belongings=[], personal_material=material)
+    assert response.status_code == 201, response.text
+    assert response.json()["personal_material"] == material
+    assert response.json()["belongings"] == ["Laptop (1)"]
+
+
 async def test_client_cannot_choose_gate_operator_or_status(guard, directory):
     v = await new_visitor(guard)
     for extra in ({"gate_id": directory["gate"]["id"]}, {"checked_in_by": "x"}, {"status": "CHECKED_OUT"}):

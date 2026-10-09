@@ -177,10 +177,10 @@ describe("CheckInWizard", () => {
     fireEvent.change(await screen.findByLabelText("Full name"), { target: { value: "Ali Khan" } });
     fireEvent.change(screen.getByLabelText("Phone (optional)"), { target: { value: "123" } });
     fireEvent.click(screen.getByRole("button", { name: "Register and continue" }));
-    expect(await screen.findByText("Enter a valid phone number (11 digits).")).toBeTruthy();
+    expect(await screen.findByText(/valid Pakistani phone number/i)).toBeTruthy();
     expect(api.createVisitor).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Phone (optional)"), { target: { value: "0300-1234567" } });
-    expect(screen.queryByText("Enter a valid phone number (11 digits).")).toBeNull();
+    expect(screen.queryByText(/valid Pakistani phone number/i)).toBeNull();
     api.createVisitor.mockResolvedValue({ id: "v1" });
     api.getVisitor.mockResolvedValue(CLEAR);
     fireEvent.click(screen.getByRole("button", { name: "Register and continue" }));

@@ -9,7 +9,13 @@ from app.core.permissions import Permission
 from app.db.client import Database
 from app.schemas.common import Page
 from app.schemas.visits import (
-    ActiveVisits, CheckInRequest, CheckOutLookup, CheckOutResult, UpdateBelongingsRequest, VisitOut, VisitStatus,
+    ActiveVisits,
+    CheckInRequest,
+    CheckOutLookup,
+    CheckOutResult,
+    UpdateBelongingsRequest,
+    VisitOut,
+    VisitStatus,
 )
 from app.services import visits as svc
 from app.services.auth import AuthContext

@@ -52,9 +52,15 @@ describe("toCheckIn", () => {
   it("builds the request for a listed host", () => {
     const personalMaterial = {
       ...emptyPersonalMaterial(),
+      date: "2026-10-09",
+      contactName: "Sara Ahmed",
+      remarks: "Seal checked",
+      authorisedBy: "Manager",
+      issuedBy: "Guard One",
+      gateOfficer: "Guard Two",
       items: [
-        { description: "laptop", qtyIn: "", qtyOut: "" },
-        { description: "bag", qtyIn: "2", qtyOut: "" },
+        { description: "laptop", qtyIn: "", qtyOut: "1" },
+        { description: "bag", qtyIn: "2", qtyOut: "2" },
       ],
     };
     expect(toCheckIn("v1", {
@@ -62,6 +68,14 @@ describe("toCheckIn", () => {
     })).toEqual({
       visitor_id: "v1", host_id: "h1", unlisted_host_name: null, department_id: "d1", reason_code: "INTERVIEW",
       reason_note: null, vehicle_registration: "lea 1234", belongings: ["laptop", "bag (2)"],
+      personal_material: {
+        contact_name: "Sara Ahmed", date: "2026-10-09",
+        items: [
+          { description: "laptop", qty_in: null, qty_out: "1" },
+          { description: "bag", qty_in: "2", qty_out: "2" },
+        ],
+        remarks: "Seal checked", authorised_by: "Manager", issued_by: "Guard One", gate_officer: "Guard Two",
+      },
     });
   });
 

@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
-SCHEMA_VERSION = 6   # v6 (Reports): entry_denials (refused entries, for reporting)
+SCHEMA_VERSION = 7   # v7: complete Personal Material Returnable slip on visits
+# v6 (Reports): entry_denials (refused entries, for reporting)
 # v5 (Reports): visit indexes for the guard and gate filters; department e-mail type
 # v4 (Phase 6A): notifications; hosts.linked_user_id
 # v3 (Phase 4): photos, pass lifecycle, watchlist management
@@ -144,6 +145,20 @@ COLLECTIONS: list[CollectionSpec] = [
             "snapshot": {"bsonType": "object", "required": ["visitor_name"], "properties": {
                 "visitor_name": TEXT}},
             "photo_id": OPTIONAL_OBJECT_ID,
+            "personal_material": {"bsonType": ["object", "null"], "properties": {
+                "contact_name": {"bsonType": "string", "maxLength": 80},
+                "date": {"bsonType": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+                "items": {"bsonType": "array", "maxItems": 10, "items": {
+                    "bsonType": "object", "required": ["description"], "properties": {
+                        "description": {"bsonType": "string", "minLength": 1, "maxLength": 40},
+                        "qty_in": {"bsonType": ["string", "null"], "pattern": "^[0-9]{1,4}$"},
+                        "qty_out": {"bsonType": ["string", "null"], "pattern": "^[0-9]{1,4}$"},
+                    }}},
+                "remarks": {"bsonType": "string", "maxLength": 500},
+                "authorised_by": {"bsonType": "string", "maxLength": 80},
+                "issued_by": {"bsonType": "string", "maxLength": 80},
+                "gate_officer": {"bsonType": "string", "maxLength": 80},
+            }},
             # The QR pass: only hashes of the random tokens are stored (the token is printed on the badge).
             "pass": {"bsonType": ["object", "null"], "required": ["token_hash", "issued_at", "expires_at"],
                      "properties": {

@@ -270,11 +270,12 @@ function RegisterStep({ idType, idNumber, onBack, onRegistered }: {
                    size="lg" autoComplete="off" autoFocus caps />
         <TextField label="Phone (optional)" value={phone}
                    onChange={(e) => {
-                     setPhone(e.target.value);
-                     if (errors.phone) setErrors((prev) => {
-                       const { phone: _drop, ...rest } = prev;
-                       return rest;
-                     });
+                      setPhone(e.target.value);
+                      if (errors.phone) setErrors((prev) => {
+                        const next = { ...prev };
+                        delete next.phone;
+                        return next;
+                      });
                    }}
                    error={errors.phone} size="lg" inputMode="tel" autoComplete="off"
                    hint="11 digits. Spaces and dashes are fine." />
@@ -541,6 +542,7 @@ export function DetailsStep({ visitor, draft, onChange, onCancel, onNext }: {
         value={draft.personalMaterial}
         vehicle={draft.vehicle}
         defaultContact={defaultContact}
+        visitorName={visitor.full_name}
         error={errors.belongings}
         onClose={() => setBelongingsOpen(false)}
         onSave={({ personalMaterial, vehicle }) => {

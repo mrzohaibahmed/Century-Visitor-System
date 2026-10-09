@@ -42,13 +42,17 @@ def test_identifier_and_masking():
 
 @pytest.mark.parametrize("raw,expected", [
     ("0300-1234567", "03001234567"), ("(042) 3571-2345", "04235712345"), ("0300 123 4567", "03001234567"),
+    ("+92 300 1234567", "+923001234567"), ("+92 (42) 3571-2345", "+924235712345"),
     ("", None), (None, None),
 ])
 def test_phone_normalisation(raw, expected):
     assert normalize_phone(raw) == expected
 
 
-@pytest.mark.parametrize("raw", ["123", "+92 300 1234567", "0300-123456789012345", "call me"])
+@pytest.mark.parametrize(
+    "raw",
+    ["123", "13001234567", "0300+1234567", "+920300123456", "0300-123456789012345", "call me"],
+)
 def test_implausible_phones_are_rejected(raw):
     with pytest.raises(ValueError, match="11 digits"):
         normalize_phone(raw)

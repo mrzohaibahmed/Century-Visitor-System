@@ -22,6 +22,7 @@ import {
 } from "@/lib/api/directory";
 import { listUsers } from "@/lib/api/users";
 import { caps } from "@/lib/format";
+import { normalizePhone, phoneError } from "@/lib/phone";
 import type { User } from "@/lib/api/auth";
 
 type Entry = Gate | Department | Host;
@@ -46,7 +47,7 @@ const CONFIG: Record<DirectoryKind, { singular: string; fields: Field[] }> = {
       { name: "name", label: "Full name", required: true },
       { name: "department_id", label: "Department", type: "department" },
       { name: "email", label: "Email", type: "email" },
-      { name: "phone", label: "Phone", type: "tel" },
+      { name: "phone", label: "Phone", type: "tel", hint: "Use 03XX-XXXXXXX or +92 3XX XXXXXXX." },
     ],
   },
 };
@@ -190,11 +191,14 @@ export function EntryForm({ kind, entry, departments, users = [], onDone, onCanc
     setError(null);
     const missing = fields.filter((f) => f.required && !values[f.name].trim());
     if (missing.length) return setErrors(Object.fromEntries(missing.map((f) => [f.name, `${f.label} is required.`])));
+    const invalidPhone = kind === "hosts" ? phoneError(values.phone ?? "") : null;
+    if (invalidPhone) return setErrors({ phone: invalidPhone });
     setErrors({});
 
     const body: Record<string, unknown> = {};
     for (const f of fields) {
-      const value = values[f.name].trim();
+      const raw = values[f.name].trim();
+      const value = f.type === "tel" ? normalizePhone(raw) ?? "" : raw;
       // Only send what changed; empty optional fields are left out (the API keeps the existing value).
       if (value && value !== valueOf(entry, f.name)) body[f.name] = value;
     }
@@ -230,7 +234,10 @@ export function EntryForm({ kind, entry, departments, users = [], onDone, onCanc
       ) : (
         <TextField key={f.name} label={f.label} type={f.type ?? "text"} value={values[f.name]} error={errors[f.name]}
                    hint={f.hint} caps={f.name === "name" || f.name === "location"}
-                   onChange={(e) => setValues({ ...values, [f.name]: e.target.value })} />
+                   onChange={(e) => {
+                     setValues({ ...values, [f.name]: e.target.value });
+                     if (errors[f.name]) setErrors({ ...errors, [f.name]: "" });
+                   }} />
       ))}
       {kind === "hosts" && (
         <SelectField label="Linked app account" value={linkedUser} error={errors.linked_user_id}

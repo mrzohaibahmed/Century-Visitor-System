@@ -62,3 +62,28 @@ describe("host form: Linked app account", () => {
     expect(screen.queryByLabelText("Linked app account")).toBeNull();
   });
 });
+
+describe("host form: phone validation", () => {
+  it("rejects an invalid phone before submitting", async () => {
+    renderForm(null);
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Imran Ali" } });
+    fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "13001234567" } });
+    fireEvent.submit(screen.getByLabelText("Full name").closest("form")!);
+
+    expect(await screen.findByText(/valid Pakistani phone number/i)).toBeTruthy();
+    expect(api.createEntry).not.toHaveBeenCalled();
+  });
+
+  it("normalises a valid international phone before submitting", async () => {
+    api.createEntry.mockResolvedValue({ ...HOST, id: "h2", phone: "+923001234567" });
+    renderForm(null);
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Imran Ali" } });
+    fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "+92 300 1234567" } });
+    fireEvent.submit(screen.getByLabelText("Full name").closest("form")!);
+
+    await waitFor(() => expect(api.createEntry).toHaveBeenCalledWith("hosts", {
+      name: "Imran Ali",
+      phone: "+923001234567",
+    }));
+  });
+});

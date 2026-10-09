@@ -10,9 +10,10 @@
   Runs the EXISTING project from this folder as normal processes (no Windows services, no copy), the API
   and the web server each in its own console window ("CGVMS API", "CGVMS Web") as start-dev.bat does:
     MongoDB   scripts\dev_mongo.py start       the project's own instance, 127.0.0.1:27018, data in .dev\mongo
-    API       python -m app.serve              production server (no reload, no API docs), 127.0.0.1:8000
-    Web       node server.mjs                  production build (npm run build), 0.0.0.0:6543 (plain HTTP);
-                                               sets the client address the API sees (frontend\server\forwarding.mjs)
+    Schema    python -m app.cli migrate         idempotent database validators and indexes
+    API       python -m app.serve               production server (no reload, no API docs), 127.0.0.1:8000
+    Web       node server.mjs                   production build (npm run build), 0.0.0.0:6543 (plain HTTP);
+                                                sets the client address the API sees (frontend\server\forwarding.mjs)
   Gate PCs use http://<this PC's name or IP>:6543 on the organization's network: no TLS, no certificate, no
   Caddy. Only the web server listens on the network; the API and MongoDB stay on 127.0.0.1. The Windows
   network profile (Public, Private, Domain) is not a start requirement. Windows Firewall is not part of
@@ -157,15 +158,32 @@ foreach ($item in @(@('API', 'python', 8000), @('Web', 'node', 6543))) {
 }
 
 Say ''
-Say '[1/4] MongoDB (127.0.0.1:27018, data in .dev\mongo) ...'
+Say '[1/5] MongoDB (127.0.0.1:27018, data in .dev\mongo) ...'
 $ErrorActionPreference = 'Continue'
 & $python (Join-Path $app 'scripts\dev_mongo.py') start
 $mongoExit = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 if ($mongoExit -ne 0) { Fail "MongoDB did not start; see $app\.dev\mongo\mongod.log" }
 
+$envText = Get-Content -LiteralPath (Join-Path $app 'backend\.env') -Raw
+$env:CG_ENVIRONMENT = 'production'
+$env:CG_DEPLOYMENT_MODE = 'http-lan'
+$env:CG_MONGO_LOCALHOST_WITHOUT_LOGIN = 'true'
+if ($envText -notmatch '(?m)^\s*CG_PHOTO_DIR\s*=') { $env:CG_PHOTO_DIR = $cfg.PhotoDir }
+$env:PYTHONUNBUFFERED = '1'
+
 Say ''
-Say '[2/4] Web production build ...'
+Say '[2/5] Database schema ...'
+Push-Location (Join-Path $app 'backend')
+$ErrorActionPreference = 'Continue'
+& $python -m app.cli migrate
+$migrationExit = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+Pop-Location
+if ($migrationExit -ne 0) { Fail 'Database migration failed (see above).' }
+
+Say ''
+Say '[3/5] Web production build ...'
 $buildId = Join-Path $app 'frontend\.next\BUILD_ID'
 if ($Rebuild -or -not (Test-Path -LiteralPath $buildId)) {
     if (Get-Ours 'Web' 'node') { Fail 'The web server is running: stop-production.bat first, then start with a new build.' }
@@ -181,16 +199,10 @@ if ($Rebuild -or -not (Test-Path -LiteralPath $buildId)) {
 }
 
 Say ''
-Say '[3/4] API (127.0.0.1:8000, production server) ...'
+Say '[4/5] API (127.0.0.1:8000, production server) ...'
 if (Get-Ours 'API' 'python') {
     Say '      already running.'
 } else {
-    $envText = Get-Content -LiteralPath (Join-Path $app 'backend\.env') -Raw
-    $env:CG_ENVIRONMENT = 'production'
-    $env:CG_DEPLOYMENT_MODE = 'http-lan'
-    $env:CG_MONGO_LOCALHOST_WITHOUT_LOGIN = 'true'
-    if ($envText -notmatch '(?m)^\s*CG_PHOTO_DIR\s*=') { $env:CG_PHOTO_DIR = $cfg.PhotoDir }
-    $env:PYTHONUNBUFFERED = '1'
     # First run only: admin / admin1234, which must be changed at the first login (does nothing once accounts exist).
     Push-Location (Join-Path $app 'backend')
     $ErrorActionPreference = 'Continue'
@@ -205,7 +217,7 @@ if (Get-Ours 'API' 'python') {
 }
 
 Say ''
-Say '[4/4] Web (http://0.0.0.0:6543, server.mjs) ...'
+Say '[5/5] Web (http://0.0.0.0:6543, server.mjs) ...'
 if (Get-Ours 'Web' 'node') {
     Say '      already running.'
 } else {
@@ -225,6 +237,8 @@ $lanIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
 
 Say ''
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'check-health.ps1')
+$healthExit = $LASTEXITCODE
+if ($healthExit -ne 0) { Fail 'The services started, but the final health check failed (see above).' }
 Say ''
 Say 'Century Gate VMS is running in production mode.'
 foreach ($ip in $lanIps) { Say "  Gate PCs:   http://${ip}:6543   (plain HTTP on the trusted LAN)" }

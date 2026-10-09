@@ -29,6 +29,7 @@ import {
   visitorVisits,
 } from "@/lib/api/visitors";
 import { formatDateTime, formatTime } from "@/lib/format";
+import { normalizePhone, phoneError } from "@/lib/phone";
 
 import { VisitorBelongings } from "./VisitorBelongings";
 
@@ -211,9 +212,15 @@ export function EditVisitorForm({ visitor, onDone, onCancel }: {
     event.preventDefault();
     setError(null);
     setErrors({});
+    const invalidPhone = phoneError(phone);
+    if (invalidPhone) {
+      setErrors({ phone: invalidPhone });
+      return;
+    }
     const changes: Partial<NewVisitor> = {};
     if (name.trim() !== visitor.full_name) changes.full_name = name.trim();
-    if (phone.trim() && phone.trim() !== (visitor.phone ?? "")) changes.phone = phone.trim();
+    const normalizedPhone = normalizePhone(phone);
+    if (normalizedPhone && normalizedPhone !== visitor.phone) changes.phone = normalizedPhone;
     if (idType !== visitor.identity?.type || idNumber.trim() !== visitor.identity?.number) {
       changes.identity = { type: idType, number: idNumber.trim() };
     }
@@ -235,7 +242,11 @@ export function EditVisitorForm({ visitor, onDone, onCancel }: {
       {(error || errors._form) && <Alert tone="danger">{error || errors._form}</Alert>}
       <TextField label="Full name" value={name} onChange={(e) => setName(e.target.value)} error={errors.full_name} caps />
       <IdentityInput type={idType} number={idNumber} onType={setIdType} onNumber={setIdNumber} error={errors.identity} />
-      <TextField label="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} error={errors.phone} inputMode="tel" />
+      <TextField label="Phone" value={phone} onChange={(e) => {
+        setPhone(e.target.value);
+        if (errors.phone) setErrors((current) => ({ ...current, phone: "" }));
+      }} error={errors.phone} inputMode="tel" autoComplete="tel"
+      hint="Use 03XX-XXXXXXX or +92 3XX XXXXXXX." />
       <p className="text-sm text-ink-muted">Changes are logged. Past visits keep the name recorded at the time.</p>
       <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
         <Button type="button" variant="secondary" size="lg" onClick={onCancel}>Cancel</Button>

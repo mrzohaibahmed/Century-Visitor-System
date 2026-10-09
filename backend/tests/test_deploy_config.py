@@ -40,6 +40,21 @@ def test_the_local_production_start_selects_http_lan_explicitly():
     assert "CG_COOKIE_SECURE" not in script                    # http-lan is the only switch (Step 1)
 
 
+def test_the_local_production_start_migrates_before_creating_the_first_admin():
+    script = _production_script()
+    migrate = script.index("& $python -m app.cli migrate")
+    first_admin = script.index("& $python -m app.cli first-admin")
+    assert migrate < first_admin
+    assert "if ($migrationExit -ne 0) { Fail 'Database migration failed (see above).' }" in script
+
+
+def test_the_local_production_start_fails_when_final_health_check_fails():
+    script = _production_script()
+    assert "$healthExit = $LASTEXITCODE" in script
+    failure = "if ($healthExit -ne 0) { Fail 'The services started, but the final health check failed (see above).' }"
+    assert failure in script
+
+
 def test_the_local_production_start_needs_no_caddy_certificate_or_firewall_change():
     script = _production_script()
     for gone in ("Find-Caddy", "caddy.exe", "Caddyfile", "Start-Process -FilePath $caddy", "Import-Certificate",
@@ -69,8 +84,8 @@ def test_the_former_https_services_deployment_is_gone():
     """Only start-production.bat deploys: no Caddy, Windows services, certificates or firewall scripts."""
     windows = DEPLOY / "windows"
     assert sorted(p.name for p in windows.iterdir()) == [
-        "cgvms-common.ps1", "check-health.ps1", "production.ps1",
-        "restart-production.bat", "start-production.bat", "stop-production.bat"]
+        "cgvms-common.ps1", "check-health.ps1", "production.ps1"]
+    assert (REPO / "start-production.bat").is_file() and (REPO / "stop-production.bat").is_file()
     assert sorted(p.name for p in DEPLOY.iterdir()) == ["PRODUCTION-COMMANDS.md", "windows"]
     for script in windows.iterdir():
         text = script.read_text(encoding="utf-8")
@@ -121,7 +136,7 @@ def test_the_connected_networks_only_list_the_addresses_for_gate_pcs():
     assert "$networks = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue)" in code
     assert code.count("$networks") == 2                      # read once, used once: the printed addresses
     assert "Where-Object { $_.InterfaceIndex -in $networks.InterfaceIndex }" in code
-    start = code.index("Say '[1/4] MongoDB")
+    start = code.index("Say '[1/5] MongoDB")
     assert not [line for line in code[:start].splitlines() if "Fail" in line and "network" in line.lower()]
 
 

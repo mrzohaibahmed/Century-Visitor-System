@@ -1,5 +1,6 @@
 """Visits (one entry into the premises)."""
 import re
+from datetime import date as Date
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
@@ -32,6 +33,30 @@ VISIT_NUMBER = re.compile(r"^V-(\d{2}-[A-Z]{3}-\d{2}-\d{3,}|\d{2}-\d{4}-\d{3,}|\
 Belonging = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
 
 
+class PersonalMaterialItem(StrictModel):
+    description: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+    qty_in: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^\d{1,4}$")] | None = None
+    qty_out: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^\d{1,4}$")] | None = None
+
+
+class PersonalMaterial(StrictModel):
+    """The complete Personal Material Returnable slip stored with a visit."""
+    contact_name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] = ""
+    date: Date | None = None
+    items: list[PersonalMaterialItem] = Field(default_factory=list, max_length=10)
+    remarks: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] = ""
+    authorised_by: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] = ""
+    issued_by: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] = ""
+    gate_officer: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] = ""
+
+    def belongings(self) -> list[str]:
+        """Compatibility list used by existing checkout, reports and older clients."""
+        out = []
+        for item in self.items:
+            suffix = f" ({item.qty_in})" if item.qty_in else ""
+            out.append(item.description[:40 - len(suffix)] + suffix)
+        return out
+
 class CheckInRequest(StrictModel):
     visitor_id: IdStr
     host_id: IdStr | None = None
@@ -42,6 +67,7 @@ class CheckInRequest(StrictModel):
     reason_note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] | None = None
     vehicle_registration: str | None = None
     belongings: list[Belonging] = Field(default_factory=list, max_length=10)
+    personal_material: PersonalMaterial | None = None
     # The visitor's current photo, captured just before (POST /visitors/{id}/photo). Optional:
     # a gate without a working camera can still check visitors in.
     photo_id: IdStr | None = None
@@ -67,12 +93,15 @@ class CheckInRequest(StrictModel):
             raise ValueError("Choose a host from the directory, or enter the name of a host who is not listed.")
         if self.reason_code is VisitReason.OTHER and not self.reason_note:
             raise ValueError("Describe the reason when 'Other' is selected.")
+        if self.personal_material is not None:
+            self.belongings = self.personal_material.belongings()
         return self
 
 
 class UpdateBelongingsRequest(StrictModel):
     """Update personal material recorded on an active visit (gate forgot items at check-in, or corrected them)."""
     belongings: list[Belonging] = Field(default_factory=list, max_length=10)
+    personal_material: PersonalMaterial | None = None
     vehicle_registration: str | None = None
 
     @field_validator("vehicle_registration")
@@ -84,6 +113,12 @@ class UpdateBelongingsRequest(StrictModel):
         if not re.fullmatch(r"[A-Z0-9-]{2,15}", compact):
             raise ValueError("The vehicle registration may only contain letters, digits and hyphens (2–15).")
         return compact
+
+    @model_validator(mode="after")
+    def _material(self):
+        if self.personal_material is not None:
+            self.belongings = self.personal_material.belongings()
+        return self
 
 
 class CheckOutLookup(StrictModel):
@@ -119,6 +154,7 @@ class VisitOut(BaseModel):
     reason_note: str | None
     vehicle_registration: str | None
     belongings: list[str]
+    personal_material: PersonalMaterial | None = None
     check_in_at: datetime
     check_out_at: datetime | None
     checked_in_by: PersonRef
@@ -143,6 +179,7 @@ class VisitOut(BaseModel):
             checkout_gate=ref("checkout_gate_id", "checkout_gate_name") if d.get("checkout_gate_id") else None,
             reason_code=d["reason_code"], reason_note=d.get("reason_note"),
             vehicle_registration=d.get("vehicle_registration"), belongings=d.get("belongings", []),
+            personal_material=d.get("personal_material"),
             check_in_at=d["check_in_at"], check_out_at=d.get("check_out_at"),
             checked_in_by=ref("checked_in_by", "checked_in_by_name"),
             checked_out_by=PersonRef(id=str(out), name=snap.get("checked_out_by_name")) if out else None,

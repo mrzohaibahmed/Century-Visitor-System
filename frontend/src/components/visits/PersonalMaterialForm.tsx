@@ -1,7 +1,8 @@
 "use client";
 
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Printer, Trash2 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Button } from "@/components/ui/Button";
 import { controlClasses, describedBy, FieldMessage } from "@/components/ui/Field";
@@ -60,31 +61,66 @@ function TextAreaField({ label, value, onChange, hint }: {
   );
 }
 
-export function PersonalMaterialForm({ open, value, vehicle, defaultContact, error, onClose, onSave }: {
+export function PersonalMaterialForm({
+  open, value, vehicle, defaultContact, visitorName, visitNumber, error, onClose, onSave,
+}: {
   open: boolean;
   value: PersonalMaterial;
   vehicle: string;
   /** Prefill Company Cont. Name when the slip has none yet (usually the host). */
   defaultContact?: string;
+  visitorName?: string;
+  visitNumber?: string;
   error?: string;
   onClose: () => void;
   onSave: (next: { personalMaterial: PersonalMaterial; vehicle: string }) => void;
 }) {
-  const [draft, setDraft] = useState<PersonalMaterial>(value);
+  if (!open) return null;
+  return (
+    <OpenPersonalMaterialForm
+      value={value}
+      vehicle={vehicle}
+      defaultContact={defaultContact}
+      visitorName={visitorName}
+      visitNumber={visitNumber}
+      error={error}
+      onClose={onClose}
+      onSave={onSave}
+    />
+  );
+}
+
+function OpenPersonalMaterialForm({
+  value, vehicle, defaultContact, visitorName, visitNumber, error, onClose, onSave,
+}: {
+  value: PersonalMaterial;
+  vehicle: string;
+  defaultContact?: string;
+  visitorName?: string;
+  visitNumber?: string;
+  error?: string;
+  onClose: () => void;
+  onSave: (next: { personalMaterial: PersonalMaterial; vehicle: string }) => void;
+}) {
+  const [draft, setDraft] = useState<PersonalMaterial>(() => ({
+    ...value,
+    contactName: value.contactName || defaultContact || "",
+    items: value.items.length ? value.items.map((row) => ({ ...row })) : [emptyBelongingItem()],
+  }));
   const [veh, setVeh] = useState(vehicle);
   const [formError, setFormError] = useState<string | undefined>();
+  const [printRoot, setPrintRoot] = useState<HTMLElement | null>(null);
 
-  // Reset local state whenever the dialog opens so Cancel discards edits.
   useEffect(() => {
-    if (!open) return;
-    setDraft({
-      ...value,
-      contactName: value.contactName || defaultContact || "",
-      items: value.items.length ? value.items.map((r) => ({ ...r })) : [emptyBelongingItem()],
-    });
-    setVeh(vehicle);
-    setFormError(undefined);
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps -- snapshot props only when opening
+    const root = document.createElement("div");
+    root.className = "belongings-print-root";
+    root.setAttribute("aria-hidden", "true");
+    document.body.appendChild(root);
+    // The print-only copy is attached to <body> after this client component mounts.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPrintRoot(root);
+    return () => root.remove();
+  }, []);
 
   function setItem(index: number, patch: Partial<BelongingItem>) {
     setDraft((d) => ({
@@ -123,7 +159,7 @@ export function PersonalMaterialForm({ open, value, vehicle, defaultContact, err
 
   return (
     <Modal
-      open={open}
+      open
       title="Personal Material Returnable"
       description="Record items the visitor brings in. They must be checked again at exit."
       onClose={onClose}
@@ -273,11 +309,71 @@ export function PersonalMaterialForm({ open, value, vehicle, defaultContact, err
           />
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-border pt-5">
-          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit">Save belongings</Button>
+        <div className="flex flex-col-reverse gap-2 border-t border-border pt-5 sm:flex-row sm:justify-between">
+          <Button type="button" variant="secondary" onClick={() => window.print()}>
+            <Printer aria-hidden="true" />
+            Print belongings list
+          </Button>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button type="submit">Save belongings</Button>
+          </div>
         </div>
       </form>
+      {printRoot && createPortal(
+        <PersonalMaterialPrint
+          value={draft}
+          vehicle={veh}
+          visitorName={visitorName}
+          visitNumber={visitNumber}
+        />,
+        printRoot,
+      )}
     </Modal>
+  );
+}
+
+function PersonalMaterialPrint({ value, vehicle, visitorName, visitNumber }: {
+  value: PersonalMaterial;
+  vehicle: string;
+  visitorName?: string;
+  visitNumber?: string;
+}) {
+  const rows = filledBelongings(value);
+  return (
+    <article className="belongings-print-sheet">
+      <header className="belongings-print-header">
+        <p>Century Paper &amp; Board Mills Ltd.</p>
+        <p className="belongings-print-title">Personal Material Returnable</p>
+      </header>
+      <dl className="belongings-print-facts">
+        <div><dt>Visit no.</dt><dd>{visitNumber || "—"}</dd></div>
+        <div><dt>Visitor</dt><dd>{visitorName || "—"}</dd></div>
+        <div><dt>Vehicle</dt><dd>{vehicle.trim() || "—"}</dd></div>
+        <div><dt>Company contact</dt><dd>{value.contactName.trim() || "—"}</dd></div>
+        <div><dt>Date</dt><dd>{value.date || "—"}</dd></div>
+      </dl>
+      <table className="belongings-print-table">
+        <thead>
+          <tr><th>SR #</th><th>Description</th><th>Qty in</th><th>Qty out</th></tr>
+        </thead>
+        <tbody>
+          {(rows.length ? rows : [{ description: "", qtyIn: "", qtyOut: "" }]).map((row, index) => (
+            <tr key={index}>
+              <td>{index + 1}</td><td>{row.description}</td><td>{row.qtyIn}</td><td>{row.qtyOut}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <section className="belongings-print-remarks">
+        <h2>Remarks</h2>
+        <p>{value.remarks.trim() || "—"}</p>
+      </section>
+      <dl className="belongings-print-signatures">
+        <div><dt>Authorised by</dt><dd>{value.authorisedBy.trim()}</dd></div>
+        <div><dt>Issued by</dt><dd>{value.issuedBy.trim()}</dd></div>
+        <div><dt>Gate officer</dt><dd>{value.gateOfficer.trim()}</dd></div>
+      </dl>
+    </article>
   );
 }

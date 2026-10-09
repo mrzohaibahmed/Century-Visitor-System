@@ -23,6 +23,17 @@ export type PersonalMaterial = {
   gateOfficer: string;
 };
 
+/** Wire/storage shape used by the API. Older visits do not have this object. */
+export type StoredPersonalMaterial = {
+  contact_name: string;
+  date: string | null;
+  items: { description: string; qty_in: string | null; qty_out: string | null }[];
+  remarks: string;
+  authorised_by: string;
+  issued_by: string;
+  gate_officer: string;
+};
+
 export function emptyBelongingItem(): BelongingItem {
   return { description: "", qtyIn: "", qtyOut: "" };
 }
@@ -51,8 +62,8 @@ export function filledBelongings(pm: PersonalMaterial): BelongingItem[] {
 export function formatBelonging(item: BelongingItem): string {
   const desc = item.description.trim();
   const qty = item.qtyIn.trim();
-  const text = qty ? `${desc} (${qty})` : desc;
-  return text.slice(0, MAX_BELONGING_LENGTH);
+  const suffix = qty ? ` (${qty})` : "";
+  return desc.slice(0, MAX_BELONGING_LENGTH - suffix.length) + suffix;
 }
 
 export function belongingsList(pm: PersonalMaterial): string[] {
@@ -69,7 +80,40 @@ export function belongingsFromStored(list: string[]): BelongingItem[] {
   });
 }
 
-export function personalMaterialFromVisit(belongings: string[], contactName = ""): PersonalMaterial {
+export function storedPersonalMaterial(pm: PersonalMaterial): StoredPersonalMaterial {
+  return {
+    contact_name: pm.contactName.trim(),
+    date: pm.date || null,
+    items: filledBelongings(pm).map((item) => ({
+      description: item.description.trim(),
+      qty_in: item.qtyIn.trim() || null,
+      qty_out: item.qtyOut.trim() || null,
+    })),
+    remarks: pm.remarks.trim(),
+    authorised_by: pm.authorisedBy.trim(),
+    issued_by: pm.issuedBy.trim(),
+    gate_officer: pm.gateOfficer.trim(),
+  };
+}
+
+export function personalMaterialFromVisit(
+  belongings: string[], contactName = "", stored?: StoredPersonalMaterial | null,
+): PersonalMaterial {
+  if (stored) {
+    return {
+      contactName: stored.contact_name,
+      date: stored.date ?? "",
+      items: stored.items.length ? stored.items.map((item) => ({
+        description: item.description,
+        qtyIn: item.qty_in ?? "",
+        qtyOut: item.qty_out ?? "",
+      })) : [emptyBelongingItem()],
+      remarks: stored.remarks,
+      authorisedBy: stored.authorised_by,
+      issuedBy: stored.issued_by,
+      gateOfficer: stored.gate_officer,
+    };
+  }
   return {
     ...emptyPersonalMaterial(),
     contactName,
