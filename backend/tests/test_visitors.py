@@ -76,6 +76,41 @@ async def test_search_by_id_phone_and_name(guard):
     assert await names("علی") == ["علی خان"]
 
 
+async def test_directory_lists_all_visitors_alphabetically_without_a_search(guard):
+    await new_visitor(guard, name="Zara Khan", number="35201-0000001-1", phone=None)
+    await new_visitor(guard, name="ali Raza", number="35201-0000002-2", phone=None)
+    await new_visitor(guard, name="Bilal Ahmed", number="35201-0000003-3", phone=None)
+
+    response = await guard.get("/api/v1/visitors")
+    assert response.status_code == 200, response.text
+    assert [item["full_name"] for item in response.json()["items"]] == ["ali Raza", "Bilal Ahmed", "Zara Khan"]
+
+
+async def test_directory_stays_alphabetical_across_pages(guard, monkeypatch):
+    from app.services import visitors as svc
+    monkeypatch.setattr(svc, "SEARCH_LIMIT", 2)
+    names = ["Zara Khan", "ali Raza", "Hamza Tariq", "Bilal Ahmed", "Ahmed Noor"]
+    for index, name in enumerate(names, start=1):
+        await new_visitor(guard, name=name, number=f"35201-100000{index}-1", phone=None)
+
+    seen, cursor = [], None
+    while True:
+        params = {"cursor": cursor} if cursor else None
+        page = (await guard.get("/api/v1/visitors", params=params)).json()
+        seen += [item["full_name"] for item in page["items"]]
+        cursor = page["next_cursor"]
+        if not cursor:
+            break
+    assert seen == ["Ahmed Noor", "ali Raza", "Bilal Ahmed", "Hamza Tariq", "Zara Khan"]
+
+
+async def test_shared_phone_results_are_alphabetical(guard):
+    await new_visitor(guard, name="Zara Khan", number="35201-2000001-1", phone="0300-1112223")
+    await new_visitor(guard, name="Ali Raza", number="35201-2000002-2", phone="0300-1112223")
+    response = await guard.get("/api/v1/visitors", params={"q": "03001112223"})
+    assert [item["full_name"] for item in response.json()["items"]] == ["Ali Raza", "Zara Khan"]
+
+
 async def test_search_pages_without_repeats(guard, monkeypatch):
     from app.services import visitors as svc
     monkeypatch.setattr(svc, "SEARCH_LIMIT", 2)

@@ -5,8 +5,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from bson import ObjectId
 
+from app.core.secrets import generate_key
 from app.core.security import hash_token
 from app.services.passes import parse_qr
+from tests.conftest import make_settings
 from tests.test_visitors import CNIC, new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
 
@@ -149,6 +151,37 @@ async def test_a_reprinted_badge_cancels_the_old_one(harness, guard, inside):
     assert reissue is not None
 
 
+async def test_belongings_print_uses_the_current_badge_without_reissuing(harness, guard, inside):
+    harness.app.state.settings = make_settings(secrets_key=generate_key())
+    original = await issue(guard, inside)
+    path = f"/api/v1/visits/{inside['id']}/pass/print-data"
+    response = await guard.get(path)
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    assert response.json()["qr_text"] == original["qr_text"]
+    stored = await harness.db.visits.find_one({"_id": ObjectId(inside["id"])})
+    assert stored["pass"]["qr_sealed"] and original["qr_text"] not in str(stored)
+    assert (await scan(guard, original["qr_text"])).status_code == 200
+    assert await harness.db.audit_logs.count_documents({"action": "PASS_ISSUED"}) == 1
+
+    replacement = await issue(guard, inside)
+    assert (await guard.get(path)).json()["qr_text"] == replacement["qr_text"]
+    assert (await scan(guard, original["qr_text"])).status_code == 409
+    await guard.post(f"/api/v1/visits/{inside['id']}/pass/revoke")
+    assert (await guard.get(path)).status_code == 409
+
+
+async def test_older_badge_can_be_scanned_for_matching_belongings_print(guard, inside):
+    issued = await issue(guard, inside)
+    path = f"/api/v1/visits/{inside['id']}/pass"
+    unavailable = await guard.get(f"{path}/print-data")
+    assert unavailable.status_code == 409 and unavailable.json()["error"]["code"] == "pass_not_recoverable"
+    scanned = await guard.post(f"{path}/verify-for-print", json={"qr_text": issued["qr_text"]})
+    assert scanned.status_code == 200 and scanned.json()["qr_text"] == issued["qr_text"]
+    assert scanned.headers["cache-control"] == "no-store"
+    wrong = await guard.post(f"{path}/verify-for-print", json={"qr_text": "CGP1:" + "0" * 64})
+    assert wrong.status_code == 409 and wrong.json()["error"]["code"] == "pass_mismatch"
+
+
 async def test_a_revoked_pass_is_refused_but_the_visit_can_still_be_closed(harness, guard, inside):
     qr = (await issue(guard, inside))["qr_text"]
     r = await guard.post(f"/api/v1/visits/{inside['id']}/pass/revoke")
@@ -188,14 +221,20 @@ async def test_anonymous_and_forged_pass_requests_are_refused(harness, guard, in
     anonymous = harness.client()
     visit = f"/api/v1/visits/{inside['id']}"
     for path, body in ((f"{visit}/pass", None), (f"{visit}/pass/revoke", None), (f"{visit}/badge-print", None),
+                       (f"{visit}/pass/verify-for-print", {"qr_text": qr}),
                        ("/api/v1/passes/resolve", {"qr_text": qr}), ("/api/v1/passes/check-out", {"qr_text": qr})):
         assert (await anonymous.post(path, json=body)).status_code == 401, path
         assert (await guard.post_without_csrf(path, json=body)).status_code == 403, path
+    assert (await anonymous.get(f"{visit}/pass/print-data")).status_code == 401
     assert (await guard.get(f"/api/v1/visits/{inside['id']}")).json()["status"] == "CHECKED_IN"
 
 
-async def test_pass_details_never_appear_in_visit_responses(guard, inside):
-    await issue(guard, inside)
+async def test_only_safe_badge_expiry_appears_in_visit_responses(harness, guard, inside):
+    harness.app.state.settings = make_settings(secrets_key=generate_key())
+    issued = await issue(guard, inside)
     for path in (f"/api/v1/visits/{inside['id']}", "/api/v1/visits", "/api/v1/visits/active"):
-        text = (await guard.get(path)).text
+        response = await guard.get(path)
+        text = response.text
+        assert issued["expires_at"] in text
+        assert "badge_expires_at" in text
         assert "token" not in text and "pass" not in text, path

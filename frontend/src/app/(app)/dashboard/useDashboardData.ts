@@ -5,7 +5,6 @@ import { activeVisits, listVisits, type Visit } from "@/lib/api/visits";
 import { isoDay } from "@/lib/format";
 
 export const REFRESH_MS = 60_000;
-export const LONG_STAY_HOURS = 8;
 /** Today's visits are counted in the browser from the visit list (at most this many are fetched). */
 export const TODAY_CAP = 500;
 const PAGE_SIZE = 100;
@@ -62,6 +61,11 @@ export function useDashboardData() {
   return { inside, today, loadedAt, refreshing, reload: load };
 }
 
-export function isLongStay(visit: Visit, now: number): boolean {
-  return visit.status === "CHECKED_IN" && now - new Date(visit.check_in_at).getTime() > LONG_STAY_HOURS * 3600_000;
+export type ExpiredBadgeVisit = Visit & { badge_expires_at: string };
+
+/** A visitor needs attention only after the issued badge's actual expiry time. */
+export function isBadgeExpired(visit: Visit, now: number): visit is ExpiredBadgeVisit {
+  const expiresAt = visit.badge_expires_at;
+  return visit.status === "CHECKED_IN" && typeof expiresAt === "string"
+    && new Date(expiresAt).getTime() <= now;
 }

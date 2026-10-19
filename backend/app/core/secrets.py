@@ -1,5 +1,5 @@
 """
-Encryption of secrets the application has to keep in the database (gate camera passwords).
+Encryption of secrets the application has to keep in the database (gate camera passwords and badge QR print data).
 
 AES-256-GCM (cryptography's AESGCM). The 32-byte key exists only in the server environment
 (CG_SECRETS_KEY, generated with `python -m app.cli generate-secrets-key`), never in the database or

@@ -42,6 +42,29 @@ async def test_complete_personal_material_slip_round_trips(guard, inside):
     assert legacy.json()["personal_material"] == material
 
 
+async def test_personal_material_accepts_fifteen_items_and_rejects_a_sixteenth(guard, inside):
+    items = [{"description": f"Item {number}", "qty_in": "1", "qty_out": None}
+             for number in range(1, 16)]
+    material = {
+        "contact_name": "Sara Ahmed", "date": "2026-10-09", "items": items,
+        "remarks": "", "authorised_by": "", "issued_by": "", "gate_officer": "",
+    }
+
+    accepted = await guard.patch(
+        f"/api/v1/visits/{inside['id']}/belongings",
+        json={"belongings": [], "personal_material": material},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert len(accepted.json()["personal_material"]["items"]) == 15
+    assert len(accepted.json()["belongings"]) == 15
+
+    rejected = await guard.patch(
+        f"/api/v1/visits/{inside['id']}/belongings",
+        json={"belongings": [], "personal_material": {**material, "items": [*items, {"description": "Item 16"}]}},
+    )
+    assert rejected.status_code == 422
+
+
 async def test_belongings_cannot_be_updated_after_checkout(guard, inside):
     assert (await guard.post(f"/api/v1/visits/{inside['id']}/check-out")).status_code == 200
     r = await guard.patch(f"/api/v1/visits/{inside['id']}/belongings", json={"belongings": ["Laptop"]})

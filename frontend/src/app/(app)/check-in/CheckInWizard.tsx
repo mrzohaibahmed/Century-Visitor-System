@@ -39,13 +39,15 @@ import {
 import { checkIn, checkOut, reasonLabel, type Visit, VISIT_REASONS, type VisitReason } from "@/lib/api/visits";
 import { formatDateTime } from "@/lib/format";
 import { normalizePhone, phoneError } from "@/lib/phone";
+import { personalMaterialFromVisit } from "@/lib/belongings";
 
 import {
   belongingsList, type DraftErrors, EMPTY_DRAFT, effectiveDepartmentId, emptyPersonalMaterial, filledBelongings,
   toCheckIn, validateDraft, type VisitDraft,
 } from "./draft";
 import { HostPicker } from "./HostPicker";
-import { PersonalMaterialForm } from "@/components/visits/PersonalMaterialForm";
+import { PersonalMaterialForm, PersonalMaterialPrintButton } from "@/components/visits/PersonalMaterialForm";
+import { VisitorBelongings } from "../visitors/[id]/VisitorBelongings";
 
 type Step =
   | { kind: "identify" }
@@ -707,6 +709,19 @@ function ReviewSection({ title, onEdit, editLabel, disabled, children }: {
 /** Checked in: the outcome first, then the badge to print (the main next step), then who and where. */
 function DoneStep({ visit, onNext }: { visit: Visit; onNext: () => void }) {
   const headingId = useId();
+  const [issuedPass, setIssuedPass] = useState<IssuedPass | null>(null);
+  const [materialVisit, setMaterialVisit] = useState(visit);
+  const hasPersonalMaterial = (materialVisit.personal_material?.items.length ?? 0) > 0 || materialVisit.belongings.length > 0;
+  const belongingsAction = hasPersonalMaterial && issuedPass ? (
+    <PersonalMaterialPrintButton
+      value={personalMaterialFromVisit(materialVisit.belongings, materialVisit.host.name ?? "", materialVisit.personal_material)}
+      vehicle={materialVisit.vehicle_registration ?? ""}
+      visitorName={materialVisit.visitor.name ?? ""}
+      visitId={materialVisit.id}
+      visitNumber={materialVisit.visit_number}
+      passQrText={issuedPass.qr_text}
+    />
+  ) : undefined;
   const details = [
     { label: "Visiting", value: visit.host_unlisted ? (
       <span className="flex flex-wrap items-center gap-2">
@@ -736,9 +751,9 @@ function DoneStep({ visit, onNext }: { visit: Visit; onNext: () => void }) {
       </div>
 
       <div className="grid gap-8 p-6 lg:grid-cols-[auto_1fr]">
-        <PassCard visit={visit} />
+        <PassCard visit={visit} onIssued={setIssuedPass} />
 
-        <div className="min-w-0 space-y-5">
+        <div className="min-w-0 space-y-5" data-testid="check-in-visit-details">
           <div className="flex items-center gap-3">
             {visit.photo_id ? (
               <div className="overflow-hidden rounded-xl">
@@ -755,8 +770,15 @@ function DoneStep({ visit, onNext }: { visit: Visit; onNext: () => void }) {
           {visit.host_unlisted && (
             <Alert tone="warn">The host is not in the directory; this visit is flagged for review.</Alert>
           )}
+          {belongingsAction && <div className="pt-2">{belongingsAction}</div>}
         </div>
       </div>
+
+      {visit.belongings.length > 0 && (
+        <div className="px-6 pb-6">
+          <VisitorBelongings visitId={visit.id} passQrText={issuedPass?.qr_text} onUpdated={setMaterialVisit} />
+        </div>
+      )}
 
       <div className="flex flex-col gap-3 border-t border-border px-6 py-5 lg:flex-row lg:justify-between">
         <Button variant="secondary" size="lg" onClick={onNext}>
@@ -866,7 +888,10 @@ export function PhotoStep({ visitor, capturedPhotoId = null, onCaptured, onBack,
 }
 
 // ---------------------------------------------------------------- pass and badge
-function PassCard({ visit }: { visit: Visit }) {
+function PassCard({ visit, onIssued }: {
+  visit: Visit;
+  onIssued?: (pass: IssuedPass) => void;
+}) {
   const [issued, setIssued] = useState<IssuedPass | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [issuing, setIssuing] = useState(false);
@@ -876,13 +901,15 @@ function PassCard({ visit }: { visit: Visit }) {
     setError(null);
     setIssuing(true);
     try {
-      setIssued(await issuePass(visit.id));
+      const pass = await issuePass(visit.id);
+      setIssued(pass);
+      onIssued?.(pass);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setIssuing(false);
     }
-  }, [visit.id]);
+  }, [visit.id, onIssued]);
 
   useEffect(() => {
     // Once per visit (React's development double-run would otherwise issue, and cancel, a first pass).

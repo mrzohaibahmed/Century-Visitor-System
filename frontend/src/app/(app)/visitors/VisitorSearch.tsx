@@ -16,14 +16,14 @@ import { formatDateTime } from "@/lib/format";
 /** The search needs a query (the API has no "all visitors" list); results come a page at a time. */
 export function VisitorSearch() {
   const [text, setText] = useState("");
-  const [query, setQuery] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const [hint, setHint] = useState<string | null>(null);
-  const list = usePagedList(query, (cursor) => searchVisitors(query ?? "", cursor));
+  const list = usePagedList(query, (cursor) => searchVisitors(query, cursor));
 
   function onSubmit(event: React.FormEvent) {
     event.preventDefault();
     const q = text.trim();
-    if (q.length < 2) return setHint("Type at least 2 characters.");
+    if (q.length === 1) return setHint("Type at least 2 characters, or leave this empty to show everyone.");
     setHint(null);
     if (q === query) list.reload();
     else setQuery(q);
@@ -44,29 +44,19 @@ export function VisitorSearch() {
         </Button>
       </form>
 
-      {query === null && (
-        <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border px-6 py-12 text-center">
-          <span aria-hidden="true" className="flex size-12 items-center justify-center rounded-full bg-surface-subtle text-ink-muted">
-            <Search className="size-6" />
-          </span>
-          <p className="font-semibold text-ink">Search for a visitor</p>
-          <p className="max-w-sm text-sm text-ink-muted">Type a name, a CNIC or passport number, or a phone number, then press Search.</p>
-        </div>
-      )}
-
       {list.error && (
-        <Alert tone="danger" title={list.items.length ? "Could not load more visitors" : "Unable to search visitors"}>
+        <Alert tone="danger" title={list.items.length ? "Could not load more visitors" : query ? "Unable to search visitors" : "Unable to load visitors"}>
           <p>{list.error}</p>
           <button type="button" onClick={list.reload} className="mt-1 font-semibold underline underline-offset-2">Try again</button>
         </Alert>
       )}
 
-      {query !== null && (searching || list.items.length > 0 || !list.error) && (
-        <section aria-label="Search results" aria-busy={searching || undefined}
+      {(searching || list.items.length > 0 || !list.error) && (
+        <section aria-label={query ? "Search results" : "Visitors in alphabetical order"} aria-busy={searching || undefined}
                  className="rounded-2xl border border-border bg-surface shadow-card">
           {searching && (
             <div role="status" className="space-y-4 p-5 sm:p-6">
-              <span className="sr-only">Searching…</span>
+              <span className="sr-only">{query ? "Searching…" : "Loading visitors…"}</span>
               {[0, 1, 2].map((i) => (
                 <div key={i} className="flex items-center gap-3">
                   <Skeleton className="size-9 rounded-full" />
@@ -82,16 +72,17 @@ export function VisitorSearch() {
               <span aria-hidden="true" className="flex size-12 items-center justify-center rounded-full bg-surface-subtle text-ink-muted">
                 <SearchX className="size-6" />
               </span>
-              <p className="font-semibold text-ink">No visitor matches “{query}”.</p>
-              <p className="max-w-sm text-sm text-ink-muted">Names match from the start; ID and phone numbers must be complete.</p>
+              <p className="font-semibold text-ink">{query ? `No visitor matches “${query}”.` : "No visitors are registered yet."}</p>
+              {query && <p className="max-w-sm text-sm text-ink-muted">Names match from the start; ID and phone numbers must be complete.</p>}
             </div>
           )}
 
           {list.items.length > 0 && (
             <>
               <p className="border-b border-border px-5 py-3 text-sm text-ink-muted sm:px-6" aria-live="polite">
-                {list.hasMore ? `Showing the first ${list.items.length} matches` : `${list.items.length} ${list.items.length === 1 ? "match" : "matches"}`}
-                {" "}for “{query}”
+                {query
+                  ? <>{list.hasMore ? `Showing the first ${list.items.length} matches` : `${list.items.length} ${list.items.length === 1 ? "match" : "matches"}`} for “{query}”</>
+                  : <>{list.hasMore ? `Showing the first ${list.items.length} visitors` : `${list.items.length} registered ${list.items.length === 1 ? "visitor" : "visitors"}`} · Alphabetical order</>}
               </p>
               {/* One markup for every width: columns from md, cards below. The header only labels the columns visually. */}
               <div aria-hidden="true" className="hidden gap-4 border-b border-border px-6 py-2.5 text-xs font-medium text-ink-muted

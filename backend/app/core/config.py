@@ -105,11 +105,11 @@ class Settings(BaseSettings):
     # The background sender inside the API process (tests switch it off and drive it directly).
     email_worker: bool = True
 
-    # --- Secrets kept in the database (gate camera passwords) ----------------------------
+    # --- Secrets kept in the database (gate camera passwords and badge QR print data) -----
     # AES-256-GCM key (base64, 32 bytes): python -m app.cli generate-secrets-key. Only here, in the
     # server environment; never in the database or the repository.
     # Unset: camera passwords cannot be saved (everything else works). Changing it makes saved
-    # camera passwords unreadable: they must then be entered again.
+    # camera passwords and stored badge print data unreadable.
     secrets_key: SecretStr | None = None
 
     @field_validator("mongo_db")

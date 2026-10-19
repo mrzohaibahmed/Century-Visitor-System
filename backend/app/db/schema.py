@@ -19,7 +19,10 @@ from dataclasses import dataclass, field
 
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
-SCHEMA_VERSION = 7   # v7: complete Personal Material Returnable slip on visits
+SCHEMA_VERSION = 10  # v10: encrypted current badge QR for matching belongings slips
+# v9: alphabetical, paginated visitor directory
+# v8: allow up to 15 Personal Material items per visit
+# v7: complete Personal Material Returnable slip on visits
 # v6 (Reports): entry_denials (refused entries, for reporting)
 # v5 (Reports): visit indexes for the guard and gate filters; department e-mail type
 # v4 (Phase 6A): notifications; hosts.linked_user_id
@@ -119,6 +122,7 @@ COLLECTIONS: list[CollectionSpec] = [
             IndexModel([("identity.type", ASCENDING), ("identity.number", ASCENDING)], name="identity_unique",
                        unique=True, partialFilterExpression={"identity.number": {"$type": "string"}}),
             IndexModel([("name_search", ASCENDING)], name="name_prefix"),      # search by name
+            IndexModel([("name_search", ASCENDING), ("_id", ASCENDING)], name="name_directory"),
             IndexModel([("phone", ASCENDING)], name="phone"),                  # search by phone (shared phones allowed)
         ],
     ),
@@ -148,7 +152,7 @@ COLLECTIONS: list[CollectionSpec] = [
             "personal_material": {"bsonType": ["object", "null"], "properties": {
                 "contact_name": {"bsonType": "string", "maxLength": 80},
                 "date": {"bsonType": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
-                "items": {"bsonType": "array", "maxItems": 10, "items": {
+                "items": {"bsonType": "array", "maxItems": 15, "items": {
                     "bsonType": "object", "required": ["description"], "properties": {
                         "description": {"bsonType": "string", "minLength": 1, "maxLength": 40},
                         "qty_in": {"bsonType": ["string", "null"], "pattern": "^[0-9]{1,4}$"},
@@ -159,12 +163,13 @@ COLLECTIONS: list[CollectionSpec] = [
                 "issued_by": {"bsonType": "string", "maxLength": 80},
                 "gate_officer": {"bsonType": "string", "maxLength": 80},
             }},
-            # The QR pass: only hashes of the random tokens are stored (the token is printed on the badge).
+            # The QR pass: hash for lookups, optionally encrypted for matching belongings prints.
             "pass": {"bsonType": ["object", "null"], "required": ["token_hash", "issued_at", "expires_at"],
                      "properties": {
                          "token_hash": SHA256_HEX, "issued_at": DATE, "expires_at": DATE,
                          "issued_by": OBJECT_ID,
                          "revoked_at": OPTIONAL_DATE, "revoked_by": OPTIONAL_OBJECT_ID,
+                         "qr_sealed": {"bsonType": "object"},
                          "revoked_token_hashes": {"bsonType": "array", "items": SHA256_HEX}}},
             "created_at": DATE, "updated_at": DATE,
         }),

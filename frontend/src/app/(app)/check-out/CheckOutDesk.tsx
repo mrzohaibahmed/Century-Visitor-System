@@ -21,7 +21,7 @@ import { IDENTITY_LABELS, type IdentityType } from "@/lib/api/visitors";
 import { activeVisits, checkOut, checkOutBy, type CheckOutResult, type Visit, VISIT_NUMBER_PATTERN } from "@/lib/api/visits";
 import { caps, formatDuration, formatTime } from "@/lib/format";
 
-import { isLongStay } from "../dashboard/useDashboardData";
+import { isBadgeExpired } from "../dashboard/useDashboardData";
 
 const REFRESH_MS = 30_000;
 
@@ -212,7 +212,7 @@ export function CheckOutDesk() {
                           <span>In <span className="text-ink tabular-nums">{formatTime(v.check_in_at)}</span> · <span className="caps">{v.gate.name}</span></span>
                           <span aria-hidden="true">·</span>
                           <span className="tabular-nums">{formatDuration(v.check_in_at)}</span>
-                          {now !== null && isLongStay(v, now) && <StatusBadge tone="warn">Long stay</StatusBadge>}
+                          {now !== null && isBadgeExpired(v, now) && <StatusBadge tone="warn">Badge expired</StatusBadge>}
                         </p>
                       </div>
                     </div>

@@ -28,7 +28,7 @@ async def _with_status(database: Database, doc: dict) -> VisitorLookupOut:
 
 
 @router.get("", response_model=Page[VisitorOut])
-async def search_visitors(q: str = Query(min_length=2, max_length=100), cursor: str | None = None,
+async def search_visitors(q: str | None = Query(default=None, min_length=2, max_length=100), cursor: str | None = None,
                           ctx: AuthContext = Depends(require(Permission.VISITOR_READ)),
                           database: Database = Depends(get_database)) -> Page[VisitorOut]:
     docs, next_cursor = await svc.search(database.db, q, cursor)

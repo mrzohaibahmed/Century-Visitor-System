@@ -117,3 +117,14 @@ async def test_a_visit_pass_stores_only_a_token_hash(migrated):
                                                                             "expires_at": NOW}})
     await migrated.db.visits.insert_one({**visit(ObjectId()), "pass": {"token_hash": "f" * 64, "issued_at": NOW,
                                                                         "expires_at": NOW}})
+
+
+async def test_personal_material_validator_allows_fifteen_items_only(migrated):
+    item = {"description": "Laptop", "qty_in": "1", "qty_out": None}
+    material = {"items": [item] * 15}
+    await migrated.db.visits.insert_one({**visit(ObjectId()), "personal_material": material})
+    with pytest.raises(WriteError):
+        await migrated.db.visits.insert_one({
+            **visit(ObjectId(), number="V-2026-000002"),
+            "personal_material": {"items": [item] * 16},
+        })

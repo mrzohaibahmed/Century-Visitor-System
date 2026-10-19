@@ -34,10 +34,10 @@ const ICONS: Record<string, LucideIcon> = {
 export function Brand({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      {/* The Century crest on the brand navy, as on the login page (the same in both themes). */}
+      {/* The transparent crest sits directly on the sidebar so it has no dark tile behind it. */}
       <span aria-hidden="true"
-            className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-linear-160 from-brand-900 to-navy-950 ring-1 ring-gold-400/30">
-        <Image src={crest} alt="" sizes="36px" className="h-auto w-9" />
+            className="flex h-11 w-12 shrink-0 items-center justify-center">
+        <Image src={crest} alt="" sizes="44px" className="h-auto w-11 drop-shadow-[0_1px_1px_rgba(0,0,0,0.28)]" />
       </span>
       <span className={collapsed ? "sr-only" : "min-w-0 leading-tight"}>
         <span className="block truncate text-sm font-bold tracking-wide text-ink">Century Gate</span>

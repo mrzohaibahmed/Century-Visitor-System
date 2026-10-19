@@ -106,10 +106,12 @@ describe("CheckOutDesk states", () => {
     expect(screen.queryByText("Unable to load visitors inside")).toBeNull();
   });
 
-  it("marks a visitor inside for more than 8 hours as a long stay", async () => {
-    api.activeVisits.mockResolvedValue({ items: [{ ...VISIT, check_in_at: new Date(Date.now() - 9 * 3600_000).toISOString() }], total: 1 });
+  it("marks a visitor who remains inside after badge expiry", async () => {
+    api.activeVisits.mockResolvedValue({
+      items: [{ ...VISIT, badge_expires_at: new Date(Date.now() - 60_000).toISOString() }], total: 1,
+    });
     render(<CheckOutDesk />);
-    expect(await screen.findByText("Long stay")).toBeTruthy();
+    expect(await screen.findByText("Badge expired")).toBeTruthy();
   });
 });
 

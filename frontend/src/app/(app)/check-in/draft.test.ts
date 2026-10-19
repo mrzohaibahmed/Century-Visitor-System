@@ -4,6 +4,7 @@ import type { Host } from "@/lib/api/directory";
 
 import {
   emptyBelongingItem, EMPTY_DRAFT, emptyPersonalMaterial, formatBelonging, toCheckIn, validateDraft,
+  type VisitDraft,
 } from "./draft";
 
 const HOST: Host = {
@@ -29,12 +30,20 @@ describe("validateDraft", () => {
     expect(validateDraft({ ...EMPTY_DRAFT, host: HOST, reason: "OTHER" }).reasonNote).toBeDefined();
   });
 
-  it("limits belongings to ten items", () => {
-    const items = Array.from({ length: 11 }, (_, i) => ({
+  it("accepts fifteen belongings and rejects a sixteenth", () => {
+    const items = Array.from({ length: 15 }, (_, i) => ({
       ...emptyBelongingItem(), description: `item${i}`, qtyIn: "1",
     }));
     const personalMaterial = { ...emptyPersonalMaterial(), items };
-    expect(validateDraft({ ...EMPTY_DRAFT, host: HOST, reason: "INTERVIEW", personalMaterial }).belongings).toBeDefined();
+    const draft = { ...EMPTY_DRAFT, host: HOST, reason: "INTERVIEW", personalMaterial } satisfies VisitDraft;
+    expect(validateDraft(draft).belongings).toBeUndefined();
+    expect(validateDraft({
+      ...draft,
+      personalMaterial: {
+        ...personalMaterial,
+        items: [...items, { ...emptyBelongingItem(), description: "item15", qtyIn: "1" }],
+      },
+    }).belongings).toBeDefined();
   });
 });
 

@@ -23,22 +23,39 @@ function search(q: string) {
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
 }
 
-beforeEach(() => api.searchVisitors.mockReset());
+beforeEach(() => {
+  api.searchVisitors.mockReset();
+  api.searchVisitors.mockResolvedValue({ items: [], next_cursor: null });
+});
 afterEach(cleanup);
 
 describe("VisitorSearch", () => {
-  it("asks for a search first and needs at least 2 characters", () => {
+  it("loads the alphabetical visitor directory immediately", async () => {
+    api.searchVisitors.mockResolvedValueOnce({
+      items: [visitor({ id: "v2", full_name: "Ali Raza" }), visitor({ id: "v1", full_name: "Hamza Tariq" })],
+      next_cursor: null,
+    });
     render(<VisitorSearch />);
-    expect(screen.getByText("Search for a visitor")).toBeTruthy();
+    expect(await screen.findByText(/2 registered visitors/)).toBeTruthy();
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toEqual([
+      expect.stringContaining("Ali Raza"), expect.stringContaining("Hamza Tariq"),
+    ]);
+    expect(api.searchVisitors).toHaveBeenCalledWith("", null);
+  });
+
+  it("needs at least 2 characters for a filter, while an empty search shows everyone", async () => {
+    render(<VisitorSearch />);
+    expect(await screen.findByText("No visitors are registered yet.")).toBeTruthy();
     search("h");
-    expect(screen.getByText("Type at least 2 characters.")).toBeTruthy();
-    expect(api.searchVisitors).not.toHaveBeenCalled();
+    expect(screen.getByText(/Type at least 2 characters/)).toBeTruthy();
+    expect(api.searchVisitors).toHaveBeenCalledTimes(1);
   });
 
   it("shows a loading state, not a false 'no match', then links each visitor to their record", async () => {
     let resolve: (v: unknown) => void = () => {};
-    api.searchVisitors.mockReturnValue(new Promise((r) => { resolve = r; }));
     render(<VisitorSearch />);
+    expect(await screen.findByText("No visitors are registered yet.")).toBeTruthy();
+    api.searchVisitors.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
     search("hamza");
     expect(screen.getByText("Searching…")).toBeTruthy();
     expect(screen.queryByText(/No visitor matches/)).toBeNull();
@@ -54,15 +71,16 @@ describe("VisitorSearch", () => {
   });
 
   it("says when nothing matches", async () => {
-    api.searchVisitors.mockResolvedValue({ items: [], next_cursor: null });
     render(<VisitorSearch />);
+    expect(await screen.findByText("No visitors are registered yet.")).toBeTruthy();
     search("zzz");
     expect(await screen.findByText("No visitor matches “zzz”.")).toBeTruthy();
   });
 
   it("reports a failed search and retries it", async () => {
-    api.searchVisitors.mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ items: [visitor()], next_cursor: null });
     render(<VisitorSearch />);
+    expect(await screen.findByText("No visitors are registered yet.")).toBeTruthy();
+    api.searchVisitors.mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ items: [visitor()], next_cursor: null });
     search("hamza");
     expect(await screen.findByText("Unable to search visitors")).toBeTruthy();
     expect(screen.queryByText(/No visitor matches/)).toBeNull();
@@ -71,10 +89,11 @@ describe("VisitorSearch", () => {
   });
 
   it("loads the next page of matches", async () => {
+    render(<VisitorSearch />);
+    expect(await screen.findByText("No visitors are registered yet.")).toBeTruthy();
     api.searchVisitors
       .mockResolvedValueOnce({ items: [visitor()], next_cursor: "c1" })
       .mockResolvedValueOnce({ items: [visitor({ id: "v2", full_name: "Hamza Ali" })], next_cursor: null });
-    render(<VisitorSearch />);
     search("hamza");
     expect(await screen.findByText(/Showing the first 1 matches/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));

@@ -9,7 +9,9 @@ import { installCamera } from "@/test-utils/camera";
 
 const api = {
   lookupVisitor: vi.fn(), createVisitor: vi.fn(), getVisitor: vi.fn(), checkIn: vi.fn(), checkOut: vi.fn(),
-  listHosts: vi.fn(), listDepartments: vi.fn(), issuePass: vi.fn(), recordBadgePrint: vi.fn(), uploadVisitorPhoto: vi.fn(),
+  getVisit: vi.fn(),
+  listHosts: vi.fn(), listDepartments: vi.fn(), issuePass: vi.fn(), recordBadgePrint: vi.fn(),
+  verifyPassForPrint: vi.fn(), uploadVisitorPhoto: vi.fn(),
   sessionGateCamera: vi.fn(), captureGateCameraPhoto: vi.fn(), gateCameraPreviewFrame: vi.fn(),
 };
 vi.mock("@/lib/api/visitors", async (original) => ({
@@ -22,11 +24,13 @@ vi.mock("@/lib/api/visits", async (original) => ({
   ...(await original<typeof import("@/lib/api/visits")>()),
   checkIn: (...a: unknown[]) => api.checkIn(...a),
   checkOut: (...a: unknown[]) => api.checkOut(...a),
+  getVisit: (...a: unknown[]) => api.getVisit(...a),
 }));
 vi.mock("@/lib/api/passes", async (original) => ({
   ...(await original<typeof import("@/lib/api/passes")>()),
   issuePass: (...a: unknown[]) => api.issuePass(...a),
   recordBadgePrint: (...a: unknown[]) => api.recordBadgePrint(...a),
+  verifyPassForPrint: (...a: unknown[]) => api.verifyPassForPrint(...a),
 }));
 vi.mock("@/lib/api/photos", async (original) => ({
   ...(await original<typeof import("@/lib/api/photos")>()),
@@ -78,12 +82,14 @@ async function detailsAndSkipPhoto() {
 
 beforeEach(() => {
   Object.values(api).forEach((fn) => fn.mockReset());
+  window.print = vi.fn();
   api.listHosts.mockResolvedValue([HOST]);
   api.listDepartments.mockResolvedValue([{ id: "d1", name: "HR", notification_email: null, is_active: true }]);
   api.issuePass.mockResolvedValue(ISSUED);
+  api.verifyPassForPrint.mockResolvedValue(ISSUED);
   api.sessionGateCamera.mockResolvedValue({ available: false });          // no gate camera: the webcam, as before
 });
-afterEach(cleanup);
+afterEach(() => { window.dispatchEvent(new Event("afterprint")); cleanup(); });
 
 function findVisitor(number = "3520112345671") {
   render(<CheckInWizard />);
@@ -126,7 +132,7 @@ describe("CheckInWizard", () => {
     findVisitor();
     const denied = await screen.findByRole("alert");
     expect(denied.getAttribute("data-testid")).toBe("entry-denied");
-    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Entry not permitted" }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Entry not permitted" })));
     expect(screen.queryByRole("button", { name: /Review|Confirm/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect((screen.getByLabelText("ID number") as HTMLInputElement).value).toBe("");
@@ -136,7 +142,7 @@ describe("CheckInWizard", () => {
     api.lookupVisitor.mockResolvedValue(CLEAR);
     findVisitor();
     const heading = await screen.findByRole("heading", { name: "Visit details" });
-    expect(document.activeElement).toBe(heading);
+    await waitFor(() => expect(document.activeElement).toBe(heading));
   });
 
   it("checks out the earlier visit of a visitor still inside, and reports a failure without moving on", async () => {
@@ -266,7 +272,7 @@ describe("CheckInWizard", () => {
     fireEvent.change(screen.getByLabelText("Description 1"), { target: { value: "Laptop" } });
     fireEvent.change(screen.getByLabelText("Quantity in 1"), { target: { value: "01" } });
     fireEvent.click(screen.getByRole("button", { name: "Save belongings", hidden: true }));
-    expect(await screen.findByText("Laptop")).toBeTruthy();
+    expect(await screen.findByText("LAPTOP")).toBeTruthy();
   });
 
   it("goes back from review to edit the visit details without losing them", async () => {
@@ -392,8 +398,45 @@ describe("CheckInWizard photo, pass and badge", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Confirm check-in" }));
     expect((await screen.findByTestId("badge-name")).textContent).toBe("Ali Khan");
     expect(screen.getByRole("button", { name: "Print badge" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Print personal belongings form" })).toBeNull();
     expect(api.issuePass).toHaveBeenCalledTimes(1);
     expect(api.issuePass).toHaveBeenCalledWith("visit1");
+  });
+
+  it("offers the numbered belongings slip with the same QR after check-in", async () => {
+    const withBelongings: Visit = {
+      ...VISIT,
+      belongings: ["LAPTOP"],
+      personal_material: {
+        contact_name: "Sara Ahmed", date: "2026-09-27",
+        items: [{ description: "LAPTOP", qty_in: "1", qty_out: null }],
+        remarks: "", authorised_by: "", issued_by: "", gate_officer: "",
+      },
+    };
+    api.checkIn.mockResolvedValue(withBelongings);
+    api.getVisit.mockResolvedValue(withBelongings);
+    await toPhotoStep();
+    fireEvent.click(screen.getByRole("button", { name: "Continue without a photo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm check-in" }));
+    const badgeButton = await screen.findByRole("button", { name: "Print badge" });
+    const materialButton = await screen.findByRole("button", { name: "Print personal belongings form" });
+    expect(screen.getByTestId("check-in-visit-details").contains(materialButton)).toBe(true);
+    expect(badgeButton.parentElement?.contains(materialButton)).toBe(false);
+    await waitFor(() => expect((materialButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(materialButton);
+    await waitFor(() => expect(document.body.dataset.printTarget).toBe("belongings"));
+    expect(document.body.dataset.printSource).toBe("completion");
+    expect(api.verifyPassForPrint).toHaveBeenCalledWith("visit1", ISSUED.qr_text);
+    expect(document.querySelector(".belongings-print-root")?.textContent).toContain(VISIT.visit_number);
+    expect(document.querySelector(".belongings-print-root img[alt='Visitor badge QR code']")).toBeTruthy();
+    window.dispatchEvent(new Event("afterprint"));
+    expect(await screen.findByRole("button", { name: /LAPTOP.*Edit/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /LAPTOP.*Edit/ }));
+    expect((screen.getByLabelText("S. No.") as HTMLInputElement).value).toBe(VISIT.visit_number);
+    await waitFor(() => expect(document.querySelector(".belongings-print-root img[alt='Visitor badge QR code']"))
+      .toBeTruthy());
+    expect(document.querySelector(".badge-print-root")).toBeTruthy();
+    expect(api.issuePass).toHaveBeenCalledTimes(1);
   });
 
   it("confirms the check-in, then starts the next visitor from a clean slate", async () => {

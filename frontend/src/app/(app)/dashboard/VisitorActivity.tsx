@@ -11,13 +11,15 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import type { Visit } from "@/lib/api/visits";
 import { formatDuration, formatTime } from "@/lib/format";
 
-import { isLongStay, type Loadable, type Today } from "./useDashboardData";
+import { isBadgeExpired, type Loadable, type Today } from "./useDashboardData";
 
 const SHOWN = 10;
 
 function VisitStatus({ visit, now }: { visit: Visit; now: number }) {
   if (visit.status === "CHECKED_OUT") return <StatusBadge tone="neutral">Checked out</StatusBadge>;
-  return isLongStay(visit, now) ? <StatusBadge tone="warn">Long stay</StatusBadge> : <StatusBadge tone="ok">On site</StatusBadge>;
+  return isBadgeExpired(visit, now)
+    ? <StatusBadge tone="warn">Badge expired</StatusBadge>
+    : <StatusBadge tone="ok">On site</StatusBadge>;
 }
 
 function VisitorName({ visit }: { visit: Visit }) {

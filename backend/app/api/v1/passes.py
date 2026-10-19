@@ -24,6 +24,30 @@ async def issue_pass(visit_id: str, request: Request, ctx: AuthContext = Depends
                          badge=BadgeOut.from_visit(issued.visit, settings.organization_name, issued.expires_at))
 
 
+@visit_passes.get("/{visit_id}/pass/print-data", response_model=IssuedPassOut)
+async def printable_pass(visit_id: str, response: Response,
+                         ctx: AuthContext = Depends(require(Permission.PASS_ISSUE)),
+                         database: Database = Depends(get_database),
+                         settings: Settings = Depends(get_settings)) -> IssuedPassOut:
+    """Current badge QR for an authorized belongings print; does not replace the badge."""
+    response.headers["Cache-Control"] = "no-store"
+    issued = await svc.printable(database.db, settings, visit_id)
+    return IssuedPassOut(qr_text=issued.qr_text, expires_at=issued.expires_at,
+                         badge=BadgeOut.from_visit(issued.visit, settings.organization_name, issued.expires_at))
+
+
+@visit_passes.post("/{visit_id}/pass/verify-for-print", response_model=IssuedPassOut)
+async def verify_pass_for_print(visit_id: str, body: ScannedPass, response: Response,
+                                ctx: AuthContext = Depends(require(Permission.PASS_ISSUE)),
+                                database: Database = Depends(get_database),
+                                settings: Settings = Depends(get_settings)) -> IssuedPassOut:
+    """Verify an older badge scanned locally before putting its QR on the slip."""
+    response.headers["Cache-Control"] = "no-store"
+    issued = await svc.verify_for_print(database.db, visit_id, body.qr_text)
+    return IssuedPassOut(qr_text=issued.qr_text, expires_at=issued.expires_at,
+                         badge=BadgeOut.from_visit(issued.visit, settings.organization_name, issued.expires_at))
+
+
 @visit_passes.post("/{visit_id}/pass/revoke", response_model=VisitOut)
 async def revoke_pass(visit_id: str, request: Request, ctx: AuthContext = Depends(require(Permission.PASS_ISSUE)),
                       database: Database = Depends(get_database)) -> VisitOut:

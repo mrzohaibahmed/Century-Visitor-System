@@ -1,7 +1,7 @@
 /** Personal Material Returnable slip: draft types and conversion to/from stored visit belongings. */
 import { isoDay } from "@/lib/format";
 
-export const MAX_BELONGINGS = 10;
+export const MAX_BELONGINGS = 15;
 /** Matches the backend Belonging max length. */
 export const MAX_BELONGING_LENGTH = 40;
 

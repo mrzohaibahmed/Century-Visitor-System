@@ -39,8 +39,17 @@ PAGE_LIMIT_MAX = 100
 NOT_FOUND = AppError(404, "not_found", "Visit not found.")
 # Month in visit numbers: fixed English capitals, whatever the server's locale.
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
-# Lists never return large or secret fields.
-LIST_PROJECTION = {"pass": 0}
+# Lists retain only the badge expiry needed by the UI. Authentication and
+# revocation details remain excluded from every visit response.
+LIST_PROJECTION = {
+    "pass.token_hash": 0,
+    "pass.issued_at": 0,
+    "pass.issued_by": 0,
+    "pass.revoked_at": 0,
+    "pass.revoked_by": 0,
+    "pass.revoked_token_hashes": 0,
+    "pass.qr_sealed": 0,
+}
 
 
 def _oid(value: str) -> ObjectId:

@@ -37,9 +37,15 @@ beforeEach(() => { Object.values(api).forEach((fn) => fn.mockReset()); seq = 0; 
 afterEach(cleanup);
 
 describe("Dashboard", () => {
-  it("counts today's visits across pages and flags long stays", async () => {
-    const longStay = visit({ check_in_at: hoursAgo(9), visitor: ref("vx", "Kamran Long") });
-    api.activeVisits.mockResolvedValue({ items: [visit(), longStay], total: 2 });
+  it("counts today's visits across pages and flags stays after badge expiry", async () => {
+    const expired = visit({
+      check_in_at: hoursAgo(2), badge_expires_at: hoursAgo(1), visitor: ref("vx", "Kamran Expired"),
+    });
+    const oldButValid = visit({
+      check_in_at: hoursAgo(9), badge_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+      visitor: ref("vy", "Sara Valid"),
+    });
+    api.activeVisits.mockResolvedValue({ items: [expired, oldButValid], total: 2 });
     api.listVisits
       .mockResolvedValueOnce({ items: [visit(), visit({ status: "CHECKED_OUT", check_out_at: hoursAgo(1) })], next_cursor: "c1" })
       .mockResolvedValueOnce({ items: [visit({ status: "CHECKED_OUT", check_out_at: hoursAgo(2) })], next_cursor: null });
@@ -48,7 +54,7 @@ describe("Dashboard", () => {
     expect((await screen.findByTestId("inside-count")).textContent).toBe("2");
     expect(await within(tile("Checked in")).findByText("3")).toBeTruthy();
     expect(within(tile("Checked out")).getByText("2")).toBeTruthy();
-    expect(within(tile("Stays over 8 h")).getByText("1")).toBeTruthy();
+    expect(within(tile("Stays after badge expiry")).getByText("1")).toBeTruthy();
     expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/, Ayesha$/);
 
     // Pages of 100, following the cursor, for today's check-in day.
@@ -56,7 +62,8 @@ describe("Dashboard", () => {
     const [filters, cursor, , limit] = api.listVisits.mock.calls[1];
     expect(filters).toEqual({ from: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), to: filters.from });
     expect([cursor, limit]).toEqual(["c1", 100]);
-    expect(screen.getAllByText("Kamran Long").length).toBeGreaterThan(0);   // listed under Alerts
+    expect(screen.getAllByText("Kamran Expired").length).toBeGreaterThan(0);   // listed under Alerts
+    expect(screen.queryByText("Sara Valid")).toBeNull();                        // nine hours is not the rule
   });
 
   it("stops at 500 visits and says so", async () => {

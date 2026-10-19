@@ -11,6 +11,7 @@ import { errorMessage } from "@/lib/api/client";
 import { type IssuedPass, recordBadgePrint } from "@/lib/api/passes";
 import { photoUrl } from "@/lib/api/photos";
 import { formatDateTime } from "@/lib/format";
+import { printOnly } from "@/lib/print";
 
 /**
  * The printed visitor badge: a CR80 card (54 × 85.6 mm, portrait), the standard ID-card size
@@ -186,7 +187,7 @@ export function BadgePreview({ issued, visitId, photoId, prominent = false }: {
     // print the "Photo unavailable" placeholder if it cannot be loaded.
     const img = printRoot?.querySelector<HTMLImageElement>("img.badge-photo");
     if (img && !(await imageReady(img))) flushSync(() => setFailedPhotoId(photoId));
-    window.print();
+    printOnly("badge");
   }
 
   return (

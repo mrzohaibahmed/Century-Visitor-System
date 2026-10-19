@@ -132,7 +132,7 @@ async def test_unlisted_host_is_allowed_and_flagged(guard, directory):
     ({"reason_code": "OTHER"}, 422),                                            # other without a note
     ({"reason_code": "PARTY"}, 422),
     ({"vehicle_registration": "LE@1234"}, 422),
-    ({"belongings": ["x"] * 11}, 422),
+    ({"belongings": ["x"] * 16}, 422),
 ])
 async def test_invalid_check_ins(guard, directory, overrides, code):
     v = await new_visitor(guard)

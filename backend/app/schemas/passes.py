@@ -34,8 +34,7 @@ class BadgeOut(BaseModel):
 
 
 class IssuedPassOut(BaseModel):
-    """Returned once, to print the badge. The token is not stored anywhere in readable form;
-    printing again means issuing a new pass (which cancels this one)."""
+    """Badge print data. The active token is stored encrypted when CG_SECRETS_KEY is configured."""
     qr_text: str
     expires_at: datetime
     badge: BadgeOut

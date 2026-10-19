@@ -9,7 +9,7 @@ import { StatTile } from "@/components/ui/StatTile";
 
 import { DashboardStatus } from "./DashboardStatus";
 import { LongStayAlerts } from "./LongStayAlerts";
-import { isLongStay, LONG_STAY_HOURS, TODAY_CAP, useDashboardData } from "./useDashboardData";
+import { isBadgeExpired, TODAY_CAP, useDashboardData } from "./useDashboardData";
 import { VisitorActivity } from "./VisitorActivity";
 
 function greeting(hour: number): string {
@@ -28,7 +28,7 @@ export function Dashboard() {
 
   // null while loading; "—" when a value could not be loaded at all.
   const unknown = (error: string | null) => (error ? "—" : null);
-  const longStays = inside.data ? inside.data.items.filter((v) => isLongStay(v, now)) : null;
+  const expiredBadges = inside.data ? inside.data.items.filter((v) => isBadgeExpired(v, now)) : null;
   const plus = today.data?.capped ? "+" : "";
   const checkedIn = today.data ? `${Math.min(today.data.items.length, TODAY_CAP)}${plus}` : unknown(today.error);
   const checkedOut = today.data
@@ -63,16 +63,16 @@ export function Dashboard() {
                   value={inside.data ? inside.data.total : unknown(inside.error)} hint="All gates" />
         <StatTile label="Checked in" icon={<LogIn />} tone="ok" value={checkedIn} hint="Today, all gates" />
         <StatTile label="Checked out" icon={<LogOut />} value={checkedOut} hint="Of today's check-ins" />
-        <StatTile label={`Stays over ${LONG_STAY_HOURS} h`} icon={<Clock />}
-                  tone={longStays && longStays.length > 0 ? "warn" : "neutral"}
-                  value={longStays ? longStays.length : unknown(inside.error)} hint="Still inside" />
+        <StatTile label="Stays after badge expiry" icon={<Clock />}
+                  tone={expiredBadges && expiredBadges.length > 0 ? "warn" : "neutral"}
+                  value={expiredBadges ? expiredBadges.length : unknown(inside.error)} hint="Still inside" />
       </section>
 
       <VisitorActivity today={today} now={now} loadedAt={loadedAt} refreshing={refreshing} onRefresh={() => void reload()} />
 
       {/* grid-cols-1 (minmax(0, 1fr)): a column never grows past the screen to fit a long row. */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
-        <LongStayAlerts longStays={longStays} error={inside.error} now={now} />
+        <LongStayAlerts expiredBadges={expiredBadges} error={inside.error} now={now} />
         <DashboardStatus />
       </div>
     </div>

@@ -34,10 +34,12 @@ export function lookupVisitor(type: IdentityType, number: string, signal?: Abort
   return apiRequest<VisitorWithStatus>(`/visitors/lookup?${params}`, { signal });
 }
 
-export function searchVisitors(q: string, cursor?: string | null, signal?: AbortSignal): Promise<Page<Visitor>> {
-  const params = new URLSearchParams({ q: q.trim() });
+export function searchVisitors(q = "", cursor?: string | null, signal?: AbortSignal): Promise<Page<Visitor>> {
+  const params = new URLSearchParams();
+  if (q.trim()) params.set("q", q.trim());
   if (cursor) params.set("cursor", cursor);
-  return apiRequest<Page<Visitor>>(`/visitors?${params}`, { signal });
+  const suffix = params.size ? `?${params}` : "";
+  return apiRequest<Page<Visitor>>(`/visitors${suffix}`, { signal });
 }
 
 export type NewVisitor = { full_name: string; identity: Identity; phone?: string | null };

@@ -13,7 +13,7 @@ export type Badge = {
   valid_until: string;
 };
 
-/** Returned once for printing. Printing again means issuing a new pass, which cancels this one. */
+/** Badge print data; reissuing a badge cancels its previous QR. */
 export type IssuedPass = { qr_text: string; expires_at: string; badge: Badge };
 
 export type ScanResult = { status: "VALID" | "CHECKED_OUT"; visit: Visit };
@@ -27,6 +27,17 @@ export function looksLikePass(text: string): boolean {
 
 export function issuePass(visitId: string): Promise<IssuedPass> {
   return apiRequest<IssuedPass>(`/visits/${encodeURIComponent(visitId)}/pass`, { method: "POST" });
+}
+
+/** Read the current badge QR for a belongings slip without changing the badge. */
+export function printablePass(visitId: string): Promise<IssuedPass> {
+  return apiRequest<IssuedPass>(`/visits/${encodeURIComponent(visitId)}/pass/print-data`);
+}
+
+/** For badges issued before encrypted retrieval was available: verify a physical badge scan. */
+export function verifyPassForPrint(visitId: string, qrText: string): Promise<IssuedPass> {
+  return apiRequest<IssuedPass>(`/visits/${encodeURIComponent(visitId)}/pass/verify-for-print`,
+    { method: "POST", body: { qr_text: qrText } });
 }
 
 export function recordBadgePrint(visitId: string): Promise<void> {

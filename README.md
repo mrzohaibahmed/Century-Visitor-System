@@ -66,7 +66,7 @@
 
 ### 1. Pass Security & QR Token Architecture
 - **256-Bit Cryptographic Token**: QR codes hold only `CGP1:` followed by 64 random hexadecimal digits (256 bits of entropy).
-- **Hashed Database Storage**: The database stores only the SHA-256 hash of tokens. Database access leaks zero usable pass credentials.
+- **Protected Database Storage**: The database stores a SHA-256 hash for token lookup. When `CG_SECRETS_KEY` is configured, it also stores an AES-256-GCM encrypted copy so the same QR can be printed on the visitor's belongings slip. A database copy without the server key has no usable pass token.
 - **Token Invalidation Lifecycle**: Passes automatically invalidate upon check-out, badge reprint (`pass_replaced`), manual admin revocation (`pass_revoked`), or daily gate closing time (`CG_PASS_DAY_END_HOUR/MINUTE`, default 16:30 local).
 
 ### 2. Visitor Photo Storage Security
@@ -94,6 +94,7 @@
 - **Standard Card Dimensions**: Formatted for standard portrait CR80 cards (**54 × 85.6 mm**).
 - **Clean Print Layout**: Displays organization name, site address, visitor name, visit number, host, department, entry time, gate, and QR token. Sensitive ID/CNIC numbers and phone numbers are excluded from printed badges.
 - **Instant Badge Reprint**: Supports secure badge reprinting which automatically revokes previous QR tokens.
+- **Matching Belongings Slip**: Once the badge is issued, the Personal Material Returnable form prints the same visit number and QR. Older badges can be scanned into the form; printing the slip does not reissue the badge.
 
 ### ⛔ 3. Watchlist & Entry Denial Tracking
 - **Normalized Matching**: ID numbers are normalized server-side to guarantee matches regardless of dash formatting during gate lookup.
@@ -253,7 +254,7 @@ All backend API settings are managed via environment variables prefixed with `CG
 | `CG_PHOTO_DIR` | `.cgvms/data/photos` | Private filesystem directory for visitor photos |
 | `CG_PHOTO_MAX_BYTES` | `2097152` (2 MB) | Maximum permitted photo file upload size |
 | `CG_COOKIE_SECURE` | `true` | Requires HTTPS secure cookies (`false` automatically in `http-lan`) |
-| `CG_SECRETS_KEY` | *(Secret)* | AES-256-GCM 32-byte key for hardware credential encryption |
+| `CG_SECRETS_KEY` | *(Secret)* | AES-256-GCM 32-byte key for camera credentials and retrieval of the current badge QR for belongings slips. Keep and back up the key; changing it makes stored encrypted values unreadable. |
 | `CG_ORGANIZATION_NAME` | `"Century Gate"` | Organization header printed on visitor CR80 badges |
 | `CG_SESSION_IDLE_MINUTES` | `15` | Session inactivity timeout limit |
 | `CG_SESSION_MAX_HOURS` | `12` | Absolute maximum session duration |

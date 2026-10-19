@@ -31,6 +31,7 @@ class VisitStatus(StrEnum):
 # earlier formats (V-26-0210-001, V-2026-000123) keep them and can still be looked up and checked out.
 VISIT_NUMBER = re.compile(r"^V-(\d{2}-[A-Z]{3}-\d{2}-\d{3,}|\d{2}-\d{4}-\d{3,}|\d{4}-\d{6,})$")
 Belonging = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+MAX_BELONGINGS = 15
 
 
 class PersonalMaterialItem(StrictModel):
@@ -43,7 +44,7 @@ class PersonalMaterial(StrictModel):
     """The complete Personal Material Returnable slip stored with a visit."""
     contact_name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] = ""
     date: Date | None = None
-    items: list[PersonalMaterialItem] = Field(default_factory=list, max_length=10)
+    items: list[PersonalMaterialItem] = Field(default_factory=list, max_length=MAX_BELONGINGS)
     remarks: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] = ""
     authorised_by: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] = ""
     issued_by: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] = ""
@@ -66,7 +67,7 @@ class CheckInRequest(StrictModel):
     reason_code: VisitReason
     reason_note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] | None = None
     vehicle_registration: str | None = None
-    belongings: list[Belonging] = Field(default_factory=list, max_length=10)
+    belongings: list[Belonging] = Field(default_factory=list, max_length=MAX_BELONGINGS)
     personal_material: PersonalMaterial | None = None
     # The visitor's current photo, captured just before (POST /visitors/{id}/photo). Optional:
     # a gate without a working camera can still check visitors in.
@@ -100,7 +101,7 @@ class CheckInRequest(StrictModel):
 
 class UpdateBelongingsRequest(StrictModel):
     """Update personal material recorded on an active visit (gate forgot items at check-in, or corrected them)."""
-    belongings: list[Belonging] = Field(default_factory=list, max_length=10)
+    belongings: list[Belonging] = Field(default_factory=list, max_length=MAX_BELONGINGS)
     personal_material: PersonalMaterial | None = None
     vehicle_registration: str | None = None
 
@@ -161,6 +162,7 @@ class VisitOut(BaseModel):
     checked_out_by: PersonRef | None
     checkout_method: str | None
     photo_id: str | None = None
+    badge_expires_at: datetime | None = None
 
     @classmethod
     def from_doc(cls, d: dict) -> "VisitOut":
@@ -185,6 +187,7 @@ class VisitOut(BaseModel):
             checked_out_by=PersonRef(id=str(out), name=snap.get("checked_out_by_name")) if out else None,
             checkout_method=d.get("checkout_method"),
             photo_id=str(d["photo_id"]) if d.get("photo_id") else None,
+            badge_expires_at=(d.get("pass") or {}).get("expires_at"),
         )
 
 

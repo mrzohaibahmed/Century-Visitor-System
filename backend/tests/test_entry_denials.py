@@ -355,7 +355,7 @@ def test_the_backfill_command(monkeypatch, cli_env, capsys):
 
 # ------------------------------------------------------------------------------------------ schema
 async def test_the_collection_validates_and_deduplicates(harness):
-    assert SCHEMA_VERSION == 6
+    assert SCHEMA_VERSION >= 6
     indexes = await harness.db.entry_denials.index_information()
     assert indexes["source_audit_id_unique"]["unique"] is True
     assert indexes["newest_first"]["key"] == [("at", -1), ("_id", -1)]

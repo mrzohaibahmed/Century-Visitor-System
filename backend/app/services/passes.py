@@ -4,9 +4,10 @@ Visitor passes: the QR code printed on the badge.
 The QR holds only "CGP1:" + a 256-bit random token (64 hex digits). It says
 nothing about the visitor (no name, ID number, phone) and it is not derived
 from the visit number, so it cannot be guessed or constructed. The database
-stores only the token's SHA-256, so a database copy cannot be used to print
-valid badges. There is nothing in the token to edit: changing any character
-gives a token that matches no visit. (A signature would add nothing; the
+stores its SHA-256 for lookup and, when CG_SECRETS_KEY is configured, an
+encrypted copy for printing the same code on the belongings slip. A database
+copy without that server key cannot be used to print valid badges. Changing any
+character gives a token that matches no visit. (A signature would add nothing; the
 server never trusts what the QR says, it only looks the token up.)
 
 Lifecycle (on the visit's `pass` sub-document):
@@ -30,6 +31,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.core.secrets import SecretUnreadable, decrypt, encrypt
 from app.core.security import hash_token
 from app.core.timeutil import pass_expires_at
 from app.db.transactions import run_in_transaction
@@ -42,6 +44,10 @@ QR_PREFIX = "CGP1:"
 # Upper-case hex so the QR fits the compact alphanumeric mode, and USB scanners
 # that type into a text box cannot get the case wrong.
 _PAYLOAD = re.compile(r"^CGP1:([0-9A-F]{64})$")
+
+
+def _seal_context(visit_id) -> str:
+    return f"visit_pass:{visit_id}"
 
 
 @dataclass
@@ -86,6 +92,8 @@ async def issue(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: R
         new_pass = {"token_hash": _token_hash(token), "issued_at": now, "expires_at": expires_at,
                     "issued_by": ctx.user["_id"], "revoked_at": None, "revoked_by": None,
                     "revoked_token_hashes": revoked}
+        if settings.secrets_key_bytes:
+            new_pass["qr_sealed"] = encrypt(settings.secrets_key_bytes, QR_PREFIX + token, _seal_context(oid))
         await db.visits.update_one({"_id": oid, "status": "CHECKED_IN"},
                                    {"$set": {"pass": new_pass, "updated_at": now}}, session=s)
         await audit.record(db, AuditAction.PASS_ISSUED, actor=actor_from_user(ctx.user), ip=meta.ip,
@@ -96,6 +104,46 @@ async def issue(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: R
 
     await run_in_transaction(db, work)
     return IssuedPass(visit=result["visit"], qr_text=QR_PREFIX + token, expires_at=expires_at)
+
+
+async def printable(db: AsyncDatabase, settings: Settings, visit_id: str) -> IssuedPass:
+    """Return the current badge's exact QR without issuing or cancelling a pass."""
+    oid = visits_svc.object_id(visit_id)
+    visit = await db.visits.find_one({"_id": oid})
+    if visit is None:
+        raise visits_svc.NOT_FOUND
+    current = visit.get("pass") or {}
+    if visit["status"] != "CHECKED_IN" or not current or current.get("revoked_at"):
+        raise AppError(409, "pass_unavailable", "There is no active badge for this visit.")
+    if not current.get("qr_sealed"):
+        raise AppError(409, "pass_not_recoverable",
+                       "This badge has no stored QR print data. Scan the current badge.")
+    key = settings.secrets_key_bytes
+    if key is None:
+        raise AppError(503, "secrets_key_missing",
+                       "The badge encryption key is not configured. Scan the current badge.")
+    try:
+        qr_text = decrypt(key, current["qr_sealed"], _seal_context(oid))
+    except SecretUnreadable:
+        raise AppError(503, "pass_unreadable", "The current badge QR cannot be read. Scan the current badge.") from None
+    token = parse_qr(qr_text)
+    if token is None or _token_hash(token) != current["token_hash"]:
+        raise AppError(503, "pass_unreadable", "The current badge QR cannot be read. Scan the current badge.")
+    return IssuedPass(visit=visit, qr_text=qr_text, expires_at=current["expires_at"])
+
+
+async def verify_for_print(db: AsyncDatabase, visit_id: str, qr_text: str) -> IssuedPass:
+    """Accept a scan of an older physical badge without reissuing it."""
+    oid = visits_svc.object_id(visit_id)
+    visit = await db.visits.find_one({"_id": oid})
+    if visit is None:
+        raise visits_svc.NOT_FOUND
+    current = visit.get("pass") or {}
+    token = parse_qr(qr_text)
+    if (visit["status"] != "CHECKED_IN" or not current or current.get("revoked_at")
+            or token is None or _token_hash(token) != current.get("token_hash")):
+        raise AppError(409, "pass_mismatch", "Scan this visitor's current badge to print its matching QR.")
+    return IssuedPass(visit=visit, qr_text=QR_PREFIX + token, expires_at=current["expires_at"])
 
 
 async def revoke(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visit_id: str) -> dict:

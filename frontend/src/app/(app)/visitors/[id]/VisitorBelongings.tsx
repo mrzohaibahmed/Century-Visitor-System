@@ -14,7 +14,11 @@ import {
 } from "@/lib/belongings";
 
 /** Belongings for the visitor's current visit: opens the Personal Material Returnable slip. */
-export function VisitorBelongings({ visitId }: { visitId: string }) {
+export function VisitorBelongings({ visitId, passQrText, onUpdated }: {
+  visitId: string;
+  passQrText?: string;
+  onUpdated?: (visit: Visit) => void;
+}) {
   const [visit, setVisit] = useState<Visit | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -52,6 +56,7 @@ export function VisitorBelongings({ visitId }: { visitId: string }) {
         vehicle_registration: next.vehicle.trim() || null,
       });
       setVisit(updated);
+      onUpdated?.(updated);
       setDraft(personalMaterialFromVisit(
         updated.belongings, updated.host.name ?? "", updated.personal_material,
       ));
@@ -106,7 +111,9 @@ export function VisitorBelongings({ visitId }: { visitId: string }) {
         vehicle={vehicle}
         defaultContact={hostName}
         visitorName={visit?.visitor.name ?? undefined}
+        visitId={visitId}
         visitNumber={visit?.visit_number}
+        passQrText={passQrText}
         error={savingError}
         onClose={() => setOpen(false)}
         onSave={(next) => { void onSave(next); }}

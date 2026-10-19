@@ -138,10 +138,10 @@ def _identity_candidates(q: str) -> list[tuple[str, str]]:
 identity_candidates = _identity_candidates      # (type, normalised number) pairs a free-text query could be
 
 
-async def search(db: AsyncDatabase, q: str, cursor: str | None = None) -> tuple[list[dict], str | None]:
-    """By ID number or phone (exact), otherwise by name prefix (paginated)."""
-    q = q.strip()
-    if len(q) < 2:
+async def search(db: AsyncDatabase, q: str | None, cursor: str | None = None) -> tuple[list[dict], str | None]:
+    """Alphabetical directory; optionally filter by ID/phone (exact) or name prefix."""
+    q = (q or "").strip()
+    if q and len(q) < 2:
         raise AppError(422, "query_too_short", "Type at least 2 characters to search.")
 
     exact: list[dict] = []
@@ -154,15 +154,19 @@ async def search(db: AsyncDatabase, q: str, cursor: str | None = None) -> tuple[
         except ValueError:
             pass
         if clauses:
-            exact = await db.visitors.find({"$or": clauses}).limit(SEARCH_LIMIT).to_list(length=SEARCH_LIMIT)
+            exact = await db.visitors.find({"$or": clauses}).sort([("name_search", 1), ("_id", 1)]) \
+                .limit(SEARCH_LIMIT).to_list(length=SEARCH_LIMIT)
     if exact:
         return exact, None
 
-    query: dict = {"name_search": {"$regex": "^" + re.escape(search_key(q))}}
+    query: dict = {}
+    if q:
+        query = {"name_search": {"$regex": "^" + re.escape(search_key(q))}}
     if cursor:
         last_name, last_id = decode_cursor(cursor)
-        query = {"$and": [query, {"$or": [{"name_search": {"$gt": last_name}},
-                                          {"name_search": last_name, "_id": {"$gt": last_id}}]}]}
+        after = {"$or": [{"name_search": {"$gt": last_name}},
+                          {"name_search": last_name, "_id": {"$gt": last_id}}]}
+        query = {"$and": [query, after]} if query else after
     docs = await db.visitors.find(query).sort([("name_search", 1), ("_id", 1)]).limit(SEARCH_LIMIT + 1) \
         .to_list(length=SEARCH_LIMIT + 1)
     next_cursor = None

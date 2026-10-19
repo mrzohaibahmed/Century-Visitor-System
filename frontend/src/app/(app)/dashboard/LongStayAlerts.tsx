@@ -6,20 +6,19 @@ import Link from "next/link";
 import { Alert } from "@/components/ui/Alert";
 import { ButtonLink } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
-import type { Visit } from "@/lib/api/visits";
 import { formatDuration } from "@/lib/format";
 
-import { LONG_STAY_HOURS } from "./useDashboardData";
+import type { ExpiredBadgeVisit } from "./useDashboardData";
 
 const SHOWN = 5;
 
-/** Visitors inside longer than LONG_STAY_HOURS (the dashboard's existing alert), longest first. */
-export function LongStayAlerts({ longStays, error, now }: {
-  longStays: Visit[] | null;
+/** Visitors still inside after badge expiry, earliest expiry first. */
+export function LongStayAlerts({ expiredBadges, error, now }: {
+  expiredBadges: ExpiredBadgeVisit[] | null;
   error: string | null;
   now: number;
 }) {
-  const sorted = [...(longStays ?? [])].sort((a, b) => a.check_in_at.localeCompare(b.check_in_at));
+  const sorted = [...(expiredBadges ?? [])].sort((a, b) => a.badge_expires_at.localeCompare(b.badge_expires_at));
   return (
     <section aria-labelledby="alerts-heading" className="flex flex-col rounded-2xl border border-border bg-surface shadow-card">
       <header className="flex items-center gap-3 border-b border-border px-5 py-4 sm:px-6">
@@ -28,22 +27,22 @@ export function LongStayAlerts({ longStays, error, now }: {
         </span>
         <div>
           <h2 id="alerts-heading" className="text-heading text-ink">Alerts</h2>
-          <p className="text-sm text-ink-muted">Visitors inside longer than {LONG_STAY_HOURS} hours</p>
+          <p className="text-sm text-ink-muted">Visitors still inside after badge expiry</p>
         </div>
       </header>
       <div className="flex-1 px-5 py-4 sm:px-6">
-        {error && !longStays && <Alert tone="danger" title="Unable to load visitors inside">{error}</Alert>}
-        {!longStays && !error && (
+        {error && !expiredBadges && <Alert tone="danger" title="Unable to load visitors inside">{error}</Alert>}
+        {!expiredBadges && !error && (
           <div role="status" className="space-y-3">
             <span className="sr-only">Loading alerts…</span>
             <Skeleton className="h-5 w-3/4" />
             <Skeleton className="h-5 w-1/2" />
           </div>
         )}
-        {longStays && sorted.length === 0 && (
+        {expiredBadges && sorted.length === 0 && (
           <p className="flex items-center gap-3 py-2 text-sm text-ink-muted">
             <CircleCheck aria-hidden="true" className="size-5 shrink-0 text-ok" />
-            No alerts. Nobody has been inside longer than {LONG_STAY_HOURS} hours.
+            No alerts. Nobody is still inside with an expired badge.
           </p>
         )}
         {sorted.length > 0 && (
@@ -60,7 +59,7 @@ export function LongStayAlerts({ longStays, error, now }: {
                   </span>
                 </div>
                 <span className="shrink-0 text-sm font-semibold whitespace-nowrap text-warn tabular-nums">
-                  {formatDuration(v.check_in_at, null, new Date(now))}
+                  Expired {formatDuration(v.badge_expires_at, null, new Date(now))} ago
                 </span>
               </li>
             ))}

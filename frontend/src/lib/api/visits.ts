@@ -46,6 +46,8 @@ export type Visit = {
   checked_out_by: Ref | null;
   checkout_method: string | null;
   photo_id: string | null;
+  /** Safe badge metadata; the QR token and its hash are never returned. */
+  badge_expires_at?: string | null;
 };
 
 export type CheckIn = {
