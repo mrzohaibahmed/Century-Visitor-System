@@ -14,7 +14,8 @@ from tests.conftest import TEST_MONGO_URI, ApiClient, make_settings
 def dev_env(monkeypatch, tmp_path):
     db_name = f"cgvms_test_{uuid.uuid4().hex[:10]}"
     for key, value in {"CG_ENVIRONMENT": "development", "CG_MONGO_URI": TEST_MONGO_URI, "CG_MONGO_DB": db_name,
-                       "CG_PHOTO_DIR": str(tmp_path)}.items():
+                       "CG_PHOTO_DIR": str(tmp_path),
+                       "CG_FIRST_ADMIN_PASSWORD": "admin1234"}.items():    # independent of backend/.env
         monkeypatch.setenv(key, value)
     get_settings.cache_clear()
     yield db_name
@@ -56,6 +57,23 @@ def test_works_in_production_as_started_by_production_ps1(monkeypatch, dev_env, 
     assert "admin / admin1234" in capsys.readouterr().out
     user = MongoClient(TEST_MONGO_URI)[dev_env].users.find_one({"username": "admin"})
     assert user["role"] == "ADMIN" and user["must_change_password"] is True
+
+
+def test_password_from_the_environment_is_used_and_not_printed(monkeypatch, dev_env, capsys):
+    monkeypatch.setenv("CG_FIRST_ADMIN_PASSWORD", "Gate-First-Run-7")
+    assert run(monkeypatch, "migrate") == 0
+    assert run(monkeypatch) == 0
+    out = capsys.readouterr().out
+    assert "Gate-First-Run-7" not in out and "CG_FIRST_ADMIN_PASSWORD" in out
+    from app.core.security import verify_password
+    user = MongoClient(TEST_MONGO_URI)[dev_env].users.find_one({"username": "admin"})
+    assert user["must_change_password"] is True
+    assert verify_password("Gate-First-Run-7", user["password_hash"])
+
+
+def test_blank_environment_password_falls_back_to_the_default(monkeypatch, dev_env):
+    monkeypatch.setenv("CG_FIRST_ADMIN_PASSWORD", "  ")
+    assert get_settings().first_admin_password.get_secret_value() == "admin1234"
 
 
 def test_old_command_name_still_works(monkeypatch, dev_env):

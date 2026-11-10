@@ -13,6 +13,7 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.request_context import current_request_id
+from app.repositories import audit_logs as audit_repo
 
 
 class AuditAction(StrEnum):
@@ -103,5 +104,5 @@ async def record(
         entry["changes"] = changes
     if metadata:
         entry["metadata"] = metadata
-    await db.audit_logs.insert_one(entry, session=session)      # sets entry["_id"]
+    await audit_repo.insert(db, entry, session=session)      # sets entry["_id"]
     return entry

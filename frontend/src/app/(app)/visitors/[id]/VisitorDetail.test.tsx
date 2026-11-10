@@ -81,7 +81,7 @@ describe("VisitorDetail", () => {
     api.getVisit.mockResolvedValue({ ...VISIT, id: "a1", status: "CHECKED_IN", check_out_at: null, belongings: [] });
     render(<VisitorDetail id="v1" />);
     fireEvent.click(await screen.findByRole("button", { name: /Add personal material/i }));
-    expect(await screen.findByRole("heading", { name: "Personal Material Returnable", hidden: true })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "PERSONAL MATERIAL RETURNABLE", hidden: true })).toBeTruthy();
   });
 
   it("warns when the visitor is on the watchlist", async () => {

@@ -4,8 +4,9 @@ Operator commands (run on the server, never exposed over HTTP):
     python -m app.cli migrate    create/update collections, validators and indexes
     python -m app.cli check      same checks as GET /api/v1/health/ready
     python -m app.cli create-admin --username admin [--display-name "..."] [--password-stdin]
-    python -m app.cli first-admin    admin / admin1234 when no account exists yet (must be changed at the
-                                      first login; start-dev.bat and production.ps1 run it; the old name
+    python -m app.cli first-admin    admin / admin1234 when no account exists yet (password from
+                                      CG_FIRST_ADMIN_PASSWORD if set; must be changed at the first login;
+                                      start-dev.bat and production.ps1 run it; the old name
                                       dev-first-admin still works)
     python -m app.cli generate-secrets-key   prints a new key for CG_SECRETS_KEY (nothing is changed)
     python -m app.cli backfill-entry-denials creates the missing entry_denials documents from WATCHLIST_MATCH
@@ -91,17 +92,21 @@ FIRST_ADMIN_PASSWORD = "admin1234"       # noqa: S105 - documented default, must
 async def _first_admin() -> int:
     from app.core.permissions import Role
     from app.services.users import create_user
-    database = Database(get_settings())
+    settings = get_settings()
+    password = settings.first_admin_password.get_secret_value()       # CG_FIRST_ADMIN_PASSWORD (default admin1234)
+    database = Database(settings)
     try:
         if await database.db.users.estimated_document_count():
             print("Accounts already exist: nothing changed.")
             return 0
         await create_user(database.db, actor=None, meta=None, username=FIRST_ADMIN_USERNAME,
-                          display_name="Administrator", role=Role.ADMIN, password=FIRST_ADMIN_PASSWORD,
+                          display_name="Administrator", role=Role.ADMIN, password=password,
                           must_change_password=True, enforce_policy=False, source="first-admin")
     finally:
         await database.close()
-    print(f"First administrator created: {FIRST_ADMIN_USERNAME} / {FIRST_ADMIN_PASSWORD} "
+    # A password chosen in the environment is not echoed to the console (or to start-up logs).
+    shown = FIRST_ADMIN_PASSWORD if password == FIRST_ADMIN_PASSWORD else "the password in CG_FIRST_ADMIN_PASSWORD"
+    print(f"First administrator created: {FIRST_ADMIN_USERNAME} / {shown} "
           "(a new password must be chosen at the first login).")
     return 0
 

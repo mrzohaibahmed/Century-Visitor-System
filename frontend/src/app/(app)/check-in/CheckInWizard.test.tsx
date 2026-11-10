@@ -268,7 +268,7 @@ describe("CheckInWizard", () => {
     api.lookupVisitor.mockResolvedValue(CLEAR);
     findVisitor();
     fireEvent.click(await screen.findByRole("button", { name: /Add personal material/i }));
-    expect(await screen.findByRole("heading", { name: "Personal Material Returnable", hidden: true })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "PERSONAL MATERIAL RETURNABLE", hidden: true })).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Description 1"), { target: { value: "Laptop" } });
     fireEvent.change(screen.getByLabelText("Quantity in 1"), { target: { value: "01" } });
     fireEvent.click(screen.getByRole("button", { name: "Save belongings", hidden: true }));

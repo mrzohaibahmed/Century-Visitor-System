@@ -3,7 +3,7 @@
 import { Plus, Printer, Trash2 } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useId, useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 
 import crest from "@/assets/century-crest.png";
 import { useQrDataUrl } from "@/components/badge/VisitorBadge";
@@ -116,12 +116,17 @@ function OpenPersonalMaterialForm({
 }) {
   const [draft, setDraft] = useState<PersonalMaterial>(() => ({
     ...value,
-    contactName: value.contactName || defaultContact || "",
+    contactName: (value.contactName || defaultContact || "").toUpperCase(),
+    remarks: value.remarks.toUpperCase(),
+    authorisedBy: value.authorisedBy.toUpperCase(),
+    issuedBy: value.issuedBy.toUpperCase(),
+    gateOfficer: value.gateOfficer.toUpperCase(),
     items: value.items.length
       ? value.items.map((row) => ({ ...row, description: row.description.toUpperCase() }))
       : [emptyBelongingItem()],
   }));
-  const [veh, setVeh] = useState(vehicle);
+  const [veh, setVeh] = useState(vehicle.toUpperCase());
+  const [printedAt, setPrintedAt] = useState<Date | null>(null);
   const [formError, setFormError] = useState<string | undefined>();
   const [printRoot, setPrintRoot] = useState<HTMLElement | null>(null);
   const [fetchedQrText, setFetchedQrText] = useState<string | null>(null);
@@ -165,6 +170,7 @@ function OpenPersonalMaterialForm({
       // The badge could have been reissued after the form opened. Check again
       // before putting a credential on paper.
       await verifyPassForPrint(visitId, qrText);
+      flushSync(() => setPrintedAt(new Date()));
       printOnly("belongings");
     } catch (cause) {
       setInvalidQrText(qrText);
@@ -223,12 +229,12 @@ function OpenPersonalMaterialForm({
   return (
     <Modal
       open
-      title="Personal Material Returnable"
-      description="Record items the visitor brings in. They must be checked again at exit."
+      title="PERSONAL MATERIAL RETURNABLE"
+      description="RECORD ITEMS THE VISITOR BRINGS IN. THEY MUST BE CHECKED AGAIN AT EXIT."
       onClose={onClose}
       size="xl"
     >
-      <form onSubmit={submit} noValidate className="space-y-5">
+      <form onSubmit={submit} noValidate className="space-y-5 uppercase">
         <p className="text-center text-xs font-semibold tracking-wide text-ink-muted uppercase">
           Century Paper &amp; Board Mills Ltd.
         </p>
@@ -243,7 +249,7 @@ function OpenPersonalMaterialForm({
           <TextField
             label="Veh. #"
             value={veh}
-            onChange={(e) => setVeh(e.target.value)}
+            onChange={(e) => setVeh(e.target.value.toUpperCase())}
             autoComplete="off"
             caps
             placeholder="LEA-1234"
@@ -251,7 +257,7 @@ function OpenPersonalMaterialForm({
           <TextField
             label="Company Cont. Name"
             value={draft.contactName}
-            onChange={(e) => setDraft({ ...draft, contactName: e.target.value })}
+            onChange={(e) => setDraft({ ...draft, contactName: e.target.value.toUpperCase() })}
             autoComplete="off"
             caps
           />
@@ -367,28 +373,28 @@ function OpenPersonalMaterialForm({
         <TextAreaField
           label="Remarks"
           value={draft.remarks}
-          onChange={(remarks) => setDraft({ ...draft, remarks })}
+          onChange={(remarks) => setDraft({ ...draft, remarks: remarks.toUpperCase() })}
         />
 
         <div className="grid gap-4 sm:grid-cols-3">
           <TextField
             label="Authorised by"
             value={draft.authorisedBy}
-            onChange={(e) => setDraft({ ...draft, authorisedBy: e.target.value })}
+            onChange={(e) => setDraft({ ...draft, authorisedBy: e.target.value.toUpperCase() })}
             autoComplete="off"
             caps
           />
           <TextField
             label="Issued by"
             value={draft.issuedBy}
-            onChange={(e) => setDraft({ ...draft, issuedBy: e.target.value })}
+            onChange={(e) => setDraft({ ...draft, issuedBy: e.target.value.toUpperCase() })}
             autoComplete="off"
             caps
           />
           <TextField
             label="Gate officer"
             value={draft.gateOfficer}
-            onChange={(e) => setDraft({ ...draft, gateOfficer: e.target.value })}
+            onChange={(e) => setDraft({ ...draft, gateOfficer: e.target.value.toUpperCase() })}
             autoComplete="off"
             caps
           />
@@ -413,6 +419,7 @@ function OpenPersonalMaterialForm({
           visitorName={visitorName}
           visitNumber={visitNumber}
           qr={qr}
+          printedAt={printedAt}
         />,
         printRoot,
       )}
@@ -435,6 +442,7 @@ export function PersonalMaterialPrintButton({
   const [printRoot, setPrintRoot] = useState<HTMLElement | null>(null);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
+  const [printedAt, setPrintedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     const root = document.createElement("div");
@@ -452,6 +460,7 @@ export function PersonalMaterialPrintButton({
     setPrinting(true);
     try {
       await verifyPassForPrint(visitId, passQrText);
+      flushSync(() => setPrintedAt(new Date()));
       printOnly("belongings", "completion");
     } catch (cause) {
       setPrintError(errorMessage(cause));
@@ -470,24 +479,28 @@ export function PersonalMaterialPrintButton({
       {printError && <p role="alert" className="text-sm text-danger">{printError}</p>}
       {printRoot && createPortal(
         <PersonalMaterialPrint value={value} vehicle={vehicle} visitorName={visitorName}
-                               visitNumber={visitNumber} qr={qr} />,
+                               visitNumber={visitNumber} qr={qr} printedAt={printedAt} />,
         printRoot,
       )}
     </div>
   );
 }
 
-function PersonalMaterialPrint({ value, vehicle, visitorName, visitNumber, qr }: {
+function PersonalMaterialPrint({ value, vehicle, visitorName, visitNumber, qr, printedAt }: {
   value: PersonalMaterial;
   vehicle: string;
   visitorName?: string;
   visitNumber?: string;
   qr: string | null;
+  printedAt: Date | null;
 }) {
   const rows = filledBelongings(value);
   const printRows = Array.from({ length: MAX_BELONGINGS }, (_, index) => rows[index] ?? null);
   return (
     <article className="belongings-print-sheet">
+      <p className="belongings-print-datetime">
+        {printedAt?.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }).toUpperCase() || ""}
+      </p>
       <header className="belongings-print-header">
         <Image
           src={crest}
@@ -499,28 +512,28 @@ function PersonalMaterialPrint({ value, vehicle, visitorName, visitNumber, qr }:
           unoptimized
         />
         <div className="belongings-print-brand">
-          <p className="belongings-print-company">Century Paper &amp; Board Mills Limited</p>
-          <p className="belongings-print-department">Security Department · Gate Control</p>
+          <p className="belongings-print-company">CENTURY PAPER &amp; BOARD MILLS LIMITED</p>
+          <p className="belongings-print-department">SECURITY DEPARTMENT · GATE CONTROL</p>
         </div>
         {qr && <div className="belongings-print-qr">
           <Image src={qr} alt="Visitor badge QR code" width={120} height={120} unoptimized />
-          <span>Visitor badge QR</span>
+          <span>VISITOR BADGE QR</span>
         </div>}
       </header>
       <section className="belongings-print-title-band">
-        <p className="belongings-print-title">Personal Material Returnable</p>
-        <p>Visitor belongings register</p>
+        <p className="belongings-print-title">PERSONAL MATERIAL RETURNABLE</p>
+        <p>VISITOR BELONGINGS REGISTER</p>
       </section>
       <dl className="belongings-print-facts">
-        <div><dt>S. No. / Visit no.</dt><dd>{visitNumber || "—"}</dd></div>
-        <div><dt>Date</dt><dd>{value.date || "—"}</dd></div>
-        <div><dt>Vehicle registration</dt><dd>{vehicle.trim().toUpperCase() || "—"}</dd></div>
-        <div className="belongings-print-fact-wide"><dt>Visitor name</dt><dd>{visitorName || "—"}</dd></div>
-        <div className="belongings-print-fact-wide"><dt>Company contact</dt><dd>{value.contactName.trim() || "—"}</dd></div>
+        <div><dt>S. NO. / VISIT NO.</dt><dd>{visitNumber || "—"}</dd></div>
+        <div><dt>DATE</dt><dd>{value.date || "—"}</dd></div>
+        <div><dt>VEHICLE REGISTRATION</dt><dd>{vehicle.trim().toUpperCase() || "—"}</dd></div>
+        <div className="belongings-print-fact-wide"><dt>VISITOR NAME</dt><dd>{visitorName?.toUpperCase() || "—"}</dd></div>
+        <div className="belongings-print-fact-wide"><dt>COMPANY CONTACT</dt><dd>{value.contactName.trim().toUpperCase() || "—"}</dd></div>
       </dl>
       <table className="belongings-print-table">
         <thead>
-          <tr><th>Sr. no.</th><th>Item description</th><th>Qty. in</th><th>Qty. out</th></tr>
+          <tr><th>SR. NO.</th><th>ITEM DESCRIPTION</th><th>QTY. IN</th><th>QTY. OUT</th></tr>
         </thead>
         <tbody>
           {printRows.map((row, index) => (
@@ -534,17 +547,17 @@ function PersonalMaterialPrint({ value, vehicle, visitorName, visitNumber, qr }:
         </tbody>
       </table>
       <section className="belongings-print-remarks">
-        <h2>Remarks</h2>
-        <p>{value.remarks.trim() || "—"}</p>
+        <h2>REMARKS</h2>
+        <p>{value.remarks.trim().toUpperCase() || "—"}</p>
       </section>
       <dl className="belongings-print-signatures">
-        <div><dt>Authorised by</dt><dd>{value.authorisedBy.trim()}</dd></div>
-        <div><dt>Issued by</dt><dd>{value.issuedBy.trim()}</dd></div>
-        <div><dt>Gate officer</dt><dd>{value.gateOfficer.trim()}</dd></div>
+        <div><dt>AUTHORISED BY</dt><dd>{value.authorisedBy.trim().toUpperCase()}</dd></div>
+        <div><dt>ISSUED BY</dt><dd>{value.issuedBy.trim().toUpperCase()}</dd></div>
+        <div><dt>GATE OFFICER</dt><dd>{value.gateOfficer.trim().toUpperCase()}</dd></div>
       </dl>
       <footer className="belongings-print-footer">
-        <p>All listed material must be verified at the gate before release.</p>
-        <p>Century Gate Visitor Management System</p>
+        <p>ALL LISTED MATERIAL MUST BE VERIFIED AT THE GATE BEFORE RELEASE.</p>
+        <p>CENTURY GATE VISITOR MANAGEMENT SYSTEM</p>
       </footer>
     </article>
   );

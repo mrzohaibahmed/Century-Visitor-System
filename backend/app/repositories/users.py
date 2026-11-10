@@ -8,6 +8,7 @@ from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.db.schema import CASE_INSENSITIVE
+from app.repositories.errors import duplicates_as_domain_error
 
 
 def parse_id(value: str) -> ObjectId | None:
@@ -31,8 +32,26 @@ async def list_all(db: AsyncDatabase, limit: int = 500) -> list[dict]:
     return await cursor.to_list(length=limit)
 
 
+async def find_active_id(db: AsyncDatabase, user_id: ObjectId,
+                         session: AsyncClientSession | None = None) -> ObjectId | None:
+    """The ID back if that user exists and is active, otherwise None."""
+    doc = await db.users.find_one({"_id": user_id, "is_active": True}, {"_id": 1}, session=session)
+    return doc["_id"] if doc else None
+
+
+async def display_names(db: AsyncDatabase, ids: set[ObjectId]) -> dict[ObjectId, str]:
+    """Display name (or username when it has none) per user ID."""
+    if not ids:
+        return {}
+    docs = await db.users.find({"_id": {"$in": list(ids)}}, {"username": 1, "display_name": 1}) \
+        .to_list(length=len(ids))
+    return {d["_id"]: d.get("display_name") or d["username"] for d in docs}
+
+
 async def insert(db: AsyncDatabase, doc: dict, session: AsyncClientSession | None = None) -> ObjectId:
-    result = await db.users.insert_one(doc, session=session)
+    """Raises DuplicateKey if the username exists (ignoring case)."""
+    with duplicates_as_domain_error():
+        result = await db.users.insert_one(doc, session=session)
     return result.inserted_id
 
 
@@ -44,6 +63,12 @@ async def update_fields(db: AsyncDatabase, user_id: ObjectId, fields: dict,
 
 async def count_active_admins(db: AsyncDatabase, session: AsyncClientSession | None = None) -> int:
     return await db.users.count_documents({"role": "ADMIN", "is_active": True}, session=session)
+
+
+async def claim_admin_guard(db: AsyncDatabase, session: AsyncClientSession) -> None:
+    """Writes one shared document inside the transaction. Two concurrent transactions that
+    both reduce the number of admins therefore conflict; the retry sees the other's change."""
+    await db.counters.update_one({"_id": "admin_guard"}, {"$inc": {"seq": 1}}, upsert=True, session=session)
 
 
 async def record_failed_login(db: AsyncDatabase, user_id: ObjectId, max_failures: int,

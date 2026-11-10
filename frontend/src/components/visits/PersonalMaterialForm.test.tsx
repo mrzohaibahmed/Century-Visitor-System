@@ -52,14 +52,15 @@ describe("PersonalMaterialForm printing", () => {
 
     await waitFor(() => expect(document.querySelector(".belongings-print-root")).toBeTruthy());
     const printRoot = document.querySelector(".belongings-print-root")!;
-    expect(printRoot.textContent).toContain("Personal Material Returnable");
+    expect(printRoot.textContent).toContain("PERSONAL MATERIAL RETURNABLE");
     expect(printRoot.textContent).toContain("V-26-OCT-09-001");
-    expect(printRoot.textContent).toContain("Hamza Tariq");
+    expect(printRoot.textContent).toContain("HAMZA TARIQ");
     expect(printRoot.textContent).toContain("LAPTOP");
     expect(printRoot.textContent).toContain("LEA-1234");
-    expect(printRoot.textContent).toContain("Company device");
+    expect(printRoot.textContent).toContain("COMPANY DEVICE");
     expect(printRoot.querySelector(".belongings-print-footer")?.textContent)
-      .toContain("All listed material must be verified at the gate before release.");
+      .toContain("ALL LISTED MATERIAL MUST BE VERIFIED AT THE GATE BEFORE RELEASE.");
+    expect(printRoot.textContent).not.toMatch(/localhost/i);
     expect(printRoot.querySelector('img[alt="Century Paper and Board Mills logo"]')).toBeTruthy();
     const expectedQr = await QRCode.toDataURL(PASS, { errorCorrectionLevel: "M", margin: 2, width: 480 });
     await waitFor(() => expect(printRoot.querySelector('img[alt="Visitor badge QR code"]')?.getAttribute("src"))
@@ -69,6 +70,7 @@ describe("PersonalMaterialForm printing", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Print belongings list", hidden: true }));
     await waitFor(() => expect(window.print).toHaveBeenCalledOnce());
+    expect(printRoot.querySelector(".belongings-print-datetime")?.textContent).toMatch(/\d{4}/);
     expect(document.body.dataset.printTarget).toBe("belongings");
     expect(api.verifyPassForPrint).toHaveBeenCalledWith("visit1", PASS);
   });
@@ -85,18 +87,18 @@ describe("PersonalMaterialForm printing", () => {
       />,
     );
 
-    expect((screen.getByLabelText("Company Cont. Name") as HTMLInputElement).value).toBe("Sara Ahmed");
+    expect((screen.getByLabelText("Company Cont. Name") as HTMLInputElement).value).toBe("SARA AHMED");
     fireEvent.change(screen.getByLabelText("Description 1"), { target: { value: "Camera" } });
     fireEvent.change(screen.getByLabelText("Remarks"), { target: { value: "Needs gate approval" } });
     fireEvent.change(screen.getByLabelText("Veh. #"), { target: { value: "lea-1234" } });
     await waitFor(() => expect(document.querySelector(".belongings-print-root")?.textContent).toContain("CAMERA"));
-    expect(document.querySelector(".belongings-print-root")?.textContent).toContain("Needs gate approval");
+    expect(document.querySelector(".belongings-print-root")?.textContent).toContain("NEEDS GATE APPROVAL");
     expect((screen.getByLabelText("Description 1") as HTMLInputElement).value).toBe("CAMERA");
-    expect((screen.getByLabelText("Remarks") as HTMLTextAreaElement).value).toBe("Needs gate approval");
+    expect((screen.getByLabelText("Remarks") as HTMLTextAreaElement).value).toBe("NEEDS GATE APPROVAL");
     fireEvent.click(screen.getByRole("button", { name: "Save belongings", hidden: true }));
     expect(onSave).toHaveBeenCalledWith({
-      personalMaterial: expect.objectContaining({ contactName: "Sara Ahmed", remarks: "Needs gate approval" }),
-      vehicle: "lea-1234",
+      personalMaterial: expect.objectContaining({ contactName: "SARA AHMED", remarks: "NEEDS GATE APPROVAL" }),
+      vehicle: "LEA-1234",
     });
   });
 

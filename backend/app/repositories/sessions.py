@@ -18,6 +18,10 @@ async def touch(db: AsyncDatabase, session_id: ObjectId, now: datetime) -> None:
     await db.sessions.update_one({"_id": session_id}, {"$set": {"last_seen_at": now}})
 
 
+async def set_gate(db: AsyncDatabase, session_id: ObjectId, gate_id: ObjectId) -> None:
+    await db.sessions.update_one({"_id": session_id}, {"$set": {"gate_id": gate_id}})
+
+
 async def revoke(db: AsyncDatabase, session_id: ObjectId, reason: str) -> None:
     await db.sessions.update_one({"_id": session_id, "revoked_at": None},
                                  {"$set": {"revoked_at": datetime.now(UTC), "revoked_reason": reason}})

@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.database import AsyncDatabase
-from pymongo.errors import DuplicateKeyError
 
 from app.core.config import Settings
 from app.core.errors import AppError
@@ -24,6 +23,7 @@ from app.core.security import hash_password, password_policy_error
 from app.db.transactions import run_in_transaction
 from app.repositories import sessions as sessions_repo
 from app.repositories import users as users_repo
+from app.repositories.errors import DuplicateKey
 from app.services import audit
 from app.services.audit import AuditAction, actor_from_user
 from app.services.auth import AuthContext, RequestMeta, verify_actor_password
@@ -71,15 +71,14 @@ async def create_user(db: AsyncDatabase, *, actor: dict | None, meta: RequestMet
 
     try:
         await run_in_transaction(db, work)
-    except DuplicateKeyError:
+    except DuplicateKey:
         raise AppError(409, "username_taken", f"An account named '{username}' already exists.") from None
     return doc
 
 
 async def _claim_admin_guard(db: AsyncDatabase, s: AsyncClientSession) -> None:
-    """Writes one shared document inside the transaction. Two concurrent transactions that
-    both reduce the number of admins therefore conflict; the retry sees the other's change."""
-    await db.counters.update_one({"_id": "admin_guard"}, {"$inc": {"seq": 1}}, upsert=True, session=s)
+    """Serialises concurrent changes that reduce the number of admins (see users_repo.claim_admin_guard)."""
+    await users_repo.claim_admin_guard(db, s)
 
 
 async def update_user(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta, user_id: str, *,

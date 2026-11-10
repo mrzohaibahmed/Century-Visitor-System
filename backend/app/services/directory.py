@@ -4,19 +4,21 @@ Gates, departments and hosts (admin-managed reference data).
 Entries are deactivated, never deleted, so old visits keep pointing at a real
 record. Names of gates and departments are unique regardless of case.
 """
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from bson import ObjectId
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.database import AsyncDatabase
-from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
 from app.core.identity import search_key
-from app.db.schema import CASE_INSENSITIVE
 from app.db.transactions import run_in_transaction
+from app.repositories import directory as directory_repo
+from app.repositories import gates as gates_repo
+from app.repositories import users as users_repo
+from app.repositories.errors import DuplicateKey
+from app.repositories.ids import is_id, parse_id
 from app.services import audit
 from app.services.audit import AuditAction, actor_from_user
 from app.services.auth import AuthContext, RequestMeta
@@ -38,16 +40,13 @@ HOST = Kind("hosts", "Host", AuditAction.HOST_CREATED, AuditAction.HOST_UPDATED,
 MAX_LIST = 500
 
 
-def _oid(value: str | ObjectId | None) -> ObjectId | None:
-    if value is None or isinstance(value, ObjectId):
-        return value
-    return ObjectId(value) if ObjectId.is_valid(value) else None
+_oid = parse_id
 
 
 async def get(db: AsyncDatabase, kind: Kind, item_id: str | ObjectId, session: AsyncClientSession | None = None
               ) -> dict:
     oid = _oid(item_id)
-    doc = await db[kind.collection].find_one({"_id": oid}, session=session) if oid else None
+    doc = await directory_repo.find_by_id(db, kind.collection, oid, session=session) if oid else None
     if doc is None:
         raise AppError(404, "not_found", f"{kind.label} not found.")
     return doc
@@ -63,26 +62,17 @@ async def get_active(db: AsyncDatabase, kind: Kind, item_id: str | ObjectId,
 
 async def list_items(db: AsyncDatabase, kind: Kind, *, include_inactive: bool = False, q: str | None = None,
                      department_id: str | None = None) -> list[dict]:
-    query: dict = {} if include_inactive else {"is_active": True}
-    if kind is HOST:
-        if q:
-            query["name_search"] = {"$regex": "^" + re.escape(search_key(q))}
-        if department_id:
-            query["department_id"] = _oid(department_id)
-        sort = [("name_search", 1)]
-    else:
-        sort = [("name", 1)]
-    cursor = db[kind.collection].find(query).sort(sort).limit(MAX_LIST)
-    if kind is not HOST:
-        cursor = cursor.collation(CASE_INSENSITIVE)
-    return await cursor.to_list(length=MAX_LIST)
+    is_host = kind is HOST
+    prefix = search_key(q) if is_host and q else None
+    by_department = bool(is_host and department_id)
+    # An invalid department_id is passed on as None (hosts without a department), as before.
+    return await directory_repo.list_items(
+        db, kind.collection, include_inactive=include_inactive, limit=MAX_LIST, name_search_prefix=prefix,
+        by_department=by_department, department_id=_oid(department_id) if by_department else None)
 
 
 async def department_names(db: AsyncDatabase, ids: set[ObjectId]) -> dict[ObjectId, str]:
-    if not ids:
-        return {}
-    docs = await db.departments.find({"_id": {"$in": list(ids)}}, {"name": 1}).to_list(length=len(ids))
-    return {d["_id"]: d["name"] for d in docs}
+    return await directory_repo.names_by_id(db, DEPARTMENT.collection, ids)
 
 
 async def _validate_department(db: AsyncDatabase, fields: dict, s: AsyncClientSession) -> None:
@@ -94,18 +84,14 @@ async def _validate_linked_user(db: AsyncDatabase, fields: dict, s: AsyncClientS
     """A host's "Linked app account" must be an existing, active Admin/Guard user."""
     if fields.get("linked_user_id") is not None:
         oid = _oid(fields["linked_user_id"])
-        user = await db.users.find_one({"_id": oid, "is_active": True}, {"_id": 1}, session=s) if oid else None
-        if user is None:
+        user_id = await users_repo.find_active_id(db, oid, session=s) if oid else None
+        if user_id is None:
             raise AppError(422, "invalid_linked_user", "Choose an active app account to link to this host.")
-        fields["linked_user_id"] = user["_id"]
+        fields["linked_user_id"] = user_id
 
 
 async def user_names(db: AsyncDatabase, ids: set[ObjectId]) -> dict[ObjectId, str]:
-    if not ids:
-        return {}
-    docs = await db.users.find({"_id": {"$in": list(ids)}}, {"username": 1, "display_name": 1}) \
-        .to_list(length=len(ids))
-    return {d["_id"]: d.get("display_name") or d["username"] for d in docs}
+    return await users_repo.display_names(db, ids)
 
 
 async def create(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestMeta, data: dict) -> dict:
@@ -119,15 +105,14 @@ async def create(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestM
         if kind is HOST:
             await _validate_department(db, doc, s)
             await _validate_linked_user(db, doc, s)
-        doc["_id"] = (await db[kind.collection].insert_one(doc, session=s)).inserted_id
+        doc["_id"] = await directory_repo.insert(db, kind.collection, doc, session=s)
         await audit.record(db, kind.created, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type=kind.collection, resource_id=doc["_id"],
-                           changes={k: str(v) if isinstance(v, ObjectId) else v for k, v in data.items()
-                                    if v is not None}, session=s)
+                           changes={k: _plain(v) for k, v in data.items() if v is not None}, session=s)
 
     try:
         await run_in_transaction(db, work)
-    except DuplicateKeyError:
+    except DuplicateKey:
         raise AppError(409, "name_taken", f"A {kind.label.lower()} named '{data['name']}' already exists.") from None
     return doc
 
@@ -153,23 +138,21 @@ async def update(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestM
         if kind is HOST:
             await _validate_department(db, fields, s)
             await _validate_linked_user(db, fields, s)
-        await db[kind.collection].update_one(
-            {"_id": current["_id"]}, {"$set": {**fields, "updated_at": datetime.now(UTC)}}, session=s)
+        await directory_repo.update_fields(db, kind.collection, current["_id"], fields, session=s)
         diff = {k: {"from": _plain(current.get(k)), "to": _plain(v)} for k, v in fields.items() if k != "name_search"}
         await audit.record(db, kind.updated, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type=kind.collection, resource_id=current["_id"], changes=diff, session=s)
 
     try:
         await run_in_transaction(db, work)
-    except DuplicateKeyError:
+    except DuplicateKey:
         raise AppError(409, "name_taken", f"A {kind.label.lower()} with that name already exists.") from None
     return await get(db, kind, current["_id"])
 
 
 def _plain(value):
-    return str(value) if isinstance(value, ObjectId) else value
+    return str(value) if is_id(value) else value
 
 
 async def active_gate_ids(db: AsyncDatabase) -> list[ObjectId]:
-    docs = await db.gates.find({"is_active": True}, {"_id": 1}).limit(2).to_list(length=2)
-    return [d["_id"] for d in docs]
+    return await gates_repo.active_ids(db, limit=2)

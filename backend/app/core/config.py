@@ -112,6 +112,16 @@ class Settings(BaseSettings):
     # camera passwords and stored badge print data unreadable.
     secrets_key: SecretStr | None = None
 
+    # --- First-run account (python -m app.cli first-admin) ----------------------------
+    # Temporary password of the "admin" account created on a database with no accounts yet.
+    # It must be changed at the first login. Empty: the documented default admin1234.
+    first_admin_password: SecretStr = SecretStr("admin1234")
+
+    @field_validator("first_admin_password")
+    @classmethod
+    def _default_first_admin_password(cls, value: SecretStr) -> SecretStr:
+        return value if value.get_secret_value().strip() else SecretStr("admin1234")
+
     @field_validator("mongo_db")
     @classmethod
     def _not_the_legacy_database(cls, value: str) -> str:
