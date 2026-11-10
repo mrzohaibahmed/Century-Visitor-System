@@ -14,14 +14,11 @@ and services/visits.check_in(); this module only maintains the entries.
 """
 from datetime import UTC, datetime
 
-from bson import ObjectId
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.errors import AppError
 from app.core.identity import identifier, mask_identity, search_key
 from app.core.pagination import decode_cursor, encode_cursor
 from app.db.transactions import run_in_transaction
+from app.db.types import Db, DbSession, RecordId
 from app.repositories import visitors as visitors_repo
 from app.repositories import watchlist as watchlist_repo
 from app.repositories.errors import DuplicateKey
@@ -36,7 +33,7 @@ PAGE_SIZE = 25
 NOT_FOUND = AppError(404, "not_found", "Watchlist entry not found.")
 
 
-def _oid(value: str) -> ObjectId:
+def _oid(value: str) -> RecordId:
     oid = parse_id(value)
     if oid is None:
         raise NOT_FOUND
@@ -52,7 +49,7 @@ def _operator_name(user: dict) -> str:
     return user.get("display_name") or user["username"]
 
 
-async def list_entries(db: AsyncDatabase, *, q: str | None, status: WatchlistStatus | None,
+async def list_entries(db: Db, *, q: str | None, status: WatchlistStatus | None,
                        cursor: str | None) -> tuple[list[dict], str | None]:
     """Newest first. `q` matches an ID number (any format) exactly or a name by prefix."""
     ids, name_prefix = None, None
@@ -70,14 +67,14 @@ async def list_entries(db: AsyncDatabase, *, q: str | None, status: WatchlistSta
     return docs, next_cursor
 
 
-async def get(db: AsyncDatabase, entry_id: str) -> dict:
+async def get(db: Db, entry_id: str) -> dict:
     doc = await watchlist_repo.find_by_id(db, _oid(entry_id))
     if doc is None:
         raise NOT_FOUND
     return doc
 
 
-async def create(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, *, identity: dict, name: str | None,
+async def create(db: Db, ctx: AuthContext, meta: RequestMeta, *, identity: dict, name: str | None,
                  reason: str, expires_at: datetime | None) -> tuple[dict, str | None]:
     """Returns (entry, visit number if the person is inside right now)."""
     key = identifier(identity["type"], identity["number"])
@@ -91,7 +88,7 @@ async def create(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, *, iden
         "updated_by": None, "updated_at": None, "disabled_by": None, "disabled_at": None, "disabled_reason": None,
     }
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         current = await watchlist_repo.find_active_by_identifier(db, key, session=s)
         superseded = None
         if current is not None:
@@ -120,7 +117,7 @@ async def create(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, *, iden
     return doc, inside["visit_number"] if inside else None
 
 
-async def update(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, entry_id: str, *, name: str | None,
+async def update(db: Db, ctx: AuthContext, meta: RequestMeta, entry_id: str, *, name: str | None,
                  reason: str | None, expires_at: datetime | None, clear_expiry: bool) -> dict:
     current = await get(db, entry_id)
     if not current["is_active"]:
@@ -139,7 +136,7 @@ async def update(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, entry_i
     now = datetime.now(UTC)
     diff = {k: {"from": current.get(k), "to": v} for k, v in fields.items() if k != "name_search"}
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         await watchlist_repo.update_fields(db, current["_id"],
                                            {**fields, "updated_at": now, "updated_by": ctx.user["_id"]},
                                            only_if_active=True, session=s)
@@ -151,14 +148,14 @@ async def update(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, entry_i
     return await get(db, entry_id)
 
 
-async def expire(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, entry_id: str) -> dict:
+async def expire(db: Db, ctx: AuthContext, meta: RequestMeta, entry_id: str) -> dict:
     """Ends the ban now (the entry stays, marked expired). Repeating it changes nothing."""
     current = await get(db, entry_id)
     now = datetime.now(UTC)
     if status_of(current, now) is not WatchlistStatus.ACTIVE:
         return current
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         await watchlist_repo.update_fields(db, current["_id"],
                                            {"expires_at": now, "updated_at": now, "updated_by": ctx.user["_id"]},
                                            only_if_active=True, session=s)
@@ -171,14 +168,14 @@ async def expire(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, entry_i
     return await get(db, entry_id)
 
 
-async def disable(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, entry_id: str, note: str) -> dict:
+async def disable(db: Db, ctx: AuthContext, meta: RequestMeta, entry_id: str, note: str) -> dict:
     """Lifts the ban (kept for the record, with the reason). Repeating it changes nothing."""
     current = await get(db, entry_id)
     if not current["is_active"]:
         return current
     now = datetime.now(UTC)
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         await watchlist_repo.update_fields(db, current["_id"], {
             "is_active": False, "disabled_at": now, "disabled_by": ctx.user["_id"],
             "disabled_by_name": _operator_name(ctx.user), "disabled_reason": note,

@@ -28,13 +28,12 @@ from datetime import UTC, datetime
 from email.utils import formataddr
 
 from pydantic import SecretStr
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core import secrets
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.db.transactions import run_in_transaction
+from app.db.types import Db, DbSession
 from app.repositories import settings as settings_repo
 from app.services import audit
 from app.services import email as email_svc
@@ -73,17 +72,17 @@ def password_status(doc: dict, settings: Settings) -> str:
     return "SAVED" if key and sealed.get("kid") == secrets.key_id(key) else "UNREADABLE"
 
 
-async def saved(db: AsyncDatabase, session: AsyncClientSession | None = None) -> dict | None:
+async def saved(db: Db, session: DbSession | None = None) -> dict | None:
     return await settings_repo.get(db, DOC_ID, session=session)
 
 
-async def active(db: AsyncDatabase, settings: Settings, session: AsyncClientSession | None = None) -> bool:
+async def active(db: Db, settings: Settings, session: DbSession | None = None) -> bool:
     """Whether e-mail is switched on (decides if a host e-mail is queued). Never contacts a server."""
     doc = await saved(db, session)
     return bool(doc["enabled"]) if doc is not None else settings.email_enabled
 
 
-async def effective(db: AsyncDatabase, settings: Settings) -> email_svc.SmtpConfig | None:
+async def effective(db: Db, settings: Settings) -> email_svc.SmtpConfig | None:
     """The SMTP settings to send with now, with the password decrypted in memory only; None when
     e-mail is off. Raises SmtpUnusable when the saved password cannot be read."""
     doc = await saved(db)
@@ -115,7 +114,7 @@ def source(doc: dict | None, settings: Settings) -> str:
 
 
 # ---------------------------------------------------------------- administrators
-async def save(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta, data: dict,
+async def save(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta, data: dict,
                password: SecretStr | None) -> dict:
     """Creates or replaces the saved settings. `password` None keeps the saved one."""
     current = await saved(db)
@@ -149,7 +148,7 @@ async def save(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: Re
         return current                                    # nothing to save
     now = datetime.now(UTC)
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         await settings_repo.upsert(db, DOC_ID, {**fields, "updated_at": now, "updated_by": ctx.user["_id"]},
                                    now=now, remove=remove, session=s)
         diff: dict = {k: {"from": current.get(k) if current else None, "to": values[k]} for k in sorted(changed)}
@@ -165,9 +164,9 @@ async def save(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: Re
     return await saved(db)
 
 
-async def remove(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta) -> None:
+async def remove(db: Db, ctx: AuthContext, meta: RequestMeta) -> None:
     """Deletes the saved settings, password included: the server environment applies again."""
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         if not await settings_repo.delete(db, DOC_ID, session=s):
             raise NOT_SAVED
         await audit.record(db, AuditAction.EMAIL_SETTINGS_REMOVED, actor=actor_from_user(ctx.user), ip=meta.ip,
@@ -176,7 +175,7 @@ async def remove(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta) -> None
     await run_in_transaction(db, work)
 
 
-async def send_test(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta,
+async def send_test(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
                     to: str) -> tuple[bool, str | None, str]:
     """Sends one test e-mail with the settings in use. Returns (sent, reason, source).
     One test at a time. The recipient's address is not logged or audited (only its domain)."""
@@ -206,7 +205,7 @@ async def send_test(db: AsyncDatabase, settings: Settings, ctx: AuthContext, met
         return await _tested(db, ctx, meta, to, True, None, where)
 
 
-async def _tested(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, to: str, sent: bool, reason: str | None,
+async def _tested(db: Db, ctx: AuthContext, meta: RequestMeta, to: str, sent: bool, reason: str | None,
                   where: str) -> tuple[bool, str | None, str]:
     await audit.record(db, AuditAction.EMAIL_TEST_SENT, result="SUCCESS" if sent else "FAILURE",
                        actor=actor_from_user(ctx.user), ip=meta.ip, resource_type="settings", resource_id=DOC_ID,

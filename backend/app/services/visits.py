@@ -11,16 +11,13 @@ Check-out is a single conditional update: atomic and idempotent.
 """
 from datetime import UTC, date, datetime
 
-from bson import ObjectId
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.identity import identifier, mask_identity
 from app.core.pagination import decode_cursor, encode_cursor
 from app.core.timeutil import day_bounds_utc, local_today
 from app.db.transactions import run_in_transaction
+from app.db.types import Db, DbSession, RecordId
 from app.repositories import photos as photos_repo
 from app.repositories import visitors as visitors_repo
 from app.repositories import visits as visits_repo
@@ -44,7 +41,7 @@ NOT_FOUND = AppError(404, "not_found", "Visit not found.")
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
 
-def _oid(value: str) -> ObjectId:
+def _oid(value: str) -> RecordId:
     oid = parse_id(value)
     if oid is None:
         raise NOT_FOUND
@@ -58,7 +55,7 @@ def _operator_name(user: dict) -> str:
     return user.get("display_name") or user["username"]
 
 
-async def _require_gate(db: AsyncDatabase, ctx: AuthContext) -> dict:
+async def _require_gate(db: Db, ctx: AuthContext) -> dict:
     gate, selection_required = await session_gate(db, ctx.session)
     if gate:
         return gate
@@ -67,7 +64,7 @@ async def _require_gate(db: AsyncDatabase, ctx: AuthContext) -> dict:
     raise AppError(409, "no_gate_configured", "No gate is set up yet. An administrator must add a gate first.")
 
 
-async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta,
+async def check_in(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
                    body: CheckInRequest) -> dict:
     gate = await _require_gate(db, ctx)
     visitor = await visitors_svc.get(db, body.visitor_id)
@@ -119,7 +116,7 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
         "created_at": now, "updated_at": now,
     }
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         # Counted per day at the gate: V-26-OCT-02-001 is the first visit on 2 October 2026.
         seq = await visits_repo.next_daily_number(db, day, session=s)
         visit["visit_number"] = f"V-{day:%y}-{MONTHS[day.month - 1]}-{day:%d}-{seq:03d}"
@@ -147,7 +144,7 @@ async def check_in(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta
     return visit
 
 
-async def check_out(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visit_id: ObjectId | str,
+async def check_out(db: Db, ctx: AuthContext, meta: RequestMeta, visit_id: RecordId | str,
                     method: str = "MANUAL") -> tuple[dict, bool]:
     """Returns (visit, already_checked_out). Repeating a check-out changes nothing."""
     oid = _oid(visit_id)
@@ -156,7 +153,7 @@ async def check_out(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visi
     gate_id = gate["_id"] if gate else None
     result: dict = {}
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         # The status condition makes this atomic: only one request can move CHECKED_IN -> CHECKED_OUT.
         doc = await visits_repo.check_out_if_active(
             db, oid, now=now, user_id=ctx.user["_id"], user_name=_operator_name(ctx.user), gate_id=gate_id,
@@ -179,7 +176,7 @@ async def check_out(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visi
     raise AppError(409, "not_checked_in", "This visit is not currently checked in.")
 
 
-async def resolve_and_check_out(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, *,
+async def resolve_and_check_out(db: Db, ctx: AuthContext, meta: RequestMeta, *,
                                 visit_number: str | None, identity: dict | None) -> tuple[dict, bool]:
     if visit_number:
         visit = await visits_repo.find_by_number(db, visit_number)
@@ -195,14 +192,14 @@ async def resolve_and_check_out(db: AsyncDatabase, ctx: AuthContext, meta: Reque
     return await check_out(db, ctx, meta, active["_id"], "ID_NUMBER")
 
 
-async def get_visit(db: AsyncDatabase, visit_id: str) -> dict:
+async def get_visit(db: Db, visit_id: str) -> dict:
     doc = await visits_repo.find_by_id(db, _oid(visit_id), hide_pass_secrets=True)
     if doc is None:
         raise NOT_FOUND
     return doc
 
 
-async def update_belongings(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta,
+async def update_belongings(db: Db, ctx: AuthContext, meta: RequestMeta,
                             visit_id: str, body: UpdateBelongingsRequest) -> dict:
     """Replace belongings (and optional vehicle) on a visit that is still checked in."""
     oid = _oid(visit_id)
@@ -210,7 +207,7 @@ async def update_belongings(db: AsyncDatabase, ctx: AuthContext, meta: RequestMe
     set_material = "personal_material" in body.model_fields_set
     material = body.personal_material.model_dump(mode="json") if set_material and body.personal_material else None
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         doc = await visits_repo.update_belongings_if_active(
             db, oid, belongings=list(body.belongings), vehicle_registration=body.vehicle_registration,
             set_personal_material=set_material, personal_material=material, now=now, session=s)
@@ -233,7 +230,7 @@ async def update_belongings(db: AsyncDatabase, ctx: AuthContext, meta: RequestMe
                    "Belongings can only be updated while the visitor is still inside.")
 
 
-async def list_active(db: AsyncDatabase) -> tuple[list[dict], int]:
+async def list_active(db: Db) -> tuple[list[dict], int]:
     docs = await visits_repo.list_active(db, ACTIVE_LIMIT)
     total = len(docs) if len(docs) < ACTIVE_LIMIT else await visits_repo.count_active(db)
     return docs, total
@@ -243,7 +240,7 @@ TOO_BROAD = AppError(422, "search_too_broad", "Too many visitors match this sear
                                               "or search by ID number, phone or visit number.")
 
 
-async def visit_query(db: AsyncDatabase, f: VisitFilter, *, max_visitor_matches: int | None = None) -> dict:
+async def visit_query(db: Db, f: VisitFilter, *, max_visitor_matches: int | None = None) -> dict:
     """The database filter for `f` (visits_repo.filter_query), with the free-text search resolved here.
 
     `q`: a visit number is matched exactly; anything else finds visitors by name prefix, ID number or
@@ -267,7 +264,7 @@ async def visit_query(db: AsyncDatabase, f: VisitFilter, *, max_visitor_matches:
     return visits_repo.filter_query(f, visit_number=visit_number, visitor_ids=ids)
 
 
-async def list_visits(db: AsyncDatabase, settings: Settings, *, status: str | None, day_from: date | None,
+async def list_visits(db: Db, settings: Settings, *, status: str | None, day_from: date | None,
                       day_to: date | None, host_id: str | None, department_id: str | None, gate_id: str | None,
                       visitor_id: str | None, q: str | None, cursor: str | None, limit: int
                       ) -> tuple[list[dict], str | None]:

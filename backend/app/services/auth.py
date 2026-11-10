@@ -9,9 +9,6 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.security import (
@@ -24,6 +21,7 @@ from app.core.security import (
     verify_password,
 )
 from app.db.transactions import run_in_transaction
+from app.db.types import Db, DbSession
 from app.repositories import gates as gates_repo
 from app.repositories import rate_limits
 from app.repositories import sessions as sessions_repo
@@ -65,7 +63,7 @@ def locked_message(settings: Settings) -> str:
             "An administrator can unlock it sooner.")
 
 
-async def login(db: AsyncDatabase, settings: Settings, username: str, password: str, meta: RequestMeta) -> NewSession:
+async def login(db: Db, settings: Settings, username: str, password: str, meta: RequestMeta) -> NewSession:
     attempts = await rate_limits.hit(db, f"login-ip:{meta.ip}", settings.login_ip_window_minutes)
     if attempts > settings.login_ip_limit:
         await audit.record(db, AuditAction.LOGIN_FAILED, result="FAILURE", ip=meta.ip,
@@ -129,12 +127,12 @@ async def login(db: AsyncDatabase, settings: Settings, username: str, password: 
     return NewSession(token, csrf_token, expires_at, user, session)
 
 
-async def _only_active_gate(db: AsyncDatabase):
+async def _only_active_gate(db: Db):
     gate_ids = await gates_repo.active_ids(db, limit=2)
     return gate_ids[0] if len(gate_ids) == 1 else None
 
 
-async def session_gate(db: AsyncDatabase, session: dict) -> tuple[dict | None, bool]:
+async def session_gate(db: Db, session: dict) -> tuple[dict | None, bool]:
     """(the session's active gate or None, whether the user still has to choose one)."""
     gate = None
     if session.get("gate_id"):
@@ -150,7 +148,7 @@ async def session_gate(db: AsyncDatabase, session: dict) -> tuple[dict | None, b
     return None, active > 1
 
 
-async def select_gate(db: AsyncDatabase, ctx: "AuthContext", gate_id: str, meta: RequestMeta) -> dict:
+async def select_gate(db: Db, ctx: "AuthContext", gate_id: str, meta: RequestMeta) -> dict:
     gate = await gates_repo.find_active(db, gate_id)
     if gate is None:
         raise AppError(404, "not_found", "That gate does not exist or is no longer active.")
@@ -161,7 +159,7 @@ async def select_gate(db: AsyncDatabase, ctx: "AuthContext", gate_id: str, meta:
     return gate
 
 
-async def authenticate(db: AsyncDatabase, settings: Settings, token: str | None) -> AuthContext:
+async def authenticate(db: Db, settings: Settings, token: str | None) -> AuthContext:
     if not token:
         raise AppError(401, "unauthenticated", "Please log in.")
     session = await sessions_repo.find_active_by_token_hash(db, hash_token(token))
@@ -185,13 +183,13 @@ async def authenticate(db: AsyncDatabase, settings: Settings, token: str | None)
     return AuthContext(user, session)
 
 
-async def logout(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta) -> None:
+async def logout(db: Db, ctx: AuthContext, meta: RequestMeta) -> None:
     await sessions_repo.revoke(db, ctx.session["_id"], "logout")
     await audit.record(db, AuditAction.LOGOUT, actor=actor_from_user(ctx.user), ip=meta.ip,
                        resource_type="session", resource_id=ctx.session["_id"])
 
 
-async def verify_actor_password(db: AsyncDatabase, settings: Settings, ctx: AuthContext, password: str | None,
+async def verify_actor_password(db: Db, settings: Settings, ctx: AuthContext, password: str | None,
                                 meta: RequestMeta) -> None:
     """Re-authentication for sensitive actions. Wrong passwords count towards the lockout."""
     if not password:
@@ -205,7 +203,7 @@ async def verify_actor_password(db: AsyncDatabase, settings: Settings, ctx: Auth
         raise AppError(403, "reauthentication_failed", "Your password is incorrect. The change was not made.")
 
 
-async def change_own_password(db: AsyncDatabase, settings: Settings, ctx: AuthContext, current_password: str,
+async def change_own_password(db: Db, settings: Settings, ctx: AuthContext, current_password: str,
                               new_password: str, meta: RequestMeta) -> None:
     user = ctx.user
     if not await asyncio.to_thread(verify_password, current_password, user.get("password_hash", "")):
@@ -223,7 +221,7 @@ async def change_own_password(db: AsyncDatabase, settings: Settings, ctx: AuthCo
 
     new_hash = await asyncio.to_thread(hash_password, new_password)
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         await users_repo.update_fields(db, user["_id"], {
             "password_hash": new_hash, "must_change_password": False,
             "password_changed_at": datetime.now(UTC), "failed_login_count": 0, "locked_until": None}, session=s)

@@ -11,10 +11,6 @@ Visitors: the person, independent of any single visit.
 import re
 from datetime import UTC, datetime
 
-from bson import ObjectId
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.errors import AppError
 from app.core.identity import (
     IdentityType,
@@ -26,6 +22,7 @@ from app.core.identity import (
 )
 from app.core.pagination import decode_cursor, encode_cursor
 from app.db.transactions import run_in_transaction
+from app.db.types import Db, DbSession, RecordId
 from app.repositories import visitors as visitors_repo
 from app.repositories import visits as visits_repo
 from app.repositories import watchlist as watchlist_repo
@@ -39,7 +36,7 @@ SEARCH_LIMIT = 25
 NOT_FOUND = AppError(404, "not_found", "Visitor not found.")
 
 
-async def get(db: AsyncDatabase, visitor_id: str | ObjectId, session: AsyncClientSession | None = None) -> dict:
+async def get(db: Db, visitor_id: str | RecordId, session: DbSession | None = None) -> dict:
     oid = parse_id(visitor_id)
     if oid is None:
         raise NOT_FOUND
@@ -49,11 +46,11 @@ async def get(db: AsyncDatabase, visitor_id: str | ObjectId, session: AsyncClien
     return doc
 
 
-async def active_visit(db: AsyncDatabase, visitor_id: ObjectId) -> dict | None:
+async def active_visit(db: Db, visitor_id: RecordId) -> dict | None:
     return await visits_repo.find_active_for_visitor(db, visitor_id)
 
 
-async def screening(db: AsyncDatabase, visitor: dict) -> dict | None:
+async def screening(db: Db, visitor: dict) -> dict | None:
     """The active, unexpired watchlist entry matching this visitor, if any."""
     ident = visitor.get("identity")
     if not ident:
@@ -77,13 +74,13 @@ def _watchlist_match(ident: dict) -> tuple[list[str], str]:
     return sorted(keys), compact
 
 
-async def create(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, full_name: str, identity: dict,
+async def create(db: Db, ctx: AuthContext, meta: RequestMeta, full_name: str, identity: dict,
                  phone: str | None) -> dict:
     now = datetime.now(UTC)
     doc = {"full_name": full_name, "name_search": search_key(full_name), "identity": identity, "phone": phone,
            "current_photo_id": None, "created_at": now, "updated_at": now, "created_by": ctx.user["_id"]}
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         doc["_id"] = await visitors_repo.insert(db, doc, session=s)
         await audit.record(db, AuditAction.VISITOR_CREATED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="visitor", resource_id=doc["_id"],
@@ -97,7 +94,7 @@ async def create(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, full_na
     return doc
 
 
-async def lookup(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, id_type: IdentityType,
+async def lookup(db: Db, ctx: AuthContext, meta: RequestMeta, id_type: IdentityType,
                  raw_number: str) -> dict:
     try:
         number = normalize_identity(id_type, raw_number)
@@ -113,7 +110,7 @@ async def lookup(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, id_type
     return doc
 
 
-async def view(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visitor_id: str) -> dict:
+async def view(db: Db, ctx: AuthContext, meta: RequestMeta, visitor_id: str) -> dict:
     doc = await get(db, visitor_id)
     await audit.record(db, AuditAction.VISITOR_VIEWED, actor=actor_from_user(ctx.user), ip=meta.ip,
                        resource_type="visitor", resource_id=doc["_id"])
@@ -133,7 +130,7 @@ def _identity_candidates(q: str) -> list[tuple[str, str]]:
 identity_candidates = _identity_candidates      # (type, normalised number) pairs a free-text query could be
 
 
-async def search(db: AsyncDatabase, q: str | None, cursor: str | None = None) -> tuple[list[dict], str | None]:
+async def search(db: Db, q: str | None, cursor: str | None = None) -> tuple[list[dict], str | None]:
     """Alphabetical directory; optionally filter by ID/phone (exact) or name prefix."""
     q = (q or "").strip()
     if q and len(q) < 2:
@@ -155,7 +152,7 @@ async def search(db: AsyncDatabase, q: str | None, cursor: str | None = None) ->
     return docs, next_cursor
 
 
-async def matching_ids(db: AsyncDatabase, q: str, limit: int = 200) -> list[ObjectId]:
+async def matching_ids(db: Db, q: str, limit: int = 200) -> list[RecordId]:
     """Visitor ids matching a free-text query (for filtering visit history)."""
     q = q.strip()
     return await visitors_repo.matching_ids(db, name_prefix=search_key(q), identities=_identity_candidates(q),
@@ -169,7 +166,7 @@ def _phone_or_none(q: str) -> str | None:
         return None
 
 
-async def update(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visitor_id: str, changes: dict) -> dict:
+async def update(db: Db, ctx: AuthContext, meta: RequestMeta, visitor_id: str, changes: dict) -> dict:
     current = await get(db, visitor_id)
     fields = {k: v for k, v in changes.items() if v is not None and v != current.get(k)}
     if not fields:
@@ -186,7 +183,7 @@ async def update(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visitor
         diff["identity"] = {"from": f"{old.get('type')}:{mask_identity(old.get('number', ''))}",
                             "to": f"{fields['identity']['type']}:{mask_identity(fields['identity']['number'])}"}
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         await visitors_repo.update_fields(db, current["_id"], fields, session=s)
         await audit.record(db, AuditAction.VISITOR_UPDATED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="visitor", resource_id=current["_id"], changes=diff, session=s)

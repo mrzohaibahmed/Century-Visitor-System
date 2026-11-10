@@ -29,15 +29,12 @@ import secrets
 from datetime import UTC, datetime
 from pathlib import Path
 
-from bson import ObjectId
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.images import InvalidImageError, normalize_photo
 from app.core.permissions import Permission, has_permission
 from app.db.transactions import run_in_transaction
+from app.db.types import Db, DbSession, RecordId
 from app.repositories import photos as photos_repo
 from app.repositories import visitors as visitors_repo
 from app.repositories import visits as visits_repo
@@ -84,7 +81,7 @@ def photo_storage_available(settings: Settings) -> bool:
     return root.is_dir() and os.access(root, os.W_OK)
 
 
-def _oid(value: str | ObjectId) -> ObjectId:
+def _oid(value: str | RecordId) -> RecordId:
     oid = parse_id(value)
     if oid is None:
         raise NOT_FOUND
@@ -111,7 +108,7 @@ def _read_file(path: Path) -> bytes:
     return path.read_bytes()
 
 
-async def capture(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta,
+async def capture(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
                   visitor_id: str, data: bytes) -> dict:
     """Validates and stores a new photo and makes it the visitor's current photo."""
     visitor = await visitors_svc.get(db, visitor_id)
@@ -135,7 +132,7 @@ async def capture(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta:
         log.error("Photo could not be stored (%s); is the photo folder available?", type(e).__name__)
         raise STORAGE_UNAVAILABLE from None
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         doc["_id"] = await photos_repo.insert(db, doc, session=s)
         await visitors_repo.update_fields(db, visitor["_id"], {"current_photo_id": doc["_id"]}, session=s, now=now)
         await audit.record(db, AuditAction.PHOTO_CAPTURED, actor=actor_from_user(ctx.user), ip=meta.ip,
@@ -151,7 +148,7 @@ async def capture(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta:
     return doc
 
 
-async def for_check_in(db: AsyncDatabase, visitor: dict, photo_id: str) -> ObjectId:
+async def for_check_in(db: Db, visitor: dict, photo_id: str) -> RecordId:
     """The photo a check-in refers to must be this visitor's current photo."""
     oid = _oid(photo_id)
     if visitor.get("current_photo_id") != oid:
@@ -159,13 +156,13 @@ async def for_check_in(db: AsyncDatabase, visitor: dict, photo_id: str) -> Objec
     return oid
 
 
-async def _guard_may_view(db: AsyncDatabase, photo: dict) -> bool:
+async def _guard_may_view(db: Db, photo: dict) -> bool:
     if await visitors_repo.has_current_photo(db, photo["visitor_id"], photo["_id"]):
         return True
     return await visits_repo.is_photo_of_active_visit(db, photo["_id"])
 
 
-async def read(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta,
+async def read(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
                photo_id: str) -> tuple[bytes, str]:
     photo = await photos_repo.find_by_id(db, _oid(photo_id))
     if photo is None:

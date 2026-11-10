@@ -2,8 +2,9 @@
 import re
 from typing import Annotated
 
-from bson import ObjectId
 from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints
+
+from app.repositories.ids import parse_id
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -13,8 +14,8 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-def _object_id(value: str) -> str:
-    if not ObjectId.is_valid(value):
+def _record_id(value: str) -> str:
+    if parse_id(value) is None:
         raise ValueError("Not a valid id.")
     return value
 
@@ -26,7 +27,7 @@ def _email(value: str) -> str:
     return value.lower()
 
 
-IdStr = Annotated[str, AfterValidator(_object_id)]
+IdStr = Annotated[str, AfterValidator(_record_id)]
 Email = Annotated[str, AfterValidator(_email)]
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
 OptionalLongText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=120)]

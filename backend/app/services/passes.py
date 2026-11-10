@@ -26,15 +26,13 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.secrets import SecretUnreadable, decrypt, encrypt
 from app.core.security import hash_token
 from app.core.timeutil import pass_expires_at
 from app.db.transactions import run_in_transaction
+from app.db.types import Db, DbSession
 from app.repositories import visits as visits_repo
 from app.services import audit
 from app.services import visits as visits_svc
@@ -72,7 +70,7 @@ def _is_expired(visit_pass: dict, now: datetime) -> bool:
     return visit_pass["expires_at"] <= now
 
 
-async def issue(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta,
+async def issue(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
                 visit_id: str) -> IssuedPass:
     """Issues the visit's pass, or a replacement: the previous QR stops working immediately."""
     oid = visits_svc.object_id(visit_id)
@@ -82,7 +80,7 @@ async def issue(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: R
                                  minute=settings.pass_day_end_minute, now=now)
     result: dict = {}
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         visit = await visits_repo.find_by_id(db, oid, session=s)
         if visit is None:
             raise visits_svc.NOT_FOUND
@@ -106,7 +104,7 @@ async def issue(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: R
     return IssuedPass(visit=result["visit"], qr_text=QR_PREFIX + token, expires_at=expires_at)
 
 
-async def printable(db: AsyncDatabase, settings: Settings, visit_id: str) -> IssuedPass:
+async def printable(db: Db, settings: Settings, visit_id: str) -> IssuedPass:
     """Return the current badge's exact QR without issuing or cancelling a pass."""
     oid = visits_svc.object_id(visit_id)
     visit = await visits_repo.find_by_id(db, oid)
@@ -132,7 +130,7 @@ async def printable(db: AsyncDatabase, settings: Settings, visit_id: str) -> Iss
     return IssuedPass(visit=visit, qr_text=qr_text, expires_at=current["expires_at"])
 
 
-async def verify_for_print(db: AsyncDatabase, visit_id: str, qr_text: str) -> IssuedPass:
+async def verify_for_print(db: Db, visit_id: str, qr_text: str) -> IssuedPass:
     """Accept a scan of an older physical badge without reissuing it."""
     oid = visits_svc.object_id(visit_id)
     visit = await visits_repo.find_by_id(db, oid)
@@ -146,12 +144,12 @@ async def verify_for_print(db: AsyncDatabase, visit_id: str, qr_text: str) -> Is
     return IssuedPass(visit=visit, qr_text=QR_PREFIX + token, expires_at=current["expires_at"])
 
 
-async def revoke(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visit_id: str) -> dict:
+async def revoke(db: Db, ctx: AuthContext, meta: RequestMeta, visit_id: str) -> dict:
     """The current pass stops working (e.g. badge lost). Idempotent."""
     oid = visits_svc.object_id(visit_id)
     now = datetime.now(UTC)
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         visit = await visits_repo.find_by_id(db, oid, session=s)
         if visit is None:
             raise visits_svc.NOT_FOUND
@@ -167,7 +165,7 @@ async def revoke(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visit_i
     return await run_in_transaction(db, work)
 
 
-async def _reject(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, reason: str,
+async def _reject(db: Db, ctx: AuthContext, meta: RequestMeta, reason: str,
                   visit: dict | None, error: AppError) -> AppError:
     await audit.record(db, AuditAction.PASS_REJECTED, result="FAILURE", actor=actor_from_user(ctx.user), ip=meta.ip,
                        resource_type="visit" if visit else None, resource_id=visit["_id"] if visit else None,
@@ -175,7 +173,7 @@ async def _reject(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, reason
     return error
 
 
-async def resolve(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, qr_text: str) -> dict:
+async def resolve(db: Db, ctx: AuthContext, meta: RequestMeta, qr_text: str) -> dict:
     """The visit a scanned pass belongs to, if the pass is valid. Changes nothing.
 
     A pass whose visit is already checked out resolves (so the guard sees who it
@@ -211,7 +209,7 @@ async def resolve(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, qr_tex
     return visit
 
 
-async def check_out(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, qr_text: str) -> tuple[dict, bool]:
+async def check_out(db: Db, ctx: AuthContext, meta: RequestMeta, qr_text: str) -> tuple[dict, bool]:
     """Check-out with a scanned pass, after the guard confirmed it. Idempotent like every check-out."""
     visit = await resolve(db, ctx, meta, qr_text)
     if visit["status"] != "CHECKED_IN":
@@ -219,7 +217,7 @@ async def check_out(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, qr_t
     return await visits_svc.check_out(db, ctx, meta, visit["_id"], "QR")
 
 
-async def record_badge_print(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visit_id: str) -> None:
+async def record_badge_print(db: Db, ctx: AuthContext, meta: RequestMeta, visit_id: str) -> None:
     visit = await visits_svc.get_visit(db, visit_id)
     await audit.record(db, AuditAction.BADGE_PRINT_REQUESTED, actor=actor_from_user(ctx.user), ip=meta.ip,
                        resource_type="visit", resource_id=visit["_id"],

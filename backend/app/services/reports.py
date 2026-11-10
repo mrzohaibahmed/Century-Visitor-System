@@ -19,13 +19,11 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from bson import ObjectId
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.pagination import decode_sort_cursor, encode_sort_cursor
 from app.core.timeutil import DayRange, InvalidRange, RangePreset, day_bounds_utc, resolve_range
+from app.db.types import Db, RecordId
 from app.repositories import directory as directory_repo
 from app.repositories import reports as reports_repo
 from app.repositories import visits as visits_repo
@@ -56,12 +54,12 @@ def report_range(settings: Settings, preset: RangePreset | str, day_from: date |
         raise AppError(422, "invalid_range", str(e)) from None
 
 
-async def report_visit_query(db: AsyncDatabase, f: VisitFilter) -> dict:
+async def report_visit_query(db: Db, f: VisitFilter) -> dict:
     return await visit_query(db, f, max_visitor_matches=REPORT_VISITOR_MATCHES)
 
 
-async def visitor_identities(db: AsyncDatabase, visitor_ids: list[ObjectId], *,
-                             with_name: bool = False) -> dict[ObjectId, dict]:
+async def visitor_identities(db: Db, visitor_ids: list[RecordId], *,
+                             with_name: bool = False) -> dict[RecordId, dict]:
     """{visitor id: {"identity": ..., "phone": ...}} for these visitors (masked later, in the schema);
     also "full_name" if asked."""
     fields = ("identity", "phone", *(("full_name",) if with_name else ()))
@@ -75,7 +73,7 @@ class SecurityCounts:
     watchlist_matches: int
 
 
-async def security_counts(db: AsyncDatabase, start: datetime, end: datetime) -> SecurityCounts:
+async def security_counts(db: Db, start: datetime, end: datetime) -> SecurityCounts:
     """Refused entries and watchlist matches between start (included) and end (excluded), UTC.
 
     Source: entry_denials only (never audit_logs as well, which would count each refusal twice). One
@@ -100,7 +98,7 @@ def _buckets(r: DayRange) -> tuple[str, list[datetime]]:
     return "day", [day_bounds_utc(r.first_day + timedelta(days=i), None, r.tz_name)[0] for i in range(r.days)]
 
 
-async def overview(db: AsyncDatabase, r: DayRange, *, now: datetime | None = None) -> dict:
+async def overview(db: Db, r: DayRange, *, now: datetime | None = None) -> dict:
     """Totals and chart series for visits that checked in within the range, in ONE aggregation (one
     $facet over the indexed check-in range), plus the current number inside and the security counts."""
     now = now or datetime.now(UTC)
@@ -149,7 +147,7 @@ async def overview(db: AsyncDatabase, r: DayRange, *, now: datetime | None = Non
 _after = reports_repo.after
 
 
-async def visit_report(db: AsyncDatabase, f: VisitFilter, *, sort: VisitReportSort, cursor: str | None,
+async def visit_report(db: Db, f: VisitFilter, *, sort: VisitReportSort, cursor: str | None,
                        limit: int, now: datetime | None = None, bounded: bool = True,
                        count: bool = True) -> tuple[list[dict], str | None, int | None, datetime]:
     """One page of the visit report: (rows, next cursor, total matching the filters, the moment used for
@@ -184,7 +182,7 @@ async def visit_report(db: AsyncDatabase, f: VisitFilter, *, sort: VisitReportSo
     return docs, next_cursor, total, as_of
 
 
-async def count_visits(db: AsyncDatabase, f: VisitFilter) -> int:
+async def count_visits(db: Db, f: VisitFilter) -> int:
     """The visit report's total for these filters (the same query as visit_report)."""
     return await reports_repo.count_visits(db, await report_visit_query(db, f))
 
@@ -214,14 +212,14 @@ _VISITOR_SORTS = {"last_visit_desc": "last", "visits_desc": "visits"}
 _count_visitors = reports_repo.count_visitors
 
 
-async def count_visitors(db: AsyncDatabase, f: VisitFilter) -> int:
+async def count_visitors(db: Db, f: VisitFilter) -> int:
     """The visitor summary's total for these filters (the same query as visitor_summary)."""
     return await _count_visitors(db, await report_visit_query(db, f))
 
 
-async def visitor_summary(db: AsyncDatabase, f: VisitFilter, *, sort: str, cursor: str | None, limit: int,
+async def visitor_summary(db: Db, f: VisitFilter, *, sort: str, cursor: str | None, limit: int,
                           count: bool = True
-                          ) -> tuple[list[dict], str | None, int | None, dict[ObjectId, dict], set[ObjectId]]:
+                          ) -> tuple[list[dict], str | None, int | None, dict[RecordId, dict], set[RecordId]]:
     """Per visitor: their visits that checked in within the range and match the filters, grouped in
     MongoDB, one page at a time (keyset on the sort value, then the visitor id). Returns (groups, next
     cursor, number of visitors, their identity/phone/name, the ids of those inside now)."""
@@ -248,7 +246,7 @@ async def visitor_summary(db: AsyncDatabase, f: VisitFilter, *, sort: str, curso
 
 # ------------------------------------------------------------------------------------------ hosts, departments
 # A host is its directory id; an unlisted host (typed in at the gate, no id) is the name typed.
-async def host_report(db: AsyncDatabase, r: DayRange, *, department_id: ObjectId | None, limit: int | None
+async def host_report(db: Db, r: DayRange, *, department_id: RecordId | None, limit: int | None
                       ) -> tuple[list[dict], int, bool]:
     """Visits per host and department (as recorded on each visit) within the range, plus how many of each
     host's visitors are inside now (current state: a host whose visitors are inside is listed even without
@@ -276,7 +274,7 @@ async def host_report(db: AsyncDatabase, r: DayRange, *, department_id: ObjectId
                                     _name_key(x["department"]["name"])), limit)
 
 
-async def department_report(db: AsyncDatabase, r: DayRange, *, limit: int | None) -> tuple[list[dict], int, bool]:
+async def department_report(db: Db, r: DayRange, *, limit: int | None) -> tuple[list[dict], int, bool]:
     """Visits per department within the range (unique visitors counted in two grouping stages, so no
     department ever holds a list of its visitors), plus visitors inside now (current state)."""
     visited, inside = await reports_repo.department_groups(db, r.start, r.end)
@@ -297,7 +295,7 @@ async def department_report(db: AsyncDatabase, r: DayRange, *, limit: int | None
 
 
 # ------------------------------------------------------------------------------------------ guards
-async def guard_report(db: AsyncDatabase, r: DayRange, *, limit: int | None) -> tuple[list[dict], int, bool]:
+async def guard_report(db: Db, r: DayRange, *, limit: int | None) -> tuple[list[dict], int, bool]:
     """Per operator, from the ids recorded with each event (written from the session at the time, never
     taken from a request): check-ins within the range (by check-in time), check-outs within the range (by
     check-out time), visitors they checked in who are inside now (current state), and refusals within the
@@ -357,15 +355,15 @@ def _denial_row(d: dict, bans: dict, visitors: dict, gates: dict, users: dict) -
     }
 
 
-async def count_denials(db: AsyncDatabase, r: DayRange, *, source: str | None, operator_id: ObjectId | None,
-                        gate_id: ObjectId | None) -> int:
+async def count_denials(db: Db, r: DayRange, *, source: str | None, operator_id: RecordId | None,
+                        gate_id: RecordId | None) -> int:
     """The denial report's total for these filters (the same query as denial_report)."""
     return await reports_repo.count_denials(db, r.start, r.end, source=source, operator_id=operator_id,
                                             gate_id=gate_id)
 
 
-async def denial_report(db: AsyncDatabase, r: DayRange, *, source: str | None, operator_id: ObjectId | None,
-                        gate_id: ObjectId | None, cursor: str | None, limit: int, count: bool = True
+async def denial_report(db: Db, r: DayRange, *, source: str | None, operator_id: RecordId | None,
+                        gate_id: RecordId | None, cursor: str | None, limit: int, count: bool = True
                         ) -> tuple[list[dict], str | None, int | None]:
     """Refused entries within the range, newest first (index newest_first), from entry_denials only.
     Returns (rows, next cursor, rows matching the filters)."""

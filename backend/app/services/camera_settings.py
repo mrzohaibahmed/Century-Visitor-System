@@ -25,16 +25,14 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from bson import ObjectId
 from pydantic import SecretStr
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core import secrets
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.images import InvalidImageError, NormalizedPhoto, normalize_photo
 from app.db.transactions import run_in_transaction
+from app.db.types import Db, DbSession, RecordId
 from app.repositories import gates as gates_repo
 from app.repositories import settings as settings_repo
 from app.services import audit
@@ -54,10 +52,10 @@ KEY_MISSING = AppError(503, "secrets_key_missing",
                        "Camera passwords cannot be used: the server has no CG_SECRETS_KEY. Ask the administrator.")
 BUSY = AppError(409, "camera_test_running", "A test of this camera is already running. Wait for it to finish.")
 
-_testing: dict[ObjectId, asyncio.Lock] = {}
+_testing: dict[RecordId, asyncio.Lock] = {}
 
 
-def doc_id(gate_id: ObjectId) -> str:
+def doc_id(gate_id: RecordId) -> str:
     return f"gate_camera:{gate_id}"
 
 
@@ -70,7 +68,7 @@ def password_status(doc: dict, settings: Settings) -> str:
     return "SAVED" if key and sealed.get("kid") == secrets.key_id(key) else "UNREADABLE"
 
 
-async def list_for_admin(db: AsyncDatabase) -> list[tuple[dict, dict | None]]:
+async def list_for_admin(db: Db) -> list[tuple[dict, dict | None]]:
     """Every gate (active first, by name) with its camera settings document, if any."""
     gates = await gates_repo.list_all(db, directory_svc.MAX_LIST)
     docs = await settings_repo.get_many(db, [doc_id(g["_id"]) for g in gates])
@@ -88,7 +86,7 @@ def _config(values: dict, password: str) -> CameraConfig:
         raise AppError(422, "invalid_camera_settings", str(e)) from None
 
 
-async def save(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta, gate_id: str,
+async def save(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta, gate_id: str,
                data: dict, password: SecretStr | None) -> tuple[dict, dict]:
     """Creates or replaces a gate's camera settings. `password` None keeps the saved one."""
     gate = await directory_svc.get(db, directory_svc.GATE, gate_id)
@@ -120,7 +118,7 @@ async def save(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: Re
     if current is not None and (changed & {*DESTINATION_FIELDS, "channel"} or new_password is not None):
         remove.append("last_test")                       # an earlier test result no longer applies
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         await settings_repo.upsert(db, _id, {**fields, "type": "gate_camera", "gate_id": gate["_id"],
                                              "updated_at": now, "updated_by": ctx.user["_id"]},
                                    now=now, remove=remove, session=s)
@@ -134,11 +132,11 @@ async def save(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: Re
     return gate, await settings_repo.get(db, _id)
 
 
-async def remove(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, gate_id: str) -> None:
+async def remove(db: Db, ctx: AuthContext, meta: RequestMeta, gate_id: str) -> None:
     """Deletes a gate's camera settings, password included."""
     gate = await directory_svc.get(db, directory_svc.GATE, gate_id)
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         if not await settings_repo.delete(db, doc_id(gate["_id"]), session=s):
             raise NOT_CONFIGURED
         await audit.record(db, AuditAction.GATE_CAMERA_REMOVED, actor=actor_from_user(ctx.user), ip=meta.ip,
@@ -147,7 +145,7 @@ async def remove(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, gate_id
     await run_in_transaction(db, work)
 
 
-async def client_for(db: AsyncDatabase, settings: Settings, gate_id: ObjectId) -> GateCameraClient:
+async def client_for(db: Db, settings: Settings, gate_id: RecordId) -> GateCameraClient:
     """A client with the saved settings and the decrypted password (kept only in memory)."""
     doc = await settings_repo.get(db, doc_id(gate_id))
     if doc is None:
@@ -183,7 +181,7 @@ UNUSABLE_AT_GATE = AppError(409, "gate_camera_unavailable",
 CAMERA_BUSY = AppError(409, "gate_camera_busy", "The gate camera is busy. Try again in a moment.")
 
 
-async def session_camera(db: AsyncDatabase, settings: Settings, ctx: AuthContext) -> tuple[dict, dict] | None:
+async def session_camera(db: Db, settings: Settings, ctx: AuthContext) -> tuple[dict, dict] | None:
     """(gate, camera settings) for the session's gate when its camera is switched on and has a usable
     password; else None. Never contacts the camera."""
     gate, _ = await session_gate(db, ctx.session)
@@ -195,7 +193,7 @@ async def session_camera(db: AsyncDatabase, settings: Settings, ctx: AuthContext
     return gate, doc
 
 
-async def _session_snapshot(db: AsyncDatabase, settings: Settings, ctx: AuthContext) -> Snapshot:
+async def _session_snapshot(db: Db, settings: Settings, ctx: AuthContext) -> Snapshot:
     """One validated JPEG from the session's gate camera (one request per camera at a time)."""
     found = await session_camera(db, settings, ctx)
     if found is None:
@@ -215,13 +213,13 @@ async def _session_snapshot(db: AsyncDatabase, settings: Settings, ctx: AuthCont
             raise AppError(502, e.code.value.lower(), e.message) from None
 
 
-async def preview_for_session(db: AsyncDatabase, settings: Settings, ctx: AuthContext) -> Snapshot:
+async def preview_for_session(db: Db, settings: Settings, ctx: AuthContext) -> Snapshot:
     """One live-view frame from the session's gate camera, exactly as the camera sent it. Only for
     showing the guard what the camera sees; never uploaded or stored."""
     return await _session_snapshot(db, settings, ctx)
 
 
-async def capture_for_session(db: AsyncDatabase, settings: Settings, ctx: AuthContext) -> NormalizedPhoto:
+async def capture_for_session(db: Db, settings: Settings, ctx: AuthContext) -> NormalizedPhoto:
     """One picture from the session's gate camera, checked and scaled like a visitor photo (so the
     upload that follows accepts it), returned as a preview. Nothing is stored here."""
     shot = await _session_snapshot(db, settings, ctx)
@@ -233,7 +231,7 @@ async def capture_for_session(db: AsyncDatabase, settings: Settings, ctx: AuthCo
             from None
 
 
-async def _run_test(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta, gate_id: str,
+async def _run_test(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta, gate_id: str,
                     kind: str) -> CameraTestResult:
     gate = await directory_svc.get(db, directory_svc.GATE, gate_id)
     lock = _testing.setdefault(gate["_id"], asyncio.Lock())
@@ -271,13 +269,13 @@ async def _run_test(db: AsyncDatabase, settings: Settings, ctx: AuthContext, met
         return result
 
 
-async def test_connection(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta,
+async def test_connection(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
                           gate_id: str) -> CameraTestResult:
     """Device information with the saved settings: reachable, login accepted, model and firmware."""
     return await _run_test(db, settings, ctx, meta, gate_id, "connection")
 
 
-async def test_photo(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta,
+async def test_photo(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
                      gate_id: str) -> CameraTestResult:
     """One snapshot, checked like a visitor photo and returned. Nothing is stored."""
     return await _run_test(db, settings, ctx, meta, gate_id, "photo")

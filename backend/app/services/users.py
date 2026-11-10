@@ -13,14 +13,12 @@ User administration (Admin only; enforced by the routes' permission checks).
 import asyncio
 from datetime import UTC, datetime
 
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.permissions import Role
 from app.core.security import hash_password, password_policy_error
 from app.db.transactions import run_in_transaction
+from app.db.types import Db, DbSession
 from app.repositories import sessions as sessions_repo
 from app.repositories import users as users_repo
 from app.repositories.errors import DuplicateKey
@@ -37,7 +35,7 @@ def _check_password(password: str, username: str) -> None:
         raise AppError(422, "weak_password", problem)
 
 
-async def get_user(db: AsyncDatabase, user_id: str) -> dict:
+async def get_user(db: Db, user_id: str) -> dict:
     oid = users_repo.parse_id(user_id)
     user = await users_repo.find_by_id(db, oid) if oid else None
     if user is None:
@@ -45,7 +43,7 @@ async def get_user(db: AsyncDatabase, user_id: str) -> dict:
     return user
 
 
-async def create_user(db: AsyncDatabase, *, actor: dict | None, meta: RequestMeta | None, username: str,
+async def create_user(db: Db, *, actor: dict | None, meta: RequestMeta | None, username: str,
                       display_name: str, role: Role, password: str, must_change_password: bool = True,
                       enforce_policy: bool = True, source: str = "cli") -> dict:
     # enforce_policy=False only for the first-run account (app.cli first-admin): its
@@ -62,7 +60,7 @@ async def create_user(db: AsyncDatabase, *, actor: dict | None, meta: RequestMet
         "created_by": actor["_id"] if actor else None,
     }
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         doc["_id"] = await users_repo.insert(db, doc, session=s)
         await audit.record(db, AuditAction.USER_CREATED, actor=actor_from_user(actor), ip=meta.ip if meta else None,
                            resource_type="user", resource_id=doc["_id"],
@@ -76,12 +74,12 @@ async def create_user(db: AsyncDatabase, *, actor: dict | None, meta: RequestMet
     return doc
 
 
-async def _claim_admin_guard(db: AsyncDatabase, s: AsyncClientSession) -> None:
+async def _claim_admin_guard(db: Db, s: DbSession) -> None:
     """Serialises concurrent changes that reduce the number of admins (see users_repo.claim_admin_guard)."""
     await users_repo.claim_admin_guard(db, s)
 
 
-async def update_user(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta, user_id: str, *,
+async def update_user(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta, user_id: str, *,
                       display_name: str | None, role: Role | None, is_active: bool | None,
                       confirm_password: str | None) -> dict:
     target = await get_user(db, user_id)
@@ -101,7 +99,7 @@ async def update_user(db: AsyncDatabase, settings: Settings, ctx: AuthContext, m
         (role_change and str(role) != "ADMIN") or (active_change and not is_active))
     actor = actor_from_user(ctx.user)
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         if removes_admin:
             await _claim_admin_guard(db, s)
             if await users_repo.count_active_admins(db, session=s) <= 1:
@@ -131,7 +129,7 @@ async def update_user(db: AsyncDatabase, settings: Settings, ctx: AuthContext, m
     return await get_user(db, user_id)
 
 
-async def reset_password(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta, user_id: str,
+async def reset_password(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta, user_id: str,
                          new_password: str, confirm_password: str | None) -> None:
     target = await get_user(db, user_id)
     if target["_id"] == ctx.user["_id"]:
@@ -140,7 +138,7 @@ async def reset_password(db: AsyncDatabase, settings: Settings, ctx: AuthContext
     _check_password(new_password, target["username"])
     new_hash = await asyncio.to_thread(hash_password, new_password)
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         await users_repo.update_fields(db, target["_id"], {
             "password_hash": new_hash, "must_change_password": True, "password_changed_at": datetime.now(UTC),
             "failed_login_count": 0, "locked_until": None}, session=s)
@@ -151,10 +149,10 @@ async def reset_password(db: AsyncDatabase, settings: Settings, ctx: AuthContext
     await run_in_transaction(db, work)
 
 
-async def unlock_user(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, user_id: str) -> dict:
+async def unlock_user(db: Db, ctx: AuthContext, meta: RequestMeta, user_id: str) -> dict:
     target = await get_user(db, user_id)
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         await users_repo.update_fields(db, target["_id"], {"failed_login_count": 0, "locked_until": None}, session=s)
         await audit.record(db, AuditAction.USER_UNLOCKED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="user", resource_id=target["_id"], session=s)

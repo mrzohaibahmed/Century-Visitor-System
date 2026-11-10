@@ -24,10 +24,8 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime
 
-from bson import ObjectId
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.identity import mask_identity, mask_sensitive
+from app.db.types import Db, RecordId
 from app.repositories import audit_logs as audit_repo
 from app.repositories import entry_denials as entry_denials_repo
 from app.repositories import gates as gates_repo
@@ -54,7 +52,7 @@ def _operator_name(user: dict) -> str:
     return user.get("display_name") or user["username"]
 
 
-async def _record(db: AsyncDatabase, source: str, match: dict, build) -> None:
+async def _record(db: Db, source: str, match: dict, build) -> None:
     """Best effort: builds and inserts the denial document within RECORD_TIMEOUT_SECONDS. Never raises
     (except cancellation), so the caller's refusal is never changed by it."""
     async def work():
@@ -75,7 +73,7 @@ async def _record(db: AsyncDatabase, source: str, match: dict, build) -> None:
                       "to repair.", source, match["_id"])
 
 
-async def record_check_in_denial(db: AsyncDatabase, *, match: dict, visitor: dict, ban: dict, gate: dict,
+async def record_check_in_denial(db: Db, *, match: dict, visitor: dict, ban: dict, gate: dict,
                                  user: dict, reason_code: str | None) -> None:
     """After POST /visits refused the entry. `match`: the WATCHLIST_MATCH audit entry (its _id and
     timestamp are reused); gate and operator come from the session."""
@@ -89,7 +87,7 @@ async def record_check_in_denial(db: AsyncDatabase, *, match: dict, visitor: dic
     await _record(db, "check_in", match, build)
 
 
-async def _gate_without_selecting(db: AsyncDatabase, session: dict) -> dict | None:
+async def _gate_without_selecting(db: Db, session: dict) -> dict | None:
     """The session's gate if it is active, or the only active gate; None otherwise. Read-only: unlike
     auth.session_gate() it never stores a gate on the session (a lookup does not need one)."""
     if session.get("gate_id"):
@@ -100,7 +98,7 @@ async def _gate_without_selecting(db: AsyncDatabase, session: dict) -> dict | No
     return active[0] if len(active) == 1 else None
 
 
-async def record_blocked_lookup(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visitor: dict,
+async def record_blocked_lookup(db: Db, ctx: AuthContext, meta: RequestMeta, visitor: dict,
                                 ban: dict) -> None:
     """The check-in lookup found a visitor on the watchlist: the attempt is refused at the gate. Audited
     like a refused check-in (WATCHLIST_MATCH, marked context "lookup"), then recorded as a denial. The
@@ -137,7 +135,7 @@ class BackfillReport:
         return asdict(self)
 
 
-def _oid(value) -> ObjectId | None:
+def _oid(value) -> RecordId | None:
     return value if is_id(value) else None
 
 
@@ -174,7 +172,7 @@ def from_audit(entry: dict) -> tuple[dict | None, bool]:
     return doc, complete
 
 
-async def backfill_from_audit(db: AsyncDatabase) -> BackfillReport:
+async def backfill_from_audit(db: Db) -> BackfillReport:
     """Creates the missing denial documents from WATCHLIST_MATCH audit entries. Idempotent and safe to run
     concurrently: the unique source_audit_id means at most one document per audit entry, $setOnInsert
     never changes an existing document, and a document written at runtime is simply found present."""

@@ -33,13 +33,10 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
-from bson import ObjectId
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.pagination import decode_cursor, encode_cursor
+from app.db.types import Db, DbSession, RecordId
 from app.repositories import directory as directory_repo
 from app.repositories import notifications as notifications_repo
 from app.repositories import users as users_repo
@@ -72,13 +69,13 @@ _MESSAGE_BUILDERS = {
 }
 
 
-def event_key(visit_id: ObjectId) -> str:
+def event_key(visit_id: RecordId) -> str:
     return f"{HOST_ARRIVAL}:{visit_id}"
 
 
 # ------------------------------------------------------------------------------------------ creation
-async def create_host_arrival(db: AsyncDatabase, settings: Settings, visit: dict, host: dict,
-                              session: AsyncClientSession) -> dict | None:
+async def create_host_arrival(db: Db, settings: Settings, visit: dict, host: dict,
+                              session: DbSession) -> dict | None:
     """Called inside the check-in transaction for a visit with a registered host.
     Returns the notification, or None when there is nobody to tell (no linked account, no e-mail)."""
     recipient = None
@@ -107,8 +104,8 @@ async def create_host_arrival(db: AsyncDatabase, settings: Settings, visit: dict
     return doc
 
 
-async def create_department_arrival(db: AsyncDatabase, settings: Settings, visit: dict, department: dict,
-                                    host: dict | None, session: AsyncClientSession) -> dict | None:
+async def create_department_arrival(db: Db, settings: Settings, visit: dict, department: dict,
+                                    host: dict | None, session: DbSession) -> dict | None:
     """Called inside the check-in transaction for every visit, listed host or not. E-mail only, to the
     visited department's notification address. Returns None when there is nothing to send: no address,
     e-mail switched off, or the same address as the host's (who is e-mailed already)."""
@@ -146,7 +143,7 @@ def _overstay_data(visit: dict) -> dict:
     }
 
 
-async def create_host_overstay(db: AsyncDatabase, settings: Settings, visit: dict,
+async def create_host_overstay(db: Db, settings: Settings, visit: dict,
                                host: dict) -> dict | None:
     """Queue an overstay notice for a registered host (in-app and/or e-mail). Idempotent via event_key."""
     recipient = None
@@ -174,7 +171,7 @@ async def create_host_overstay(db: AsyncDatabase, settings: Settings, visit: dic
     return doc
 
 
-async def create_department_overstay(db: AsyncDatabase, settings: Settings, visit: dict,
+async def create_department_overstay(db: Db, settings: Settings, visit: dict,
                                      department: dict, host: dict | None) -> dict | None:
     """E-mail the department when a visitor is still inside after badge expiry. Idempotent via event_key."""
     address = department.get("notification_email")
@@ -199,7 +196,7 @@ async def create_department_overstay(db: AsyncDatabase, settings: Settings, visi
     return doc
 
 
-async def queue_overstays(db: AsyncDatabase, settings: Settings, *, limit: int = OVERSTAY_BATCH) -> int:
+async def queue_overstays(db: Db, settings: Settings, *, limit: int = OVERSTAY_BATCH) -> int:
     """Find visitors still inside after their badge expired and queue host + department overstay notices.
     Returns how many notification documents were inserted (0 when nothing new)."""
     now = datetime.now(UTC)
@@ -219,12 +216,12 @@ async def queue_overstays(db: AsyncDatabase, settings: Settings, *, limit: int =
 
 
 # ------------------------------------------------------------------------------------------ in-app
-def _own(ctx: AuthContext) -> ObjectId:
+def _own(ctx: AuthContext) -> RecordId:
     # The recipient always comes from the server-side session, never from the request.
     return ctx.user["_id"]
 
 
-async def list_for_user(db: AsyncDatabase, ctx: AuthContext, *, unread_only: bool,
+async def list_for_user(db: Db, ctx: AuthContext, *, unread_only: bool,
                         cursor: str | None) -> tuple[list[dict], str | None, int]:
     docs = await notifications_repo.list_for_recipient(
         db, _own(ctx), unread_only=unread_only, after=decode_cursor(cursor) if cursor else None,
@@ -237,7 +234,7 @@ async def list_for_user(db: AsyncDatabase, ctx: AuthContext, *, unread_only: boo
     return docs, next_cursor, unread
 
 
-async def mark_read(db: AsyncDatabase, ctx: AuthContext, notification_id: str) -> dict:
+async def mark_read(db: Db, ctx: AuthContext, notification_id: str) -> dict:
     """Idempotent. Someone else's notification is simply "not found"."""
     oid = parse_id(notification_id)
     if oid is None:
@@ -249,17 +246,17 @@ async def mark_read(db: AsyncDatabase, ctx: AuthContext, notification_id: str) -
     return doc
 
 
-async def mark_all_read(db: AsyncDatabase, ctx: AuthContext) -> int:
+async def mark_all_read(db: Db, ctx: AuthContext) -> int:
     return await notifications_repo.mark_all_read(db, _own(ctx), datetime.now(UTC))
 
 
 # ------------------------------------------------------------------------------------------ e-mail
-async def _finish(db: AsyncDatabase, doc: dict, fields: dict) -> None:
+async def _finish(db: Db, doc: dict, fields: dict) -> None:
     # Only the attempt that holds the claim may record its result.
     await notifications_repo.finish_claim(db, doc["_id"], doc["email"]["attempts"], fields)
 
 
-async def dispatch_due(db: AsyncDatabase, settings: Settings, *, send=email_svc.send, limit: int = 20) -> int:
+async def dispatch_due(db: Db, settings: Settings, *, send=email_svc.send, limit: int = 20) -> int:
     """Sends the e-mails that are due, one at a time, with the SMTP settings in use now (saved by an
     administrator, else the server environment). Returns how many were attempted."""
     attempted = 0
@@ -311,7 +308,7 @@ class EmailWorker:
     """The background sender inside the API process: runs every POLL_SECONDS, and at once after a
     check-in (wake()). No queue server needed; the database holds the queue."""
 
-    def __init__(self, db: AsyncDatabase, settings: Settings):
+    def __init__(self, db: Db, settings: Settings):
         self._db = db
         self._settings = settings
         self._wake = asyncio.Event()
@@ -339,7 +336,7 @@ class EmailWorker:
 class OverstayWorker:
     """Looks for visitors still inside after badge expiry and queues overstay e-mails (host + department)."""
 
-    def __init__(self, db: AsyncDatabase, settings: Settings, *, on_queued=None):
+    def __init__(self, db: Db, settings: Settings, *, on_queued=None):
         self._db = db
         self._settings = settings
         self._on_queued = on_queued          # typically EmailWorker.wake

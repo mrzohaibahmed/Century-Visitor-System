@@ -31,10 +31,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.errors import AppError
 from app.core.timeutil import DayRange
+from app.db.types import Db
 from app.schemas.reports import DenialRow, VisitorSummaryRow, VisitReportRow, VisitReportSort
 from app.services import reports
 from app.services.visits import VisitFilter
@@ -164,7 +163,7 @@ DENIAL_COLUMNS = [
 
 
 # ------------------------------------------------------------------------------------------ rows
-async def visit_rows(db: AsyncDatabase, f: VisitFilter, sort: VisitReportSort, *,
+async def visit_rows(db: Db, f: VisitFilter, sort: VisitReportSort, *,
                      bounded: bool = True) -> AsyncIterator[VisitReportRow]:
     """Every row of the visit report (or, bounded=False, of the currently-inside report), page by page."""
     cursor = None
@@ -179,7 +178,7 @@ async def visit_rows(db: AsyncDatabase, f: VisitFilter, sort: VisitReportSort, *
             return
 
 
-async def visitor_rows(db: AsyncDatabase, f: VisitFilter, sort: str) -> AsyncIterator[VisitorSummaryRow]:
+async def visitor_rows(db: Db, f: VisitFilter, sort: str) -> AsyncIterator[VisitorSummaryRow]:
     cursor = None
     while True:
         groups, cursor, _, people, inside = await reports.visitor_summary(
@@ -190,7 +189,7 @@ async def visitor_rows(db: AsyncDatabase, f: VisitFilter, sort: str) -> AsyncIte
             return
 
 
-async def denial_rows(db: AsyncDatabase, r: DayRange, **filters) -> AsyncIterator[DenialRow]:
+async def denial_rows(db: Db, r: DayRange, **filters) -> AsyncIterator[DenialRow]:
     cursor = None
     while True:
         rows, cursor, _ = await reports.denial_report(db, r, cursor=cursor, limit=reports.PAGE_LIMIT_MAX,

@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
-from pymongo.asynchronous.database import AsyncDatabase
 from starlette.background import BackgroundTask
 
 from app.api.deps import get_database, get_settings, request_meta, require
@@ -19,6 +18,7 @@ from app.core.config import Settings
 from app.core.permissions import Permission
 from app.core.timeutil import DayRange, RangePreset
 from app.db.client import Database
+from app.db.types import Db
 from app.schemas.common import IdStr
 from app.schemas.reports import (
     DenialPage,
@@ -238,7 +238,7 @@ def _used(**values) -> list[str]:
     return sorted(name for name, value in values.items() if value)
 
 
-async def _export(db: AsyncDatabase, request: Request, ctx: AuthContext, *, report: str, fmt: ExportFormat,
+async def _export(db: Db, request: Request, ctx: AuthContext, *, report: str, fmt: ExportFormat,
                   columns: list, rows, rows_count: int, filters: list[str], name: str, tz_name: str,
                   r: DayRange | None = None) -> StreamingResponse | FileResponse:
     """Checks the size, audits the export and sends it. Everything that can fail with a clear message

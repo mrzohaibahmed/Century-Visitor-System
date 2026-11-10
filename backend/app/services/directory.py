@@ -7,13 +7,10 @@ record. Names of gates and departments are unique regardless of case.
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from bson import ObjectId
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.errors import AppError
 from app.core.identity import search_key
 from app.db.transactions import run_in_transaction
+from app.db.types import Db, DbSession, RecordId
 from app.repositories import directory as directory_repo
 from app.repositories import gates as gates_repo
 from app.repositories import users as users_repo
@@ -43,7 +40,7 @@ MAX_LIST = 500
 _oid = parse_id
 
 
-async def get(db: AsyncDatabase, kind: Kind, item_id: str | ObjectId, session: AsyncClientSession | None = None
+async def get(db: Db, kind: Kind, item_id: str | RecordId, session: DbSession | None = None
               ) -> dict:
     oid = _oid(item_id)
     doc = await directory_repo.find_by_id(db, kind.collection, oid, session=session) if oid else None
@@ -52,15 +49,15 @@ async def get(db: AsyncDatabase, kind: Kind, item_id: str | ObjectId, session: A
     return doc
 
 
-async def get_active(db: AsyncDatabase, kind: Kind, item_id: str | ObjectId,
-                     session: AsyncClientSession | None = None) -> dict:
+async def get_active(db: Db, kind: Kind, item_id: str | RecordId,
+                     session: DbSession | None = None) -> dict:
     doc = await get(db, kind, item_id, session=session)
     if not doc.get("is_active"):
         raise AppError(409, "inactive", f"{kind.label} '{doc['name']}' is no longer active.")
     return doc
 
 
-async def list_items(db: AsyncDatabase, kind: Kind, *, include_inactive: bool = False, q: str | None = None,
+async def list_items(db: Db, kind: Kind, *, include_inactive: bool = False, q: str | None = None,
                      department_id: str | None = None) -> list[dict]:
     is_host = kind is HOST
     prefix = search_key(q) if is_host and q else None
@@ -71,16 +68,16 @@ async def list_items(db: AsyncDatabase, kind: Kind, *, include_inactive: bool = 
         by_department=by_department, department_id=_oid(department_id) if by_department else None)
 
 
-async def department_names(db: AsyncDatabase, ids: set[ObjectId]) -> dict[ObjectId, str]:
+async def department_names(db: Db, ids: set[RecordId]) -> dict[RecordId, str]:
     return await directory_repo.names_by_id(db, DEPARTMENT.collection, ids)
 
 
-async def _validate_department(db: AsyncDatabase, fields: dict, s: AsyncClientSession) -> None:
+async def _validate_department(db: Db, fields: dict, s: DbSession) -> None:
     if fields.get("department_id") is not None:
         fields["department_id"] = (await get_active(db, DEPARTMENT, fields["department_id"], session=s))["_id"]
 
 
-async def _validate_linked_user(db: AsyncDatabase, fields: dict, s: AsyncClientSession) -> None:
+async def _validate_linked_user(db: Db, fields: dict, s: DbSession) -> None:
     """A host's "Linked app account" must be an existing, active Admin/Guard user."""
     if fields.get("linked_user_id") is not None:
         oid = _oid(fields["linked_user_id"])
@@ -90,18 +87,18 @@ async def _validate_linked_user(db: AsyncDatabase, fields: dict, s: AsyncClientS
         fields["linked_user_id"] = user_id
 
 
-async def user_names(db: AsyncDatabase, ids: set[ObjectId]) -> dict[ObjectId, str]:
+async def user_names(db: Db, ids: set[RecordId]) -> dict[RecordId, str]:
     return await users_repo.display_names(db, ids)
 
 
-async def create(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestMeta, data: dict) -> dict:
+async def create(db: Db, kind: Kind, ctx: AuthContext, meta: RequestMeta, data: dict) -> dict:
     now = datetime.now(UTC)
     doc = {k: v for k, v in data.items() if v is not None}
     doc.update({"is_active": True, "created_at": now, "updated_at": now, "created_by": ctx.user["_id"]})
     if kind is HOST:
         doc["name_search"] = search_key(doc["name"])
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         if kind is HOST:
             await _validate_department(db, doc, s)
             await _validate_linked_user(db, doc, s)
@@ -117,7 +114,7 @@ async def create(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestM
     return doc
 
 
-async def update(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestMeta, item_id: str,
+async def update(db: Db, kind: Kind, ctx: AuthContext, meta: RequestMeta, item_id: str,
                  changes: dict) -> dict:
     current = await get(db, kind, item_id)
     clear_linked_user = changes.pop("clear_linked_user", None)
@@ -134,7 +131,7 @@ async def update(db: AsyncDatabase, kind: Kind, ctx: AuthContext, meta: RequestM
     if kind is HOST and "name" in fields:
         fields["name_search"] = search_key(fields["name"])
 
-    async def work(s: AsyncClientSession):
+    async def work(s: DbSession):
         if kind is HOST:
             await _validate_department(db, fields, s)
             await _validate_linked_user(db, fields, s)
@@ -154,5 +151,5 @@ def _plain(value):
     return str(value) if is_id(value) else value
 
 
-async def active_gate_ids(db: AsyncDatabase) -> list[ObjectId]:
+async def active_gate_ids(db: Db) -> list[RecordId]:
     return await gates_repo.active_ids(db, limit=2)

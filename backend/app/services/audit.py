@@ -8,11 +8,8 @@ inserted. Never pass passwords, tokens or other secrets in `changes`/`metadata`.
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from bson import ObjectId
-from pymongo.asynchronous.client_session import AsyncClientSession
-from pymongo.asynchronous.database import AsyncDatabase
-
 from app.core.request_context import current_request_id
+from app.db.types import Db, DbSession, RecordId
 from app.repositories import audit_logs as audit_repo
 
 
@@ -78,17 +75,17 @@ def actor_from_user(user: dict | None) -> dict:
 
 
 async def record(
-    db: AsyncDatabase,
+    db: Db,
     action: AuditAction,
     *,
     result: str = "SUCCESS",
     actor: dict | None = None,
     resource_type: str | None = None,
-    resource_id: ObjectId | str | None = None,
+    resource_id: RecordId | str | None = None,
     ip: str | None = None,
     changes: dict | None = None,
     metadata: dict | None = None,
-    session: AsyncClientSession | None = None,
+    session: DbSession | None = None,
 ) -> dict:
     """Inserts the entry and returns it, with its `_id` and `timestamp` (callers may ignore it)."""
     entry = {

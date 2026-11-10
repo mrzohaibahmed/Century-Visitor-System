@@ -4,6 +4,7 @@ Application settings, read from environment variables (prefix CG_) or backend/.e
 Secrets (the MongoDB URI) exist only here, on the server. They are never sent
 to the browser or to the Next.js frontend.
 """
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -26,6 +27,17 @@ APP_VERSION = "0.1.0"
 # Connection options that switch off certificate or host-name checks: refused in production.
 _INSECURE_TLS_OPTIONS = ("tlsInsecure", "tlsAllowInvalidCertificates", "tlsAllowInvalidHostnames")
 
+# SQL Server: a database name used unquoted in CREATE DATABASE, so deliberately strict.
+MSSQL_DATABASE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,99}")
+_LOCAL_SQL_HOSTS = {".", "(local)", "localhost", "127.0.0.1", "::1"}
+
+
+def mssql_server_is_local(server: str) -> bool:
+    """Whether CG_MSSQL_SERVER names an instance on this PC: ".", ".\\SQLEXPRESS", "localhost,1433",
+    "(local)\\X", "127.0.0.1"... (the host part, before any "\\instance" or ",port")."""
+    host = re.split(r"[\\,]", server.strip(), maxsplit=1)[0].strip().lower()
+    return host in _LOCAL_SQL_HOSTS
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -44,6 +56,19 @@ class Settings(BaseSettings):
     # CG_MONGO_URI is on this machine (127.0.0.1 / localhost / ::1) and mongod listens on loopback
     # only. Anyone who can run programs on this PC can then read the database. Default: off.
     mongo_localhost_without_login: bool = False
+
+    # --- SQL Server (replacing MongoDB step by step; see app/db/sql) ---------------------
+    # The instance (".\SQLEXPRESS" = this PC's Express instance) and the application's own database.
+    mssql_server: str = ".\\SQLEXPRESS"
+    mssql_database: str = "century_gate_vms"
+    mssql_driver: str = "ODBC Driver 18 for SQL Server"
+    # Windows authentication (the API's service account) when no username is set; otherwise a SQL login.
+    mssql_username: str | None = None
+    mssql_password: SecretStr | None = None
+    # TLS to the server is always on. Skipping the certificate check is only allowed for an instance on
+    # this PC (its certificate is self-signed by default); never for a server on the network.
+    mssql_trust_server_certificate: bool = False
+    mssql_timeout_seconds: int = Field(default=5, ge=1, le=60)
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
@@ -131,6 +156,26 @@ class Settings(BaseSettings):
         if not value or any(ch in value for ch in '/\\. "$'):
             raise ValueError("Invalid MongoDB database name.")
         return value
+
+    @field_validator("mssql_database")
+    @classmethod
+    def _valid_mssql_database(cls, value: str) -> str:
+        if value.strip().lower() in LEGACY_DATABASE_NAMES:
+            raise ValueError(
+                f"'{value}' is the legacy desktop database. The web application must use its own database.")
+        if not MSSQL_DATABASE_NAME.fullmatch(value):
+            raise ValueError("Invalid SQL Server database name (letters, digits and _ only, at most 100).")
+        return value
+
+    @model_validator(mode="after")
+    def _mssql_login(self):
+        if bool(self.mssql_username) != bool(self.mssql_password and self.mssql_password.get_secret_value()):
+            raise ValueError("Set both CG_MSSQL_USERNAME and CG_MSSQL_PASSWORD (SQL login), "
+                             "or neither (Windows authentication).")
+        if self.mssql_trust_server_certificate and not mssql_server_is_local(self.mssql_server):
+            raise ValueError("CG_MSSQL_TRUST_SERVER_CERTIFICATE is only allowed for a SQL Server instance on this "
+                             "PC; a server on the network must present a certificate this PC trusts.")
+        return self
 
     @field_validator("timezone")
     @classmethod
