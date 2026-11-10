@@ -27,6 +27,11 @@ async def find_by_id(db: AsyncDatabase, user_id: ObjectId, session: AsyncClientS
     return await db.users.find_one({"_id": user_id}, session=session)
 
 
+async def any_exist(db: AsyncDatabase) -> bool:
+    """Whether any account exists at all (a cheap metadata count)."""
+    return bool(await db.users.estimated_document_count())
+
+
 async def list_all(db: AsyncDatabase, limit: int = 500) -> list[dict]:
     cursor = db.users.find({}, {"password_hash": 0}).sort("username", 1).limit(limit)
     return await cursor.to_list(length=limit)

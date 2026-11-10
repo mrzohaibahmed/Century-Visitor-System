@@ -12,18 +12,20 @@ and services/visits.check_in(); this module only maintains the entries.
   the old one in the same transaction.
 - Every change is audited with a masked ID number.
 """
-import re
 from datetime import UTC, datetime
 
 from bson import ObjectId
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.database import AsyncDatabase
-from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
 from app.core.identity import identifier, mask_identity, search_key
 from app.core.pagination import decode_cursor, encode_cursor
 from app.db.transactions import run_in_transaction
+from app.repositories import visitors as visitors_repo
+from app.repositories import watchlist as watchlist_repo
+from app.repositories.errors import DuplicateKey
+from app.repositories.ids import parse_id
 from app.schemas.watchlist import WatchlistStatus, status_of
 from app.services import audit
 from app.services import visitors as visitors_svc
@@ -35,9 +37,10 @@ NOT_FOUND = AppError(404, "not_found", "Watchlist entry not found.")
 
 
 def _oid(value: str) -> ObjectId:
-    if not ObjectId.is_valid(value):
+    oid = parse_id(value)
+    if oid is None:
         raise NOT_FOUND
-    return ObjectId(value)
+    return oid
 
 
 def _masked(doc_or_identity: dict) -> str:
@@ -49,32 +52,17 @@ def _operator_name(user: dict) -> str:
     return user.get("display_name") or user["username"]
 
 
-def _status_query(status: WatchlistStatus | None, now: datetime) -> dict:
-    if status is WatchlistStatus.ACTIVE:
-        return {"is_active": True, "$or": [{"expires_at": None}, {"expires_at": {"$gt": now}}]}
-    if status is WatchlistStatus.EXPIRED:
-        return {"is_active": True, "expires_at": {"$lte": now}}
-    if status is WatchlistStatus.DISABLED:
-        return {"is_active": False}
-    return {}
-
-
 async def list_entries(db: AsyncDatabase, *, q: str | None, status: WatchlistStatus | None,
                        cursor: str | None) -> tuple[list[dict], str | None]:
     """Newest first. `q` matches an ID number (any format) exactly or a name by prefix."""
-    now = datetime.now(UTC)
-    clauses = [_status_query(status, now)]
+    ids, name_prefix = None, None
     if q and q.strip():
         term = q.strip()
         ids = [identifier(t, n) for t, n in visitors_svc.identity_candidates(term)]
-        clauses.append({"$or": [{"identifier": {"$in": ids}},
-                                {"name_search": {"$regex": "^" + re.escape(search_key(term))}}]})
-    if cursor:
-        last_at, last_id = decode_cursor(cursor)
-        clauses.append({"$or": [{"created_at": {"$lt": last_at}}, {"created_at": last_at, "_id": {"$lt": last_id}}]})
-    query = {"$and": [c for c in clauses if c]} if any(clauses) else {}
-    docs = await db.watchlist.find(query).sort([("created_at", -1), ("_id", -1)]).limit(PAGE_SIZE + 1) \
-        .to_list(length=PAGE_SIZE + 1)
+        name_prefix = search_key(term)
+    docs = await watchlist_repo.list_page(
+        db, status=status, now=datetime.now(UTC), search_identifiers=ids, search_name_prefix=name_prefix,
+        after=decode_cursor(cursor) if cursor else None, limit=PAGE_SIZE + 1)
     next_cursor = None
     if len(docs) > PAGE_SIZE:
         docs = docs[:PAGE_SIZE]
@@ -83,7 +71,7 @@ async def list_entries(db: AsyncDatabase, *, q: str | None, status: WatchlistSta
 
 
 async def get(db: AsyncDatabase, entry_id: str) -> dict:
-    doc = await db.watchlist.find_one({"_id": _oid(entry_id)})
+    doc = await watchlist_repo.find_by_id(db, _oid(entry_id))
     if doc is None:
         raise NOT_FOUND
     return doc
@@ -93,7 +81,7 @@ async def create(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, *, iden
                  reason: str, expires_at: datetime | None) -> tuple[dict, str | None]:
     """Returns (entry, visit number if the person is inside right now)."""
     key = identifier(identity["type"], identity["number"])
-    visitor = await db.visitors.find_one({"identity.type": identity["type"], "identity.number": identity["number"]})
+    visitor = await visitors_repo.find_by_identity(db, identity["type"], identity["number"])
     name = name or (visitor["full_name"] if visitor else None)
     now = datetime.now(UTC)
     doc = {
@@ -104,20 +92,20 @@ async def create(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, *, iden
     }
 
     async def work(s: AsyncClientSession):
-        current = await db.watchlist.find_one({"identifier": key, "is_active": True}, session=s)
+        current = await watchlist_repo.find_active_by_identifier(db, key, session=s)
         superseded = None
         if current is not None:
             if status_of(current, now) is WatchlistStatus.ACTIVE:
                 raise AppError(409, "already_listed", "This person already has an active watchlist entry. "
                                                       "Edit that entry instead.")
             # The old entry has expired: retire it so the new one can take its place.
-            await db.watchlist.update_one({"_id": current["_id"]}, {"$set": {
+            await watchlist_repo.update_fields(db, current["_id"], {
                 "is_active": False, "disabled_at": now, "disabled_by": ctx.user["_id"],
-                "disabled_by_name": _operator_name(ctx.user), "disabled_reason": "Replaced by a new entry."}},
-                session=s)
+                "disabled_by_name": _operator_name(ctx.user), "disabled_reason": "Replaced by a new entry."},
+                only_if_active=False, session=s)
             superseded = current["_id"]
         doc.pop("_id", None)
-        doc["_id"] = (await db.watchlist.insert_one(doc, session=s)).inserted_id
+        doc["_id"] = await watchlist_repo.insert(db, doc, session=s)
         await audit.record(db, AuditAction.WATCHLIST_ADDED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="watchlist", resource_id=doc["_id"],
                            metadata={"identifier": _masked(identity), "expires_at": expires_at,
@@ -125,7 +113,7 @@ async def create(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, *, iden
 
     try:
         await run_in_transaction(db, work)
-    except DuplicateKeyError:        # another administrator added the same person at the same moment
+    except DuplicateKey:        # another administrator added the same person at the same moment
         raise AppError(409, "already_listed", "This person already has an active watchlist entry.") from None
 
     inside = await visitors_svc.active_visit(db, visitor["_id"]) if visitor else None
@@ -152,9 +140,9 @@ async def update(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, entry_i
     diff = {k: {"from": current.get(k), "to": v} for k, v in fields.items() if k != "name_search"}
 
     async def work(s: AsyncClientSession):
-        await db.watchlist.update_one({"_id": current["_id"], "is_active": True},
-                                      {"$set": {**fields, "updated_at": now, "updated_by": ctx.user["_id"]}},
-                                      session=s)
+        await watchlist_repo.update_fields(db, current["_id"],
+                                           {**fields, "updated_at": now, "updated_by": ctx.user["_id"]},
+                                           only_if_active=True, session=s)
         await audit.record(db, AuditAction.WATCHLIST_UPDATED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="watchlist", resource_id=current["_id"], changes=diff,
                            metadata={"identifier": _masked(current)}, session=s)
@@ -171,9 +159,9 @@ async def expire(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, entry_i
         return current
 
     async def work(s: AsyncClientSession):
-        await db.watchlist.update_one({"_id": current["_id"], "is_active": True},
-                                      {"$set": {"expires_at": now, "updated_at": now, "updated_by": ctx.user["_id"]}},
-                                      session=s)
+        await watchlist_repo.update_fields(db, current["_id"],
+                                           {"expires_at": now, "updated_at": now, "updated_by": ctx.user["_id"]},
+                                           only_if_active=True, session=s)
         await audit.record(db, AuditAction.WATCHLIST_EXPIRED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="watchlist", resource_id=current["_id"],
                            changes={"expires_at": {"from": current.get("expires_at"), "to": now}},
@@ -191,10 +179,10 @@ async def disable(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, entry_
     now = datetime.now(UTC)
 
     async def work(s: AsyncClientSession):
-        await db.watchlist.update_one({"_id": current["_id"], "is_active": True}, {"$set": {
+        await watchlist_repo.update_fields(db, current["_id"], {
             "is_active": False, "disabled_at": now, "disabled_by": ctx.user["_id"],
             "disabled_by_name": _operator_name(ctx.user), "disabled_reason": note,
-            "updated_at": now, "updated_by": ctx.user["_id"]}}, session=s)
+            "updated_at": now, "updated_by": ctx.user["_id"]}, only_if_active=True, session=s)
         await audit.record(db, AuditAction.WATCHLIST_DISABLED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="watchlist", resource_id=current["_id"],
                            metadata={"identifier": _masked(current), "note": note}, session=s)

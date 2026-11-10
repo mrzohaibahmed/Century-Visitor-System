@@ -35,6 +35,8 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.images import InvalidImageError, NormalizedPhoto, normalize_photo
 from app.db.transactions import run_in_transaction
+from app.repositories import gates as gates_repo
+from app.repositories import settings as settings_repo
 from app.services import audit
 from app.services import directory as directory_svc
 from app.services.audit import AuditAction, actor_from_user
@@ -70,8 +72,8 @@ def password_status(doc: dict, settings: Settings) -> str:
 
 async def list_for_admin(db: AsyncDatabase) -> list[tuple[dict, dict | None]]:
     """Every gate (active first, by name) with its camera settings document, if any."""
-    gates = await db.gates.find({}).sort([("is_active", -1), ("name", 1)]).to_list(length=directory_svc.MAX_LIST)
-    docs = await db.settings.find({"_id": {"$in": [doc_id(g["_id"]) for g in gates]}}).to_list(length=len(gates))
+    gates = await gates_repo.list_all(db, directory_svc.MAX_LIST)
+    docs = await settings_repo.get_many(db, [doc_id(g["_id"]) for g in gates])
     by_id = {d["_id"]: d for d in docs}
     return [(g, by_id.get(doc_id(g["_id"]))) for g in gates]
 
@@ -91,7 +93,7 @@ async def save(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: Re
     """Creates or replaces a gate's camera settings. `password` None keeps the saved one."""
     gate = await directory_svc.get(db, directory_svc.GATE, gate_id)
     _id = doc_id(gate["_id"])
-    current = await db.settings.find_one({"_id": _id})
+    current = await settings_repo.get(db, _id)
     values = {k: data[k] for k in SETTINGS_FIELDS}
     new_password = password.get_secret_value() if password is not None else None
 
@@ -114,17 +116,14 @@ async def save(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: Re
     if current is not None and not changed and new_password is None:
         return gate, current                             # nothing to save
     now = datetime.now(UTC)
-    unset = {}
+    remove = []
     if current is not None and (changed & {*DESTINATION_FIELDS, "channel"} or new_password is not None):
-        unset["last_test"] = ""                          # an earlier test result no longer applies
+        remove.append("last_test")                       # an earlier test result no longer applies
 
     async def work(s: AsyncClientSession):
-        update = {"$set": {**fields, "type": "gate_camera", "gate_id": gate["_id"], "updated_at": now,
-                           "updated_by": ctx.user["_id"]},
-                  "$setOnInsert": {"created_at": now}}
-        if unset:
-            update["$unset"] = unset
-        await db.settings.update_one({"_id": _id}, update, upsert=True, session=s)
+        await settings_repo.upsert(db, _id, {**fields, "type": "gate_camera", "gate_id": gate["_id"],
+                                             "updated_at": now, "updated_by": ctx.user["_id"]},
+                                   now=now, remove=remove, session=s)
         diff = {k: {"from": current.get(k) if current else None, "to": values[k]} for k in sorted(changed)}
         if new_password is not None:
             diff["password"] = "changed"  # noqa: S105 - the fact only, never the value
@@ -132,7 +131,7 @@ async def save(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: Re
                            resource_type="gates", resource_id=gate["_id"], changes=diff or None, session=s)
 
     await run_in_transaction(db, work)
-    return gate, await db.settings.find_one({"_id": _id})
+    return gate, await settings_repo.get(db, _id)
 
 
 async def remove(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, gate_id: str) -> None:
@@ -140,8 +139,7 @@ async def remove(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, gate_id
     gate = await directory_svc.get(db, directory_svc.GATE, gate_id)
 
     async def work(s: AsyncClientSession):
-        result = await db.settings.delete_one({"_id": doc_id(gate["_id"])}, session=s)
-        if result.deleted_count == 0:
+        if not await settings_repo.delete(db, doc_id(gate["_id"]), session=s):
             raise NOT_CONFIGURED
         await audit.record(db, AuditAction.GATE_CAMERA_REMOVED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="gates", resource_id=gate["_id"], session=s)
@@ -151,7 +149,7 @@ async def remove(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, gate_id
 
 async def client_for(db: AsyncDatabase, settings: Settings, gate_id: ObjectId) -> GateCameraClient:
     """A client with the saved settings and the decrypted password (kept only in memory)."""
-    doc = await db.settings.find_one({"_id": doc_id(gate_id)})
+    doc = await settings_repo.get(db, doc_id(gate_id))
     if doc is None:
         raise NOT_CONFIGURED
     key = settings.secrets_key_bytes
@@ -191,7 +189,7 @@ async def session_camera(db: AsyncDatabase, settings: Settings, ctx: AuthContext
     gate, _ = await session_gate(db, ctx.session)
     if gate is None:
         return None
-    doc = await db.settings.find_one({"_id": doc_id(gate["_id"])})
+    doc = await settings_repo.get(db, doc_id(gate["_id"]))
     if doc is None or not doc.get("enabled") or password_status(doc, settings) != "SAVED":
         return None
     return gate, doc
@@ -266,7 +264,7 @@ async def _run_test(db: AsyncDatabase, settings: Settings, ctx: AuthContext, met
             if result.device:
                 last.update(model=result.device.model, firmware=result.device.firmware,
                             device_name=result.device.device_name)
-            await db.settings.update_one({"_id": doc_id(gate["_id"])}, {"$set": {"last_test": last}})
+            await settings_repo.set_fields(db, doc_id(gate["_id"]), {"last_test": last})
         await audit.record(db, AuditAction.GATE_CAMERA_TESTED, result="SUCCESS" if result.ok else "FAILURE",
                            actor=actor_from_user(ctx.user), ip=meta.ip, resource_type="gates",
                            resource_id=gate["_id"], metadata={"test": kind, "code": result.code})

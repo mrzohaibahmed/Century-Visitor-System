@@ -38,6 +38,10 @@ from app.core.errors import AppError
 from app.core.images import InvalidImageError, normalize_photo
 from app.core.permissions import Permission, has_permission
 from app.db.transactions import run_in_transaction
+from app.repositories import photos as photos_repo
+from app.repositories import visitors as visitors_repo
+from app.repositories import visits as visits_repo
+from app.repositories.ids import parse_id
 from app.services import audit
 from app.services import visitors as visitors_svc
 from app.services.audit import AuditAction, actor_from_user
@@ -81,11 +85,10 @@ def photo_storage_available(settings: Settings) -> bool:
 
 
 def _oid(value: str | ObjectId) -> ObjectId:
-    if isinstance(value, ObjectId):
-        return value
-    if not ObjectId.is_valid(value):
+    oid = parse_id(value)
+    if oid is None:
         raise NOT_FOUND
-    return ObjectId(value)
+    return oid
 
 
 def _path(settings: Settings, storage_key: str) -> Path:
@@ -133,9 +136,8 @@ async def capture(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta:
         raise STORAGE_UNAVAILABLE from None
 
     async def work(s: AsyncClientSession):
-        doc["_id"] = (await db.photos.insert_one(doc, session=s)).inserted_id
-        await db.visitors.update_one({"_id": visitor["_id"]},
-                                     {"$set": {"current_photo_id": doc["_id"], "updated_at": now}}, session=s)
+        doc["_id"] = await photos_repo.insert(db, doc, session=s)
+        await visitors_repo.update_fields(db, visitor["_id"], {"current_photo_id": doc["_id"]}, session=s, now=now)
         await audit.record(db, AuditAction.PHOTO_CAPTURED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="visitor", resource_id=visitor["_id"],
                            metadata={"photo_id": doc["_id"], "size_bytes": doc["size_bytes"],
@@ -158,14 +160,14 @@ async def for_check_in(db: AsyncDatabase, visitor: dict, photo_id: str) -> Objec
 
 
 async def _guard_may_view(db: AsyncDatabase, photo: dict) -> bool:
-    if await db.visitors.count_documents({"_id": photo["visitor_id"], "current_photo_id": photo["_id"]}, limit=1):
+    if await visitors_repo.has_current_photo(db, photo["visitor_id"], photo["_id"]):
         return True
-    return bool(await db.visits.count_documents({"photo_id": photo["_id"], "status": "CHECKED_IN"}, limit=1))
+    return await visits_repo.is_photo_of_active_visit(db, photo["_id"])
 
 
 async def read(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: RequestMeta,
                photo_id: str) -> tuple[bytes, str]:
-    photo = await db.photos.find_one({"_id": _oid(photo_id)})
+    photo = await photos_repo.find_by_id(db, _oid(photo_id))
     if photo is None:
         raise NOT_FOUND
     if not has_permission(ctx.user.get("role"), Permission.PHOTO_VIEW_ALL) and not await _guard_may_view(db, photo):

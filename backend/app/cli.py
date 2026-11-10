@@ -91,12 +91,13 @@ FIRST_ADMIN_PASSWORD = "admin1234"       # noqa: S105 - documented default, must
 
 async def _first_admin() -> int:
     from app.core.permissions import Role
+    from app.repositories import users as users_repo
     from app.services.users import create_user
     settings = get_settings()
     password = settings.first_admin_password.get_secret_value()       # CG_FIRST_ADMIN_PASSWORD (default admin1234)
     database = Database(settings)
     try:
-        if await database.db.users.estimated_document_count():
+        if await users_repo.any_exist(database.db):
             print("Accounts already exist: nothing changed.")
             return 0
         await create_user(database.db, actor=None, meta=None, username=FIRST_ADMIN_USERNAME,

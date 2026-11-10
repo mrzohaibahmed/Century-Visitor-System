@@ -35,6 +35,7 @@ from app.core import secrets
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.db.transactions import run_in_transaction
+from app.repositories import settings as settings_repo
 from app.services import audit
 from app.services import email as email_svc
 from app.services.audit import AuditAction, actor_from_user
@@ -73,7 +74,7 @@ def password_status(doc: dict, settings: Settings) -> str:
 
 
 async def saved(db: AsyncDatabase, session: AsyncClientSession | None = None) -> dict | None:
-    return await db.settings.find_one({"_id": DOC_ID}, session=session)
+    return await settings_repo.get(db, DOC_ID, session=session)
 
 
 async def active(db: AsyncDatabase, settings: Settings, session: AsyncClientSession | None = None) -> bool:
@@ -135,29 +136,26 @@ async def save(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: Re
                            "Enter the SMTP password again when changing the host, port, security or user name.")
 
     fields = dict(values)
-    unset: dict = {}
+    remove: list[str] = []
     if new_password is not None:
         key = settings.secrets_key_bytes
         if key is None:
             raise KEY_MISSING
         fields["password"] = secrets.encrypt(key, new_password, DOC_ID)
     elif not values["username"] and current is not None and current.get("password"):
-        unset["password"] = ""                            # no login any more: the password goes too
+        remove.append("password")                         # no login any more: the password goes too
     changed = {k for k in values if current is None or current.get(k) != values[k]}
-    if current is not None and not changed and new_password is None and not unset:
+    if current is not None and not changed and new_password is None and not remove:
         return current                                    # nothing to save
     now = datetime.now(UTC)
 
     async def work(s: AsyncClientSession):
-        update = {"$set": {**fields, "updated_at": now, "updated_by": ctx.user["_id"]},
-                  "$setOnInsert": {"created_at": now}}
-        if unset:
-            update["$unset"] = unset
-        await db.settings.update_one({"_id": DOC_ID}, update, upsert=True, session=s)
+        await settings_repo.upsert(db, DOC_ID, {**fields, "updated_at": now, "updated_by": ctx.user["_id"]},
+                                   now=now, remove=remove, session=s)
         diff: dict = {k: {"from": current.get(k) if current else None, "to": values[k]} for k in sorted(changed)}
         if new_password is not None:
             diff["password"] = "changed"  # noqa: S105 - the fact only, never the value
-        elif unset:
+        elif remove:
             diff["password"] = "removed"  # noqa: S105 - the fact only, never the value
         await audit.record(db, AuditAction.EMAIL_SETTINGS_UPDATED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="settings", resource_id=DOC_ID, changes=diff or None,
@@ -170,7 +168,7 @@ async def save(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: Re
 async def remove(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta) -> None:
     """Deletes the saved settings, password included: the server environment applies again."""
     async def work(s: AsyncClientSession):
-        if (await db.settings.delete_one({"_id": DOC_ID}, session=s)).deleted_count == 0:
+        if not await settings_repo.delete(db, DOC_ID, session=s):
             raise NOT_SAVED
         await audit.record(db, AuditAction.EMAIL_SETTINGS_REMOVED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="settings", resource_id=DOC_ID, session=s)

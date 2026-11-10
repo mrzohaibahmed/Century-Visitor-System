@@ -26,9 +26,13 @@ from datetime import datetime
 
 from bson import ObjectId
 from pymongo.asynchronous.database import AsyncDatabase
-from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from app.core.identity import mask_identity, mask_sensitive
+from app.repositories import audit_logs as audit_repo
+from app.repositories import entry_denials as entry_denials_repo
+from app.repositories import gates as gates_repo
+from app.repositories.errors import DATABASE_ERRORS, DuplicateKey
+from app.repositories.ids import is_id
 from app.services import audit
 from app.services.audit import AuditAction, actor_from_user
 from app.services.auth import AuthContext, RequestMeta
@@ -56,13 +60,13 @@ async def _record(db: AsyncDatabase, source: str, match: dict, build) -> None:
     async def work():
         doc = await build()
         doc |= {"at": match["timestamp"], "reason": WATCHLIST, "source": source, "source_audit_id": match["_id"]}
-        await db.entry_denials.insert_one(doc)
+        await entry_denials_repo.insert(db, doc)
 
     try:
         await asyncio.wait_for(work(), timeout=RECORD_TIMEOUT_SECONDS)
-    except DuplicateKeyError:
+    except DuplicateKey:
         pass                                            # already recorded (e.g. by a backfill run)
-    except (PyMongoError, TimeoutError) as e:
+    except (*DATABASE_ERRORS, TimeoutError) as e:
         # Database errors can quote the document: log the type only.
         log.error("Entry denial not recorded (%s, audit %s): %s. Run backfill-entry-denials to repair.",
                   source, match["_id"], type(e).__name__)
@@ -89,10 +93,10 @@ async def _gate_without_selecting(db: AsyncDatabase, session: dict) -> dict | No
     """The session's gate if it is active, or the only active gate; None otherwise. Read-only: unlike
     auth.session_gate() it never stores a gate on the session (a lookup does not need one)."""
     if session.get("gate_id"):
-        gate = await db.gates.find_one({"_id": session["gate_id"], "is_active": True}, {"name": 1})
-        if gate:
-            return gate
-    active = await db.gates.find({"is_active": True}, {"name": 1}).limit(2).to_list(length=2)
+        found = await gates_repo.find_active_names(db, gate_id=session["gate_id"])
+        if found:
+            return found[0]
+    active = await gates_repo.find_active_names(db, limit=2)
     return active[0] if len(active) == 1 else None
 
 
@@ -134,7 +138,7 @@ class BackfillReport:
 
 
 def _oid(value) -> ObjectId | None:
-    return value if isinstance(value, ObjectId) else None
+    return value if is_id(value) else None
 
 
 def _remask(identifier) -> str | None:
@@ -175,23 +179,22 @@ async def backfill_from_audit(db: AsyncDatabase) -> BackfillReport:
     concurrently: the unique source_audit_id means at most one document per audit entry, $setOnInsert
     never changes an existing document, and a document written at runtime is simply found present."""
     report = BackfillReport()
-    async for entry in db.audit_logs.find({"action": str(AuditAction.WATCHLIST_MATCH)}).sort("_id", 1):
+    async for entry in audit_repo.iter_by_action(db, str(AuditAction.WATCHLIST_MATCH)):
         report.scanned += 1
         doc, complete = from_audit(entry)
         if doc is None:
             report.skipped += 1
             continue
         try:
-            result = await db.entry_denials.update_one(
-                {"source_audit_id": entry["_id"]}, {"$setOnInsert": doc}, upsert=True)
-        except DuplicateKeyError:                    # another run inserted it at the same moment
+            created = await entry_denials_repo.insert_if_absent(db, entry["_id"], doc)
+        except DuplicateKey:                         # another run inserted it at the same moment
             report.already_present += 1
             continue
-        except PyMongoError as e:
+        except DATABASE_ERRORS as e:
             report.failed += 1
             log.error("Backfill: audit %s not copied: %s", entry["_id"], type(e).__name__)
             continue
-        if result.upserted_id is not None:
+        if created:
             report.created += 1
             report.incomplete += 0 if complete else 1
         else:

@@ -19,5 +19,18 @@ async def find_active(db: AsyncDatabase, gate_id: ObjectId | str) -> dict | None
     return await db.gates.find_one({"_id": ObjectId(gate_id), "is_active": True})
 
 
+async def find_active_names(db: AsyncDatabase, *, gate_id: ObjectId | None = None, limit: int = 1) -> list[dict]:
+    """_id and name of active gates: the one with `gate_id`, or (without it) up to `limit` of them."""
+    if gate_id is not None:
+        gate = await db.gates.find_one({"_id": gate_id, "is_active": True}, {"name": 1})
+        return [gate] if gate else []
+    return await db.gates.find({"is_active": True}, {"name": 1}).limit(limit).to_list(length=limit)
+
+
+async def list_all(db: AsyncDatabase, limit: int) -> list[dict]:
+    """Every gate, active ones first, then by name (exact, case-sensitive order)."""
+    return await db.gates.find({}).sort([("is_active", -1), ("name", 1)]).to_list(length=limit)
+
+
 async def find_any_active(db: AsyncDatabase) -> dict | None:
     return await db.gates.find_one({"is_active": True})

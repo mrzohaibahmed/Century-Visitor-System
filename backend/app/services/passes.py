@@ -35,6 +35,7 @@ from app.core.secrets import SecretUnreadable, decrypt, encrypt
 from app.core.security import hash_token
 from app.core.timeutil import pass_expires_at
 from app.db.transactions import run_in_transaction
+from app.repositories import visits as visits_repo
 from app.services import audit
 from app.services import visits as visits_svc
 from app.services.audit import AuditAction, actor_from_user
@@ -82,7 +83,7 @@ async def issue(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: R
     result: dict = {}
 
     async def work(s: AsyncClientSession):
-        visit = await db.visits.find_one({"_id": oid}, session=s)
+        visit = await visits_repo.find_by_id(db, oid, session=s)
         if visit is None:
             raise visits_svc.NOT_FOUND
         if visit["status"] != "CHECKED_IN":
@@ -94,8 +95,7 @@ async def issue(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: R
                     "revoked_token_hashes": revoked}
         if settings.secrets_key_bytes:
             new_pass["qr_sealed"] = encrypt(settings.secrets_key_bytes, QR_PREFIX + token, _seal_context(oid))
-        await db.visits.update_one({"_id": oid, "status": "CHECKED_IN"},
-                                   {"$set": {"pass": new_pass, "updated_at": now}}, session=s)
+        await visits_repo.set_pass_if_active(db, oid, new_pass, now, session=s)
         await audit.record(db, AuditAction.PASS_ISSUED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="visit", resource_id=oid,
                            metadata={"visit_number": visit["visit_number"], "replaces_previous": bool(old),
@@ -109,7 +109,7 @@ async def issue(db: AsyncDatabase, settings: Settings, ctx: AuthContext, meta: R
 async def printable(db: AsyncDatabase, settings: Settings, visit_id: str) -> IssuedPass:
     """Return the current badge's exact QR without issuing or cancelling a pass."""
     oid = visits_svc.object_id(visit_id)
-    visit = await db.visits.find_one({"_id": oid})
+    visit = await visits_repo.find_by_id(db, oid)
     if visit is None:
         raise visits_svc.NOT_FOUND
     current = visit.get("pass") or {}
@@ -135,7 +135,7 @@ async def printable(db: AsyncDatabase, settings: Settings, visit_id: str) -> Iss
 async def verify_for_print(db: AsyncDatabase, visit_id: str, qr_text: str) -> IssuedPass:
     """Accept a scan of an older physical badge without reissuing it."""
     oid = visits_svc.object_id(visit_id)
-    visit = await db.visits.find_one({"_id": oid})
+    visit = await visits_repo.find_by_id(db, oid)
     if visit is None:
         raise visits_svc.NOT_FOUND
     current = visit.get("pass") or {}
@@ -152,15 +152,13 @@ async def revoke(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, visit_i
     now = datetime.now(UTC)
 
     async def work(s: AsyncClientSession):
-        visit = await db.visits.find_one({"_id": oid}, session=s)
+        visit = await visits_repo.find_by_id(db, oid, session=s)
         if visit is None:
             raise visits_svc.NOT_FOUND
         current = visit.get("pass")
         if not current or current.get("revoked_at"):
             return visit
-        await db.visits.update_one(
-            {"_id": oid}, {"$set": {"pass.revoked_at": now, "pass.revoked_by": ctx.user["_id"], "updated_at": now}},
-            session=s)
+        await visits_repo.revoke_pass(db, oid, user_id=ctx.user["_id"], now=now, session=s)
         await audit.record(db, AuditAction.PASS_REVOKED, actor=actor_from_user(ctx.user), ip=meta.ip,
                            resource_type="visit", resource_id=oid,
                            metadata={"visit_number": visit["visit_number"]}, session=s)
@@ -188,9 +186,9 @@ async def resolve(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, qr_tex
         raise await _reject(db, ctx, meta, "malformed", None, AppError(
             422, "invalid_pass", "This is not a Century Gate visitor pass."))
     digest = _token_hash(token)
-    visit = await db.visits.find_one({"pass.token_hash": digest})
+    visit = await visits_repo.find_by_pass_token(db, digest)
     if visit is None:
-        replaced = await db.visits.find_one({"pass.revoked_token_hashes": digest}, {"visit_number": 1})
+        replaced = await visits_repo.find_by_replaced_pass_token(db, digest)
         if replaced is not None:
             raise await _reject(db, ctx, meta, "replaced", replaced, AppError(
                 409, "pass_replaced",
@@ -217,7 +215,7 @@ async def check_out(db: AsyncDatabase, ctx: AuthContext, meta: RequestMeta, qr_t
     """Check-out with a scanned pass, after the guard confirmed it. Idempotent like every check-out."""
     visit = await resolve(db, ctx, meta, qr_text)
     if visit["status"] != "CHECKED_IN":
-        return await db.visits.find_one({"_id": visit["_id"]}, visits_svc.LIST_PROJECTION), True
+        return await visits_repo.find_by_id(db, visit["_id"], hide_pass_secrets=True), True
     return await visits_svc.check_out(db, ctx, meta, visit["_id"], "QR")
 
 

@@ -25,5 +25,14 @@ class Database:
         )
         self.db: AsyncDatabase = self.client[settings.mongo_db]
 
+    async def ping(self) -> None:
+        """Raises one of repositories.errors.DATABASE_ERRORS if the database cannot be reached."""
+        await self.db.command("ping")
+
+    async def transactions_available(self) -> bool:
+        """Multi-document transactions need a replica set (or a sharded cluster)."""
+        hello = await self.db.command("hello")
+        return bool(hello.get("setName") or hello.get("msg") == "isdbgrid")
+
     async def close(self) -> None:
         await self.client.close()

@@ -34,14 +34,18 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from bson import ObjectId
-from pymongo import ReturnDocument
 from pymongo.asynchronous.client_session import AsyncClientSession
 from pymongo.asynchronous.database import AsyncDatabase
-from pymongo.errors import DuplicateKeyError
 
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.pagination import decode_cursor, encode_cursor
+from app.repositories import directory as directory_repo
+from app.repositories import notifications as notifications_repo
+from app.repositories import users as users_repo
+from app.repositories import visits as visits_repo
+from app.repositories.errors import DuplicateKey
+from app.repositories.ids import parse_id
 from app.services import email as email_svc
 from app.services import email_settings
 from app.services.auth import AuthContext
@@ -79,9 +83,7 @@ async def create_host_arrival(db: AsyncDatabase, settings: Settings, visit: dict
     Returns the notification, or None when there is nobody to tell (no linked account, no e-mail)."""
     recipient = None
     if host.get("linked_user_id"):
-        user = await db.users.find_one({"_id": host["linked_user_id"], "is_active": True}, {"_id": 1},
-                                       session=session)
-        recipient = user["_id"] if user else None
+        recipient = await users_repo.find_active_id(db, host["linked_user_id"], session=session)
     address = host.get("email")
     if recipient is None and not address:
         return None
@@ -101,7 +103,7 @@ async def create_host_arrival(db: AsyncDatabase, settings: Settings, visit: dict
                  "reason_code": visit.get("reason_code"), "check_in_at": visit["check_in_at"]},
         "created_at": now, "read_at": None, "email": email,
     }
-    doc["_id"] = (await db.notifications.insert_one(doc, session=session)).inserted_id
+    doc["_id"] = await notifications_repo.insert(db, doc, session=session)
     return doc
 
 
@@ -129,7 +131,7 @@ async def create_department_arrival(db: AsyncDatabase, settings: Settings, visit
         "created_at": now, "read_at": None,
         "email": {"status": "PENDING", "to": address, "attempts": 0, "next_attempt_at": now},
     }
-    doc["_id"] = (await db.notifications.insert_one(doc, session=session)).inserted_id
+    doc["_id"] = await notifications_repo.insert(db, doc, session=session)
     return doc
 
 
@@ -149,8 +151,7 @@ async def create_host_overstay(db: AsyncDatabase, settings: Settings, visit: dic
     """Queue an overstay notice for a registered host (in-app and/or e-mail). Idempotent via event_key."""
     recipient = None
     if host.get("linked_user_id"):
-        user = await db.users.find_one({"_id": host["linked_user_id"], "is_active": True}, {"_id": 1})
-        recipient = user["_id"] if user else None
+        recipient = await users_repo.find_active_id(db, host["linked_user_id"])
     address = host.get("email")
     if recipient is None and not address:
         return None
@@ -167,8 +168,8 @@ async def create_host_overstay(db: AsyncDatabase, settings: Settings, visit: dic
         "data": _overstay_data(visit), "created_at": now, "read_at": None, "email": email,
     }
     try:
-        doc["_id"] = (await db.notifications.insert_one(doc)).inserted_id
-    except DuplicateKeyError:
+        doc["_id"] = await notifications_repo.insert(db, doc)
+    except DuplicateKey:
         return None
     return doc
 
@@ -192,8 +193,8 @@ async def create_department_overstay(db: AsyncDatabase, settings: Settings, visi
         "email": {"status": "PENDING", "to": address, "attempts": 0, "next_attempt_at": now},
     }
     try:
-        doc["_id"] = (await db.notifications.insert_one(doc)).inserted_id
-    except DuplicateKeyError:
+        doc["_id"] = await notifications_repo.insert(db, doc)
+    except DuplicateKey:
         return None
     return doc
 
@@ -202,13 +203,11 @@ async def queue_overstays(db: AsyncDatabase, settings: Settings, *, limit: int =
     """Find visitors still inside after their badge expired and queue host + department overstay notices.
     Returns how many notification documents were inserted (0 when nothing new)."""
     now = datetime.now(UTC)
-    visits = await db.visits.find(
-        {"status": "CHECKED_IN", "pass.expires_at": {"$lte": now}},
-    ).limit(limit).to_list(length=limit)
+    visits = await visits_repo.list_overstayed(db, now, limit)
     created = 0
     for visit in visits:
-        host = await db.hosts.find_one({"_id": visit["host_id"]}) if visit.get("host_id") else None
-        department = (await db.departments.find_one({"_id": visit["department_id"]})
+        host = await directory_repo.find_by_id(db, "hosts", visit["host_id"]) if visit.get("host_id") else None
+        department = (await directory_repo.find_by_id(db, "departments", visit["department_id"])
                       if visit.get("department_id") else None)
         if host is not None:
             if await create_host_overstay(db, settings, visit, host):
@@ -220,53 +219,44 @@ async def queue_overstays(db: AsyncDatabase, settings: Settings, *, limit: int =
 
 
 # ------------------------------------------------------------------------------------------ in-app
-def _own(ctx: AuthContext) -> dict:
+def _own(ctx: AuthContext) -> ObjectId:
     # The recipient always comes from the server-side session, never from the request.
-    return {"recipient_user_id": ctx.user["_id"]}
+    return ctx.user["_id"]
 
 
 async def list_for_user(db: AsyncDatabase, ctx: AuthContext, *, unread_only: bool,
                         cursor: str | None) -> tuple[list[dict], str | None, int]:
-    query: dict = _own(ctx) | ({"read_at": None} if unread_only else {})
-    if cursor:
-        last_at, last_id = decode_cursor(cursor)
-        query = {"$and": [query, {"$or": [{"created_at": {"$lt": last_at}},
-                                          {"created_at": last_at, "_id": {"$lt": last_id}}]}]}
-    docs = await db.notifications.find(query).sort([("created_at", -1), ("_id", -1)]).limit(PAGE_SIZE + 1) \
-        .to_list(length=PAGE_SIZE + 1)
+    docs = await notifications_repo.list_for_recipient(
+        db, _own(ctx), unread_only=unread_only, after=decode_cursor(cursor) if cursor else None,
+        limit=PAGE_SIZE + 1)
     next_cursor = None
     if len(docs) > PAGE_SIZE:
         docs = docs[:PAGE_SIZE]
         next_cursor = encode_cursor(docs[-1]["created_at"], docs[-1]["_id"])
-    unread = await db.notifications.count_documents(_own(ctx) | {"read_at": None})
+    unread = await notifications_repo.count_unread(db, _own(ctx))
     return docs, next_cursor, unread
 
 
 async def mark_read(db: AsyncDatabase, ctx: AuthContext, notification_id: str) -> dict:
     """Idempotent. Someone else's notification is simply "not found"."""
-    if not ObjectId.is_valid(notification_id):
+    oid = parse_id(notification_id)
+    if oid is None:
         raise NOT_FOUND
-    oid = ObjectId(notification_id)
-    await db.notifications.update_one(_own(ctx) | {"_id": oid, "read_at": None},
-                                      {"$set": {"read_at": datetime.now(UTC)}})
-    doc = await db.notifications.find_one(_own(ctx) | {"_id": oid})
+    await notifications_repo.mark_read(db, _own(ctx), oid, datetime.now(UTC))
+    doc = await notifications_repo.find_for_recipient(db, _own(ctx), oid)
     if doc is None:
         raise NOT_FOUND
     return doc
 
 
 async def mark_all_read(db: AsyncDatabase, ctx: AuthContext) -> int:
-    result = await db.notifications.update_many(_own(ctx) | {"read_at": None},
-                                                {"$set": {"read_at": datetime.now(UTC)}})
-    return result.modified_count
+    return await notifications_repo.mark_all_read(db, _own(ctx), datetime.now(UTC))
 
 
 # ------------------------------------------------------------------------------------------ e-mail
 async def _finish(db: AsyncDatabase, doc: dict, fields: dict) -> None:
     # Only the attempt that holds the claim may record its result.
-    await db.notifications.update_one(
-        {"_id": doc["_id"], "email.status": "SENDING", "email.attempts": doc["email"]["attempts"]},
-        {"$set": {f"email.{k}": v for k, v in fields.items()} | {"email.lease_until": None}})
+    await notifications_repo.finish_claim(db, doc["_id"], doc["email"]["attempts"], fields)
 
 
 async def dispatch_due(db: AsyncDatabase, settings: Settings, *, send=email_svc.send, limit: int = 20) -> int:
@@ -278,15 +268,8 @@ async def dispatch_due(db: AsyncDatabase, settings: Settings, *, send=email_svc.
     loaded = False
     while attempted < limit:
         now = datetime.now(UTC)
-        await db.notifications.update_many(
-            {"email.status": "SENDING", "email.lease_until": {"$lt": now}},
-            {"$set": {"email.status": "FAILED", "email.error": "interrupted", "email.lease_until": None,
-                      "email.next_attempt_at": None}})
-        doc = await db.notifications.find_one_and_update(
-            {"email.status": "PENDING", "email.next_attempt_at": {"$lte": now}},
-            {"$set": {"email.status": "SENDING", "email.lease_until": now + LEASE, "email.last_attempt_at": now},
-             "$inc": {"email.attempts": 1}},
-            sort=[("email.next_attempt_at", 1)], return_document=ReturnDocument.AFTER)
+        await notifications_repo.fail_expired_claims(db, now)
+        doc = await notifications_repo.claim_next_due(db, now, now + LEASE)
         if doc is None:
             return attempted
         attempted += 1
