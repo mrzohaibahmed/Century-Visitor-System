@@ -17,8 +17,6 @@ from pydantic import BaseModel
 from app.api.deps import get_database, get_settings, public
 from app.core.config import APP_VERSION, Settings
 from app.db.client import Database
-from app.db.migrate import current_schema_version
-from app.db.schema import SCHEMA_VERSION
 from app.repositories.errors import DATABASE_ERRORS
 from app.services.photos import photo_storage_available
 
@@ -61,9 +59,7 @@ async def ready(response: Response, database: Database = Depends(get_database),
         async with asyncio.timeout(READY_TIMEOUT_SECONDS):
             await database.ping()
             checks["database"] = "ok"
-            version = await current_schema_version(database.db)
-            checks["schema_version"] = ("ok" if version == SCHEMA_VERSION
-                                        else "missing" if version is None else "outdated")
+            checks["schema_version"] = await database.schema_status()
             checks["transactions"] = "ok" if await database.transactions_available() else "unavailable"
     except (*DATABASE_ERRORS, TimeoutError) as e:
         log.warning("Readiness check failed (%s)", type(e).__name__)

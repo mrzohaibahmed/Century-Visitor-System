@@ -1,7 +1,7 @@
 """Updating belongings on an active visit (personal material returnable slip)."""
 import pytest
-from bson import ObjectId
 
+from tests.conftest import record_id
 from tests.test_visitors import new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
 
@@ -73,6 +73,6 @@ async def test_belongings_cannot_be_updated_after_checkout(guard, inside):
 
 async def test_belongings_update_is_audited(harness, guard, inside):
     await guard.patch(f"/api/v1/visits/{inside['id']}/belongings", json={"belongings": ["Bag"]})
-    record = await harness.db.audit_logs.find_one({"action": "VISIT_BELONGINGS_UPDATED"})
-    assert record is not None and record["resource"]["id"] == ObjectId(inside["id"])
+    record = await harness.store.audit_logs.find_one({"action": "VISIT_BELONGINGS_UPDATED"})
+    assert record is not None and record["resource"]["id"] == record_id(inside["id"])
     assert record["metadata"]["belongings_count"] == 1

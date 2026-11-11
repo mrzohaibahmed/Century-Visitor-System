@@ -7,21 +7,19 @@ import asyncio
 import logging
 import threading
 
-import bson
 import pytest
-from bson import ObjectId
 
 from app.core.secrets import generate_key
 from app.services import camera_settings as svc
-from tests.conftest import make_settings
+from tests.conftest import make_settings, record_id, same_database, stored_bytes, unknown_id
 from tests.test_gate_camera import PASSWORD, USER, FakeCamera, jpeg
 
 pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
-def settings():
-    return make_settings(secrets_key=generate_key())
+def settings(settings):
+    return make_settings(**same_database(settings), secrets_key=generate_key())
 
 
 @pytest.fixture
@@ -44,9 +42,9 @@ async def new_gate(admin, name="Main Gate") -> str:
 
 
 async def everything_stored(harness) -> bytes:
-    """The raw BSON of every settings document and audit entry."""
-    docs = await harness.db.settings.find({}).to_list(None) + await harness.db.audit_logs.find({}).to_list(None)
-    return b"".join(bson.encode(d) for d in docs)
+    """Every stored byte of the settings documents and audit entries (see conftest.stored_bytes)."""
+    docs = await harness.store.settings.find({}).to_list(None) + await harness.store.audit_logs.find({}).to_list(None)
+    return stored_bytes(docs)
 
 
 # ---------------------------------------------------------------- access
@@ -77,10 +75,10 @@ async def test_the_password_is_encrypted_and_never_returned(harness, admin, fake
     assert "password" not in saved and PASSWORD not in r.text
     assert PASSWORD not in (await admin.get("/api/v1/gate-cameras")).text
 
-    doc = await harness.db.settings.find_one({"_id": f"gate_camera:{gate}"})
+    doc = await harness.store.settings.find_one({"_id": f"gate_camera:{gate}"})
     assert set(doc["password"]) == {"v", "kid", "nonce", "ct"}
     assert PASSWORD.encode() not in await everything_stored(harness)           # nowhere in plain text
-    entry = await harness.db.audit_logs.find_one({"action": "GATE_CAMERA_UPDATED"})
+    entry = await harness.store.audit_logs.find_one({"action": "GATE_CAMERA_UPDATED"})
     assert entry["changes"]["password"] == "changed" and entry["changes"]["host"]["to"] == "127.0.0.1"
 
 
@@ -93,13 +91,13 @@ async def test_the_first_save_needs_a_password(admin, fake_camera):
 async def test_the_password_is_kept_unless_it_would_go_somewhere_else(harness, admin, fake_camera):
     gate = await new_gate(admin)
     await admin.put(f"/api/v1/gate-cameras/{gate}", json=body(fake_camera))
-    sealed = (await harness.db.settings.find_one({"_id": f"gate_camera:{gate}"}))["password"]
+    sealed = (await harness.store.settings.find_one({"_id": f"gate_camera:{gate}"}))["password"]
 
     # Channel, timeout, on/off: the saved password stays.
     r = await admin.put(f"/api/v1/gate-cameras/{gate}",
                         json=body(fake_camera, password=None, channel=201, timeout_seconds=4, enabled=False))
     assert r.status_code == 200 and r.json()["channel"] == 201 and r.json()["password_status"] == "SAVED"
-    assert (await harness.db.settings.find_one({"_id": f"gate_camera:{gate}"}))["password"] == sealed
+    assert (await harness.store.settings.find_one({"_id": f"gate_camera:{gate}"}))["password"] == sealed
 
     # Address, connection, port or user name: the password must be entered again.
     for change in ({"host": "192.0.2.50"}, {"protocol": "https"}, {"port": 8080}, {"username": "other"}):
@@ -122,7 +120,7 @@ async def test_invalid_settings_are_refused_without_echoing_them(admin, fake_cam
 
 
 async def test_an_unknown_gate_is_not_found(admin, fake_camera):
-    r = await admin.put(f"/api/v1/gate-cameras/{ObjectId()}", json=body(fake_camera))
+    r = await admin.put(f"/api/v1/gate-cameras/{unknown_id()}", json=body(fake_camera))
     assert r.status_code == 404
 
 
@@ -131,7 +129,7 @@ async def test_without_a_server_key_passwords_cannot_be_saved(harness, admin, fa
     gate = await new_gate(admin)
     r = await admin.put(f"/api/v1/gate-cameras/{gate}", json=body(fake_camera))
     assert r.status_code == 503 and r.json()["error"]["code"] == "secrets_key_missing"
-    assert await harness.db.settings.find_one({"_id": f"gate_camera:{gate}"}) is None
+    assert await harness.store.settings.find_one({"_id": f"gate_camera:{gate}"}) is None
 
 
 async def test_a_changed_server_key_makes_the_password_unreadable_not_wrong(harness, admin, fake_camera):
@@ -148,8 +146,8 @@ async def test_a_password_copied_to_another_gate_does_not_decrypt(harness, admin
     a, b = await new_gate(admin, "Main Gate"), await new_gate(admin, "East Gate")
     await admin.put(f"/api/v1/gate-cameras/{a}", json=body(fake_camera))
     await admin.put(f"/api/v1/gate-cameras/{b}", json=body(fake_camera, password="Other-Pass-2"))
-    sealed = (await harness.db.settings.find_one({"_id": f"gate_camera:{a}"}))["password"]
-    await harness.db.settings.update_one({"_id": f"gate_camera:{b}"}, {"$set": {"password": sealed}})
+    sealed = (await harness.store.settings.find_one({"_id": f"gate_camera:{a}"}))["password"]
+    await harness.store.settings.update_one({"_id": f"gate_camera:{b}"}, {"$set": {"password": sealed}})
     r = await admin.post(f"/api/v1/gate-cameras/{b}/test")
     assert r.status_code == 409 and r.json()["error"]["code"] == "camera_password_unreadable"
 
@@ -158,10 +156,10 @@ async def test_removing_deletes_the_settings_and_the_password(harness, admin, fa
     gate = await new_gate(admin)
     await admin.put(f"/api/v1/gate-cameras/{gate}", json=body(fake_camera))
     assert (await admin.delete(f"/api/v1/gate-cameras/{gate}")).status_code == 204
-    assert await harness.db.settings.find_one({"_id": f"gate_camera:{gate}"}) is None
+    assert await harness.store.settings.find_one({"_id": f"gate_camera:{gate}"}) is None
     assert (await admin.get("/api/v1/gate-cameras")).json()[0]["configured"] is False
     assert (await admin.delete(f"/api/v1/gate-cameras/{gate}")).status_code == 404
-    assert await harness.db.audit_logs.count_documents({"action": "GATE_CAMERA_REMOVED"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "GATE_CAMERA_REMOVED"}) == 1
 
 
 # ---------------------------------------------------------------- connection test
@@ -174,7 +172,7 @@ async def test_connection_test_reports_the_camera_and_is_remembered(harness, adm
     assert (result["status"], result["model"], result["firmware"]) == ("CONNECTED", "DS-2CD2143G2-I", "V5.7.15")
     last = (await admin.get("/api/v1/gate-cameras")).json()[0]["last_test"]
     assert last["ok"] is True and last["model"] == "DS-2CD2143G2-I"
-    entry = await harness.db.audit_logs.find_one({"action": "GATE_CAMERA_TESTED"})
+    entry = await harness.store.audit_logs.find_one({"action": "GATE_CAMERA_TESTED"})
     assert entry["result"] == "SUCCESS" and entry["metadata"] == {"test": "connection", "code": None}
 
     # Changing the connection makes the earlier result meaningless.
@@ -190,7 +188,7 @@ async def test_a_failed_test_is_a_result_with_a_safe_message(harness, admin, fak
     assert r.status_code == 200
     assert (r.json()["status"], r.json()["code"]) == ("FAILED", "CAMERA_AUTHENTICATION_FAILED")
     assert r.json()["message"] == "The camera refused the user name or password."
-    entry = await harness.db.audit_logs.find_one({"action": "GATE_CAMERA_TESTED"})
+    entry = await harness.store.audit_logs.find_one({"action": "GATE_CAMERA_TESTED"})
     assert entry["result"] == "FAILURE" and entry["metadata"]["code"] == "CAMERA_AUTHENTICATION_FAILED"
     assert "Wrong-Pass-9" not in caplog.text and b"Wrong-Pass-9" not in await everything_stored(harness)
 
@@ -233,11 +231,11 @@ async def test_the_test_photo_is_returned_as_the_vms_would_keep_it_and_not_store
     assert r.content.startswith(b"\xff\xd8\xff") and "no-store" in r.headers["cache-control"]
     assert (r.headers["x-camera-width"], r.headers["x-camera-height"]) == ("2560", "1440")
     assert (r.headers["x-photo-width"], r.headers["x-photo-height"]) == ("1024", "576")    # the stored size
-    assert await harness.db.photos.count_documents({}) == 0
-    assert await harness.db.visitors.count_documents({}) == 0
+    assert await harness.store.photos.count_documents({}) == 0
+    assert await harness.store.visitors.count_documents({}) == 0
     photo_dir = harness.app.state.settings.photo_dir
     assert not photo_dir.exists() or not any(photo_dir.rglob("*.jpg"))
-    entry = await harness.db.audit_logs.find_one({"action": "GATE_CAMERA_TESTED"})
+    entry = await harness.store.audit_logs.find_one({"action": "GATE_CAMERA_TESTED"})
     assert entry["metadata"] == {"test": "photo", "code": None}
 
 
@@ -263,6 +261,6 @@ async def test_a_failed_test_photo_is_an_error_with_a_safe_message(admin, fake_c
 async def test_client_for_decrypts_only_in_memory(harness, admin, fake_camera):
     gate = await new_gate(admin)
     await admin.put(f"/api/v1/gate-cameras/{gate}", json=body(fake_camera))
-    client = await svc.client_for(harness.db, harness.app.state.settings, ObjectId(gate))
+    client = await svc.client_for(harness.db, harness.app.state.settings, record_id(gate))
     assert client._config.password.get_secret_value() == PASSWORD
     assert PASSWORD not in repr(client) and PASSWORD not in repr(client._config)

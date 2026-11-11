@@ -6,12 +6,11 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from bson import ObjectId
 
 from app.services import report_exports as exports
 from app.services import report_pdf as rp
 from app.services import reports as svc
-from tests.conftest import make_settings
+from tests.conftest import make_settings, new_record_id
 from tests.test_entry_denials import ban, lookup
 from tests.test_report_endpoints import visit
 from tests.test_report_exports import HEADERS, REPORTS, parse, people  # noqa: F401 - fixture
@@ -233,9 +232,9 @@ async def test_urdu_is_shaped_and_right_to_left(harness, admin, drawn):
 
 
 async def test_text_is_drawn_as_it_is_never_as_markup(harness, admin, drawn):
-    dep = ObjectId()
+    dep = new_record_id()
     name = "<b>R&D</b> <script>alert(1)</script> =cmd|' /C calc'!A0"
-    await harness.db.departments.insert_one({"_id": dep, "name": name, "is_active": True,
+    await harness.store.departments.insert_one({"_id": dep, "name": name, "is_active": True,
                                              "created_at": datetime.now(UTC), "updated_at": datetime.now(UTC)})
     await visit(harness.db, datetime.now(UTC) - timedelta(minutes=5), minutes=1, dep=dep, dep_name=name)
     assert_pdf(await pdf(admin, "departments"))
@@ -262,7 +261,7 @@ async def test_the_row_limit_applies_before_anything_is_drawn(harness, admin, pe
     r = await pdf(admin, "visits")
     assert (r.status_code, r.json()["error"]["code"]) == (422, "export_too_large")
     assert drawn == [] and leftover_files() <= before                         # no PDF was started
-    assert await harness.db.audit_logs.count_documents({"action": "REPORT_EXPORTED", "metadata.format": "pdf"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "REPORT_EXPORTED", "metadata.format": "pdf"}) == 1
 
 
 async def test_a_failure_while_drawing_leaves_no_file_and_no_audit(harness, admin, people, monkeypatch):  # noqa: F811
@@ -276,7 +275,7 @@ async def test_a_failure_while_drawing_leaves_no_file_and_no_audit(harness, admi
     assert r.status_code == 500 and r.headers["content-type"].startswith("application/json")
     assert "drawing failed" not in r.text
     assert leftover_files() <= before
-    assert await harness.db.audit_logs.count_documents({"action": "REPORT_EXPORTED"}) == 0
+    assert await harness.store.audit_logs.count_documents({"action": "REPORT_EXPORTED"}) == 0
 
 
 async def test_without_a_unicode_font_pdf_is_refused_and_other_formats_still_work(harness, admin, people, monkeypatch,  # noqa: F811
@@ -287,13 +286,13 @@ async def test_without_a_unicode_font_pdf_is_refused_and_other_formats_still_wor
     r = await pdf(admin, "visits")
     assert (r.status_code, r.json()["error"]["code"]) == (503, "pdf_unavailable")
     assert leftover_files() <= before
-    assert await harness.db.audit_logs.count_documents({"action": "REPORT_EXPORTED"}) == 0
+    assert await harness.store.audit_logs.count_documents({"action": "REPORT_EXPORTED"}) == 0
     assert (await admin.get(f"{BASE}/visits/export", params={"format": "csv"})).status_code == 200
     assert (await admin.get(f"{BASE}/visits/export", params={"format": "xlsx"})).status_code == 200
 
 
 async def test_exports_are_audited_as_pdf(harness, admin, people):  # noqa: F811
     await pdf(admin, "visits", q="alia", range="this_week")
-    [entry] = await harness.db.audit_logs.find({"action": "REPORT_EXPORTED"}).to_list(length=5)
+    [entry] = await harness.store.audit_logs.find({"action": "REPORT_EXPORTED"}).to_list(length=5)
     assert (entry["metadata"]["format"], entry["metadata"]["rows"], entry["metadata"]["filters"]) == ("pdf", 1, ["q"])
     assert "alia" not in str(entry).lower()

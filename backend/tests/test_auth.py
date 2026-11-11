@@ -8,7 +8,7 @@ from argon2 import PasswordHasher
 from app.core import security
 from app.core.security import hash_token
 from app.services import auth as auth_service
-from tests.conftest import ADMIN_PASSWORD, GUARD_PASSWORD, make_settings
+from tests.conftest import ADMIN_PASSWORD, GUARD_PASSWORD, make_settings, prepare_schema, same_database
 
 pytestmark = pytest.mark.anyio
 
@@ -43,7 +43,7 @@ async def test_only_token_hashes_are_stored(harness):
     c = harness.client()
     await c.login("guard1", GUARD_PASSWORD)
     token = c.cookies.get("__Host-cg_session")
-    session = await harness.db.sessions.find_one({})
+    session = await harness.store.sessions.find_one({})
     assert session["token_hash"] == hash_token(token)
     assert token not in str(session) and c.cookies.get("cg_csrf") not in str(session)
 
@@ -109,7 +109,7 @@ async def test_account_locks_after_repeated_failures(harness):
     assert locked.status_code == 403 and locked.json()["error"]["code"] == "account_locked"
     # even the right password is refused while locked
     assert (await c.login("guard1", GUARD_PASSWORD)).json()["error"]["code"] == "account_locked"
-    assert await harness.db.audit_logs.count_documents({"action": "ACCOUNT_LOCKED"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "ACCOUNT_LOCKED"}) == 1
 
 
 async def test_lock_expires_and_success_resets_the_counter(harness):
@@ -117,16 +117,16 @@ async def test_lock_expires_and_success_resets_the_counter(harness):
     c = harness.client()
     for _ in range(5):
         await c.login("guard1", "Wrong-Password-1")
-    await harness.db.users.update_one({"username": "guard1"},
+    await harness.store.users.update_one({"username": "guard1"},
                                       {"$set": {"locked_until": datetime.now(UTC) - timedelta(seconds=1)}})
     assert (await c.login("guard1", GUARD_PASSWORD)).status_code == 200
-    user = await harness.db.users.find_one({"username": "guard1"})
+    user = await harness.store.users.find_one({"username": "guard1"})
     assert user["failed_login_count"] == 0 and user["locked_until"] is None
 
 
 async def test_disabled_account_is_only_revealed_to_the_right_password(harness):
     await harness.create_user("guard1", GUARD_PASSWORD)
-    await harness.db.users.update_one({"username": "guard1"}, {"$set": {"is_active": False}})
+    await harness.store.users.update_one({"username": "guard1"}, {"$set": {"is_active": False}})
     wrong = await harness.client().login("guard1", "Wrong-Password-1")
     right = await harness.client().login("guard1", GUARD_PASSWORD)
     assert wrong.json()["error"]["code"] == "invalid_credentials"
@@ -137,10 +137,10 @@ async def test_failed_logins_are_audited_without_passwords(harness):
     await harness.create_user("guard1", GUARD_PASSWORD)
     await harness.client().login("guard1", "Wrong-Secret-9")
     await harness.client().login("ghost", "Other-Secret-9")
-    failed = await harness.db.audit_logs.find({"action": "LOGIN_FAILED"}).to_list(None)
+    failed = await harness.store.audit_logs.find({"action": "LOGIN_FAILED"}).to_list(None)
     reasons = sorted(d["metadata"]["reason"] for d in failed)
     assert reasons == ["unknown_user", "wrong_password"]
-    everything = str(await harness.db.audit_logs.find({}).to_list(None))
+    everything = str(await harness.store.audit_logs.find({}).to_list(None))
     assert "Wrong-Secret-9" not in everything and "Other-Secret-9" not in everything
 
 
@@ -155,13 +155,12 @@ async def test_passwords_are_never_logged(harness, caplog):
 # ---------------------------------------------------------------- rate limiting
 async def test_login_rate_limit_per_client_ip(settings, client_for):
     from app.core.permissions import Role
-    from app.db.migrate import apply_schema
     from app.main import create_app
     from app.services.users import create_user
-    s = make_settings(mongo_db=settings.mongo_db, login_ip_limit=3)
+    s = make_settings(**same_database(settings), login_ip_limit=3)
     app = create_app(s)
     async for client in client_for(app):
-        await apply_schema(app.state.database.db)
+        await prepare_schema(app.state.database)
         await create_user(app.state.database.db, actor=None, meta=None, username="guard1", display_name="G",
                           role=Role.GUARD, password=GUARD_PASSWORD, must_change_password=False)
         gate1 = {"X-Forwarded-For": "10.0.0.11"}
@@ -191,28 +190,28 @@ def test_forwarded_for_is_only_trusted_from_trusted_proxies():
 
 # ---------------------------------------------------------------- expiry
 async def test_idle_session_expires(harness, guard):
-    await harness.db.sessions.update_many({}, {"$set": {"last_seen_at": datetime.now(UTC) - timedelta(minutes=16)}})
+    await harness.store.sessions.update_many({}, {"$set": {"last_seen_at": datetime.now(UTC) - timedelta(minutes=16)}})
     r = await guard.get(ME)
     assert r.status_code == 401 and r.json()["error"]["code"] == "session_expired"
-    assert (await harness.db.sessions.find_one({}))["revoked_at"] is not None
+    assert (await harness.store.sessions.find_one({}))["revoked_at"] is not None
 
 
 async def test_absolute_session_expiry(harness, guard):
-    await harness.db.sessions.update_many({}, {"$set": {"expires_at": datetime.now(UTC) - timedelta(seconds=1)}})
+    await harness.store.sessions.update_many({}, {"$set": {"expires_at": datetime.now(UTC) - timedelta(seconds=1)}})
     assert (await guard.get(ME)).json()["error"]["code"] == "session_expired"
 
 
 async def test_activity_is_recorded_at_most_once_a_minute(harness, guard):
-    before = (await harness.db.sessions.find_one({}))["last_seen_at"]
+    before = (await harness.store.sessions.find_one({}))["last_seen_at"]
     await guard.get(ME)
-    assert (await harness.db.sessions.find_one({}))["last_seen_at"] == before
-    await harness.db.sessions.update_many({}, {"$set": {"last_seen_at": datetime.now(UTC) - timedelta(minutes=2)}})
+    assert (await harness.store.sessions.find_one({}))["last_seen_at"] == before
+    await harness.store.sessions.update_many({}, {"$set": {"last_seen_at": datetime.now(UTC) - timedelta(minutes=2)}})
     await guard.get(ME)
-    assert (await harness.db.sessions.find_one({}))["last_seen_at"] > datetime.now(UTC) - timedelta(seconds=30)
+    assert (await harness.store.sessions.find_one({}))["last_seen_at"] > datetime.now(UTC) - timedelta(seconds=30)
 
 
 async def test_disabling_a_user_ends_their_session_immediately(harness, guard):
-    await harness.db.users.update_one({"username": "guard1"}, {"$set": {"is_active": False}})
+    await harness.store.users.update_one({"username": "guard1"}, {"$set": {"is_active": False}})
     assert (await guard.get(ME)).status_code == 401
 
 
@@ -239,8 +238,8 @@ async def test_logout_revokes_the_session_and_clears_cookies(harness, guard):
     assert r.status_code == 204
     cleared = " ".join(r.headers.get_list("set-cookie")).lower()
     assert "__host-cg_session=" in cleared and "max-age=0" in cleared
-    assert (await harness.db.sessions.find_one({}))["revoked_reason"] == "logout"
-    assert await harness.db.audit_logs.count_documents({"action": "LOGOUT"}) == 1
+    assert (await harness.store.sessions.find_one({}))["revoked_reason"] == "logout"
+    assert await harness.store.audit_logs.count_documents({"action": "LOGOUT"}) == 1
 
 
 # ---------------------------------------------------------------- change own password
@@ -252,7 +251,7 @@ async def test_change_password(harness, guard):
     assert (await second_device.get(ME)).status_code == 401      # other sessions are signed out
     assert (await harness.client().login("guard1", GUARD_PASSWORD)).status_code == 401
     assert (await harness.client().login("guard1", "New-Guard-Pass-2")).status_code == 200
-    assert await harness.db.audit_logs.count_documents({"action": "PASSWORD_CHANGED", "result": "SUCCESS"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "PASSWORD_CHANGED", "result": "SUCCESS"}) == 1
 
 
 @pytest.mark.parametrize("current,new,status,code", [
@@ -286,8 +285,8 @@ def test_production_password_hashing_parameters():
 
 async def test_weaker_hashes_are_upgraded_at_login(harness):
     await harness.create_user("guard1", GUARD_PASSWORD)
-    old_hash = (await harness.db.users.find_one({"username": "guard1"}))["password_hash"]
+    old_hash = (await harness.store.users.find_one({"username": "guard1"}))["password_hash"]
     security.use_hasher(PasswordHasher(time_cost=2, memory_cost=16, parallelism=1))
     assert (await harness.client().login("guard1", GUARD_PASSWORD)).status_code == 200
-    new_hash = (await harness.db.users.find_one({"username": "guard1"}))["password_hash"]
+    new_hash = (await harness.store.users.find_one({"username": "guard1"}))["password_hash"]
     assert new_hash != old_hash and "m=16,t=2" in new_hash

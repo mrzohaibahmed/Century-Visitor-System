@@ -3,17 +3,19 @@ filter, masking and the report row schema. No report endpoint exists yet."""
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from bson import ObjectId
 from pymongo.asynchronous.collection import AsyncCollection
 
 from app.core.errors import AppError
 from app.core.identity import mask_sensitive
 from app.core.permissions import ROLE_PERMISSIONS, Permission, Role, has_permission
 from app.core.timeutil import MAX_RANGE_DAYS, InvalidRange, RangePreset, resolve_range
+from app.db.backend import BACKEND
+from app.repositories import reports as reports_repo
+from app.repositories import visits as visits_repo
 from app.schemas.reports import ReportRangeOut, VisitReportRow
 from app.services import reports as reports_svc
 from app.services.visits import TOO_BROAD, VisitFilter, visit_query
-from tests.conftest import make_settings
+from tests.conftest import make_settings, mongo_only, new_record_id, record_id, visitor_ids_in
 from tests.test_visitors import CNIC, new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
 
@@ -131,9 +133,10 @@ def test_mask_sensitive(value, masked):
 
 
 # ------------------------------------------------------------------------------------------ shared filter
+@mongo_only           # the exact MongoDB filter; on SQL Server the history and report tests run it on real data
 async def test_the_filter_builder(harness):
     db = harness.db
-    ids = [ObjectId() for _ in range(5)]
+    ids = [new_record_id() for _ in range(5)]
     start, end = datetime(2026, 9, 24, 19, tzinfo=UTC), datetime(2026, 9, 25, 19, tzinfo=UTC)
     assert await visit_query(db, VisitFilter()) == {}
     assert await visit_query(db, VisitFilter(start=start)) == {"check_in_at": {"$gte": start}}
@@ -152,26 +155,26 @@ async def test_the_filter_builder(harness):
 async def test_a_name_search_finds_visitors(harness, guard):
     v = await new_visitor(guard)
     for q in ("ali", CNIC, "0300-1234567"):
-        assert await visit_query(harness.db, VisitFilter(q=q)) == {"visitor_id": {"$in": [ObjectId(v["id"])]}}
+        assert visitor_ids_in(await visit_query(harness.db, VisitFilter(q=q))) == [record_id(v["id"])]
     # Searching within one visitor's visits: both conditions hold.
-    other = ObjectId()
-    assert await visit_query(harness.db, VisitFilter(q="ali", visitor_id=other)) == {"visitor_id": {"$in": []}}
-    assert await visit_query(harness.db, VisitFilter(q="ali", visitor_id=ObjectId(v["id"]))) == {
-        "visitor_id": {"$in": [ObjectId(v["id"])]}}
+    other = new_record_id()
+    assert visitor_ids_in(await visit_query(harness.db, VisitFilter(q="ali", visitor_id=other))) == []
+    assert visitor_ids_in(await visit_query(harness.db, VisitFilter(q="ali", visitor_id=record_id(v["id"])))) == [
+        record_id(v["id"])]
 
 
 async def test_reports_refuse_a_search_that_matches_too_many_visitors(harness, monkeypatch):
     monkeypatch.setattr(reports_svc, "REPORT_VISITOR_MATCHES", 2)
     now = datetime.now(UTC)
-    await harness.db.visitors.insert_many([{"full_name": f"Ali {n}", "name_search": f"ali {n}", "created_at": now,
+    await harness.store.visitors.insert_many([{"full_name": f"Ali {n}", "name_search": f"ali {n}", "created_at": now,
                                             "updated_at": now} for n in ("a", "b", "c")])
     with pytest.raises(AppError) as e:
         await reports_svc.report_visit_query(harness.db, VisitFilter(q="ali"))
     assert e.value is TOO_BROAD and e.value.status_code == 422
     # Exactly at the limit is fine; the visit history keeps its silent cap.
     monkeypatch.setattr(reports_svc, "REPORT_VISITOR_MATCHES", 3)
-    assert len((await reports_svc.report_visit_query(harness.db, VisitFilter(q="ali")))["visitor_id"]["$in"]) == 3
-    assert len((await visit_query(harness.db, VisitFilter(q="ali")))["visitor_id"]["$in"]) == 3
+    assert len(visitor_ids_in(await reports_svc.report_visit_query(harness.db, VisitFilter(q="ali")))) == 3
+    assert len(visitor_ids_in(await visit_query(harness.db, VisitFilter(q="ali")))) == 3
 
 
 async def test_the_history_and_the_filter_builder_agree(harness, guard, directory):  # noqa: F811
@@ -183,9 +186,9 @@ async def test_the_history_and_the_filter_builder_agree(harness, guard, director
               "department_id": directory["dep"]["id"], "q": "ali"}
     listed = (await guard.get("/api/v1/visits", params=params)).json()["items"]
     query = await visit_query(harness.db, VisitFilter(
-        status="CHECKED_OUT", host_id=ObjectId(directory["host"]["id"]), gate_id=ObjectId(directory["gate"]["id"]),
-        department_id=ObjectId(directory["dep"]["id"]), q="ali"))
-    found = await harness.db.visits.find(query).to_list(length=10)
+        status="CHECKED_OUT", host_id=record_id(directory["host"]["id"]), gate_id=record_id(directory["gate"]["id"]),
+        department_id=record_id(directory["dep"]["id"]), q="ali"))
+    found = await visits_repo.list_page(harness.db, query, after=None, limit=10)   # the filter, run as such
     assert [i["id"] for i in listed] == [str(d["_id"]) for d in found] == [visit["id"]]
 
 
@@ -194,19 +197,28 @@ async def test_report_rows_mask_the_id_and_phone_and_look_them_up_in_one_query(h
                                                                                monkeypatch):
     v = await new_visitor(guard)
     visit = (await check_in(guard, v["id"], directory)).json()
-    doc = await harness.db.visits.find_one({"_id": ObjectId(visit["id"])})
+    doc = await harness.store.visits.find_one({"_id": record_id(visit["id"])})
     calls = []
-    original = AsyncCollection.find
+    if BACKEND == "mongo":                    # count the driver's queries on visitors
+        original = AsyncCollection.find
 
-    def counting_find(self, *args, **kwargs):
-        if self.name == "visitors":
-            calls.append(args)
-        return original(self, *args, **kwargs)
+        def counting_find(self, *args, **kwargs):
+            if self.name == "visitors":
+                calls.append(args[1])
+            return original(self, *args, **kwargs)
+        monkeypatch.setattr(AsyncCollection, "find", counting_find)
+        expected = [{"identity": 1, "phone": 1}]
+    else:                                     # SQL Server: count the lookups (each is one query)
+        original_lookup = reports_repo.fields_by_id
 
-    monkeypatch.setattr(AsyncCollection, "find", counting_find)
+        async def counting_lookup(db, collection, ids, fields):
+            calls.append((collection, fields))
+            return await original_lookup(db, collection, ids, fields)
+        monkeypatch.setattr(reports_repo, "fields_by_id", counting_lookup)
+        expected = [("visitors", ("identity", "phone"))]
     people = await reports_svc.visitor_identities(harness.db, [doc["visitor_id"], doc["visitor_id"]])
     monkeypatch.undo()
-    assert len(calls) == 1 and calls[0][1] == {"identity": 1, "phone": 1}      # one query, two fields only
+    assert calls == expected                                              # one query, two fields only
     assert await reports_svc.visitor_identities(harness.db, []) == {}
 
     now = doc["check_in_at"] + timedelta(minutes=47, seconds=30)

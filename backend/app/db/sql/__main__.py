@@ -10,38 +10,19 @@ Each prints JSON without the password or the connection string.
 """
 import json
 import sys
-from pathlib import Path
 
 from alembic import command
-from alembic.config import Config
-from alembic.runtime.migration import MigrationContext
-from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.db.sql.engine import describe_error, sync_engine
+from app.db.sql.revision import alembic_config, current_revision, head_revision
 
-MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 COLLATION = "Latin1_General_100_CI_AS_SC"    # case-insensitive, accent-sensitive (= MongoDB strength 2)
 
 
-def alembic_config(engine=None) -> Config:
-    config = Config()
-    # Only script_location: the revisions are found in its versions/ folder. (version_locations would be
-    # split on spaces, and this project lives in "D:\Visitor System".)
-    config.set_main_option("script_location", str(MIGRATIONS_DIR))
-    if engine is not None:
-        config.attributes["engine"] = engine
-    return config
-
-
-def head_revision() -> str | None:
-    return ScriptDirectory.from_config(alembic_config()).get_current_head()
-
-
-def create_database() -> dict:
-    settings = get_settings()
+def create_database(settings: Settings) -> dict:
     name = settings.mssql_database                   # validated: letters, digits, _ (safe unquoted)
     engine = sync_engine(settings, database="master", autocommit=True)
     try:
@@ -56,24 +37,22 @@ def create_database() -> dict:
     return {"database": name, "created": not exists}
 
 
-def migrate() -> dict:
-    settings = get_settings()
+def migrate(settings: Settings) -> dict:
     engine = sync_engine(settings)
     try:
         command.upgrade(alembic_config(engine), "head")
         with engine.connect() as conn:
-            current = MigrationContext.configure(conn).get_current_revision()
+            current = current_revision(conn)
     finally:
         engine.dispose()
     return {"database": settings.mssql_database, "revision": current, "head": head_revision()}
 
 
-def check() -> dict:
-    settings = get_settings()
+def check(settings: Settings) -> dict:
     engine = sync_engine(settings)
     try:
         with engine.connect() as conn:
-            current = MigrationContext.configure(conn).get_current_revision()
+            current = current_revision(conn)
             row = conn.execute(text(
                 "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(32)), "
                 "CAST(SERVERPROPERTY('Edition') AS nvarchar(64)), collation_name, is_read_committed_snapshot_on "
@@ -96,7 +75,7 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
     try:
-        report = COMMANDS[argv[0]]()
+        report = COMMANDS[argv[0]](get_settings())
     except DBAPIError as e:
         print(json.dumps({"error": describe_error(e)}))
         return 1

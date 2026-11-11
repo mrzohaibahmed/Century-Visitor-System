@@ -6,19 +6,21 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pyodbc
 import pytest
-from bson import ObjectId
 from pymongo import MongoClient
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.errors import DuplicateKeyError, WriteError
+from sqlalchemy.exc import IntegrityError
 
 from app import cli
 from app.core.config import get_settings
+from app.db.backend import BACKEND
 from app.db.migrate import apply_schema
 from app.db.schema import SCHEMA_VERSION
 from app.services import entry_denials as svc
 from app.services import reports as reports_svc
-from tests.conftest import TEST_MONGO_URI
+from tests.conftest import TEST_MONGO_URI, mongo_only, mssql_only, new_record_id, raw_database_errors, record_id
 from tests.test_visitors import CNIC, new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
 
@@ -31,14 +33,15 @@ FIELDS = {"_id", "at", "reason", "source", "source_audit_id", "visitor_id", "vis
 
 async def ban(harness, number=CNIC, id_type="CNIC", **entry) -> dict:
     doc = {"identifier": f"{id_type}:{number}", "identity": {"type": id_type, "number": number},
-           "reason": "Theft of property.", "is_active": True, "expires_at": None, "created_by": ObjectId(),
-           "created_at": datetime.now(UTC)} | entry
-    doc["_id"] = (await harness.db.watchlist.insert_one(doc)).inserted_id
+           "reason": "Theft of property.", "is_active": True, "expires_at": None,
+           "created_at": datetime.now(UTC),
+           "created_by": (await harness.store.users.find_one({}))["_id"]} | entry      # an existing account
+    doc["_id"] = (await harness.store.watchlist.insert_one(doc)).inserted_id
     return doc
 
 
 async def denials(harness) -> list[dict]:
-    return await harness.db.entry_denials.find().sort("_id", 1).to_list(length=100)
+    return await harness.store.entry_denials.find().sort("_id", 1).to_list(length=100)
 
 
 async def lookup(client, number=CNIC, id_type="CNIC"):
@@ -46,7 +49,19 @@ async def lookup(client, number=CNIC, id_type="CNIC"):
 
 
 def fail_denial_inserts(monkeypatch, error: Exception | None = None, delay: float | None = None):
-    """Makes every entry_denials insert fail (or hang); other collections are untouched."""
+    """Makes every entry_denials insert fail (or hang) with a driver error that quotes a CNIC, as a real
+    schema refusal can; other tables are untouched."""
+    if BACKEND == "mssql":
+        from app.repositories import entry_denials as denials_repo
+
+        async def insert(db, doc):
+            if delay:
+                await asyncio.sleep(delay)
+            raise error or IntegrityError("INSERT INTO dbo.entry_denials ...", None, pyodbc.Error(
+                "23000", "[23000] The INSERT statement conflicted with the CHECK constraint (value 35201-1234567-1). "
+                         "(547) (SQLExecDirectW)"))
+        monkeypatch.setattr(denials_repo, "insert", insert)
+        return
     original = AsyncCollection.insert_one
 
     async def insert_one(self, *args, **kwargs):
@@ -65,21 +80,21 @@ async def test_a_refused_check_in_is_recorded_once(harness, guard, directory):  
     entry = await ban(harness)
     r = await check_in(guard, v["id"], directory)
     assert (r.status_code, r.json()["error"]["code"], r.json()["error"]["message"]) == (403, "entry_denied", REFUSAL)
-    assert await harness.db.visits.count_documents({}) == 0
-    match = await harness.db.audit_logs.find_one({"action": "WATCHLIST_MATCH"})
-    assert await harness.db.audit_logs.count_documents({"action": "WATCHLIST_MATCH"}) == 1
-    assert await harness.db.audit_logs.count_documents({"action": "VISIT_CHECKED_IN", "result": "DENIED",
+    assert await harness.store.visits.count_documents({}) == 0
+    match = await harness.store.audit_logs.find_one({"action": "WATCHLIST_MATCH"})
+    assert await harness.store.audit_logs.count_documents({"action": "WATCHLIST_MATCH"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "VISIT_CHECKED_IN", "result": "DENIED",
                                                         "metadata.reason": "watchlist"}) == 1
     assert "context" not in match["metadata"]                  # the check-in audit entry is as before
 
     [d] = await denials(harness)
-    guard_user = await harness.db.users.find_one({"username": "guard1"})
+    guard_user = await harness.store.users.find_one({"username": "guard1"})
     assert set(d) == FIELDS
     assert d["source_audit_id"] == match["_id"] and d["at"] == match["timestamp"]
     assert (d["source"], d["reason"], d["reason_code"]) == ("check_in", "WATCHLIST", "OFFICIAL_MEETING")
-    assert (d["visitor_id"], d["visitor_name"]) == (ObjectId(v["id"]), "Ali Khan")
+    assert (d["visitor_id"], d["visitor_name"]) == (record_id(v["id"]), "Ali Khan")
     assert d["identifier_masked"] == "CNIC:***********67-1" and d["watchlist_id"] == entry["_id"]
-    assert (d["gate_id"], d["gate_name"]) == (ObjectId(directory["gate"]["id"]), "Main Gate")
+    assert (d["gate_id"], d["gate_name"]) == (record_id(directory["gate"]["id"]), "Main Gate")
     assert (d["operator_id"], d["operator_username"], d["operator_name"]) == (guard_user["_id"], "guard1", "Guard1")
 
 
@@ -95,8 +110,8 @@ async def test_the_operator_and_gate_cannot_come_from_the_request(harness, guard
     v = await new_visitor(guard)
     await ban(harness)
     r = await guard.post("/api/v1/visits", json={"visitor_id": v["id"], "host_id": directory["host"]["id"],
-                                                 "reason_code": "INTERVIEW", "operator_id": str(ObjectId()),
-                                                 "gate_id": str(ObjectId())})
+                                                 "reason_code": "INTERVIEW", "operator_id": str(new_record_id()),
+                                                 "gate_id": str(new_record_id())})
     assert r.status_code == 422 and await denials(harness) == []    # unknown fields are refused outright
 
 
@@ -112,29 +127,29 @@ async def test_a_blocked_lookup_is_recorded_once_and_answers_as_before(harness, 
     assert body == (await guard.get(f"/api/v1/visitors/{v['id']}")).json()
 
     [d] = await denials(harness)
-    match = await harness.db.audit_logs.find_one({"action": "WATCHLIST_MATCH"})
-    guard_user = await harness.db.users.find_one({"username": "guard1"})
+    match = await harness.store.audit_logs.find_one({"action": "WATCHLIST_MATCH"})
+    guard_user = await harness.store.users.find_one({"username": "guard1"})
     assert match["metadata"]["context"] == "lookup" and match["metadata"]["watchlist_id"] == entry["_id"]
-    assert await harness.db.audit_logs.count_documents({"action": "VISITOR_LOOKUP"}) == 1      # as before
-    assert await harness.db.audit_logs.count_documents({"action": "VISIT_CHECKED_IN"}) == 0
+    assert await harness.store.audit_logs.count_documents({"action": "VISITOR_LOOKUP"}) == 1      # as before
+    assert await harness.store.audit_logs.count_documents({"action": "VISIT_CHECKED_IN"}) == 0
     assert (d["source"], d["reason"], d["reason_code"]) == ("lookup", "WATCHLIST", None)
     assert d["source_audit_id"] == match["_id"] and d["at"] == match["timestamp"]
-    assert (d["visitor_id"], d["watchlist_id"]) == (ObjectId(v["id"]), entry["_id"])
+    assert (d["visitor_id"], d["watchlist_id"]) == (record_id(v["id"]), entry["_id"])
     assert (d["operator_id"], d["operator_name"]) == (guard_user["_id"], "Guard1")
-    assert d["gate_id"] == ObjectId(directory["gate"]["id"])        # the only active gate
-    assert await harness.db.visits.count_documents({}) == 0
+    assert d["gate_id"] == record_id(directory["gate"]["id"])        # the only active gate
+    assert await harness.store.visits.count_documents({}) == 0
 
 
 async def test_a_blocked_lookup_without_a_gate_is_still_recorded(harness, admin, guard, directory):  # noqa: F811
     await admin.post("/api/v1/gates", json={"name": "East Gate"})   # two gates: none chosen by this session
     await new_visitor(guard)
     await ban(harness)
-    session_before = await harness.db.sessions.find_one({"user_id": (await harness.db.users.find_one(
+    session_before = await harness.store.sessions.find_one({"user_id": (await harness.store.users.find_one(
         {"username": "guard1"}))["_id"]})
     assert (await lookup(guard)).json()["screening"]["status"] == "BLOCKED"
     [d] = await denials(harness)
     assert (d["gate_id"], d["gate_name"]) == (None, None)
-    session_after = await harness.db.sessions.find_one({"_id": session_before["_id"]})
+    session_after = await harness.store.sessions.find_one({"_id": session_before["_id"]})
     assert session_after.get("gate_id") == session_before.get("gate_id")   # the lookup chose no gate
 
 
@@ -197,7 +212,7 @@ async def test_short_identity_numbers_are_masked_more_strictly_than_the_audit(ha
     await ban(harness, number="AB1", id_type="OTHER")
     await check_in(guard, v["id"], directory)
     [d] = await denials(harness)
-    match = await harness.db.audit_logs.find_one({"action": "WATCHLIST_MATCH"})
+    match = await harness.store.audit_logs.find_one({"action": "WATCHLIST_MATCH"})
     assert d["identifier_masked"] == "OTHER:**1"
     assert match["metadata"]["identifier"] == "OTHER:AB1"            # the audit masking is unchanged (D5)
 
@@ -223,9 +238,9 @@ async def test_a_failed_reporting_write_never_lets_anyone_in(harness, guard, dir
     assert (r.status_code, r.json()["error"]["code"], r.json()["error"]["message"]) == (403, "entry_denied", REFUSAL)
     lookup_answer = (await lookup(guard)).json()
     assert lookup_answer["screening"]["status"] == "BLOCKED"                  # the lookup answers as before
-    assert await harness.db.visits.count_documents({}) == 0
-    assert await harness.db.audit_logs.count_documents({"action": "WATCHLIST_MATCH"}) == 2
-    assert await harness.db.audit_logs.count_documents({"action": "VISIT_CHECKED_IN", "result": "DENIED"}) == 1
+    assert await harness.store.visits.count_documents({}) == 0
+    assert await harness.store.audit_logs.count_documents({"action": "WATCHLIST_MATCH"}) == 2
+    assert await harness.store.audit_logs.count_documents({"action": "VISIT_CHECKED_IN", "result": "DENIED"}) == 1
     assert await denials(harness) == []
     failures = [rec.getMessage() for rec in caplog.records if "Entry denial not recorded" in rec.getMessage()]
     assert len(failures) == 2 and "backfill-entry-denials" in failures[0]
@@ -245,11 +260,12 @@ async def test_a_failed_reporting_write_never_lets_anyone_in(harness, guard, dir
 # ------------------------------------------------------------------------------------------ backfill
 async def _audit_match(harness, *, at=None, **fields) -> dict:
     entry = {"timestamp": at or datetime.now(UTC), "action": "WATCHLIST_MATCH", "result": "SUCCESS",
-             "actor": {"user_id": ObjectId(), "username": "oldguard", "role": "GUARD"},
-             "resource": {"type": "visitor", "id": ObjectId()},
-             "metadata": {"watchlist_id": ObjectId(), "gate_id": ObjectId(), "identifier": "CNIC:***********67-1"}}
+             "actor": {"user_id": new_record_id(), "username": "oldguard", "role": "GUARD"},
+             "resource": {"type": "visitor", "id": new_record_id()},
+             "metadata": {"watchlist_id": new_record_id(), "gate_id": new_record_id(),
+                          "identifier": "CNIC:***********67-1"}}
     entry |= fields
-    entry["_id"] = (await harness.db.audit_logs.insert_one(entry)).inserted_id
+    entry["_id"] = (await harness.store.audit_logs.insert_one(entry)).inserted_id
     return entry
 
 
@@ -283,7 +299,7 @@ async def test_backfill_and_runtime_records_never_duplicate(harness, guard, dire
 
 async def test_backfill_never_changes_an_existing_document(harness):
     entry = await _audit_match(harness)
-    await harness.db.entry_denials.insert_one({"at": entry["timestamp"], "reason": "WATCHLIST", "source": "check_in",
+    await harness.store.entry_denials.insert_one({"at": entry["timestamp"], "reason": "WATCHLIST", "source": "check_in",
                                                "source_audit_id": entry["_id"], "visitor_name": "As recorded"})
     await svc.backfill_from_audit(harness.db)
     [d] = await denials(harness)
@@ -303,11 +319,11 @@ async def test_backfill_handles_incomplete_audit_entries(harness):
 
 
 def test_an_entry_without_a_timestamp_is_skipped_not_guessed():
-    assert svc.from_audit({"_id": ObjectId(), "action": "WATCHLIST_MATCH"}) == (None, False)
+    assert svc.from_audit({"_id": new_record_id(), "action": "WATCHLIST_MATCH"}) == (None, False)
 
 
 async def test_a_lookup_refusal_without_a_gate_is_complete(harness):
-    await _audit_match(harness, metadata={"watchlist_id": ObjectId(), "gate_id": None,
+    await _audit_match(harness, metadata={"watchlist_id": new_record_id(), "gate_id": None,
                                           "identifier": "CNIC:***********67-1", "context": "lookup"})
     assert (await svc.backfill_from_audit(harness.db)).incomplete == 0
 
@@ -318,7 +334,7 @@ async def test_concurrent_backfills_create_each_document_once(harness):
     reports = await asyncio.gather(*(svc.backfill_from_audit(harness.db) for _ in range(4)))
     assert sum(r.created for r in reports) == 20
     assert all(r.created + r.already_present == 20 and r.failed == 0 for r in reports)
-    assert await harness.db.entry_denials.count_documents({}) == 20
+    assert await harness.store.entry_denials.count_documents({}) == 20
 
 
 @pytest.fixture
@@ -333,6 +349,7 @@ def cli_env(monkeypatch, tmp_path):
     MongoClient(TEST_MONGO_URI).drop_database(db_name)
 
 
+@mongo_only           # the CLI "migrate" command is MongoDB-only until the cut-over (step 7)
 def test_the_backfill_command(monkeypatch, cli_env, capsys):
     def run(command):
         monkeypatch.setattr("sys.argv", ["app.cli", command])
@@ -342,7 +359,7 @@ def test_the_backfill_command(monkeypatch, cli_env, capsys):
     assert run("migrate") == 0
     MongoClient(TEST_MONGO_URI)[cli_env].audit_logs.insert_one({
         "timestamp": datetime.now(UTC), "action": "WATCHLIST_MATCH", "result": "SUCCESS", "actor": {},
-        "resource": {"type": "visitor", "id": ObjectId()}, "metadata": {}})
+        "resource": {"type": "visitor", "id": new_record_id()}, "metadata": {}})
     capsys.readouterr()
     assert run("backfill-entry-denials") == 0
     first = json.loads(capsys.readouterr().out)
@@ -354,21 +371,22 @@ def test_the_backfill_command(monkeypatch, cli_env, capsys):
 
 
 # ------------------------------------------------------------------------------------------ schema
+@mongo_only           # MongoDB indexes and validator; the SQL Server counterpart follows
 async def test_the_collection_validates_and_deduplicates(harness):
     assert SCHEMA_VERSION >= 6
-    indexes = await harness.db.entry_denials.index_information()
+    indexes = await harness.store.entry_denials.index_information()
     assert indexes["source_audit_id_unique"]["unique"] is True
     assert indexes["newest_first"]["key"] == [("at", -1), ("_id", -1)]
     assert set(indexes) == {"_id_", "source_audit_id_unique", "newest_first"}      # nothing speculative
-    base = {"at": datetime.now(UTC), "reason": "WATCHLIST", "source": "check_in", "source_audit_id": ObjectId()}
-    await harness.db.entry_denials.insert_one(dict(base))
+    base = {"at": datetime.now(UTC), "reason": "WATCHLIST", "source": "check_in", "source_audit_id": new_record_id()}
+    await harness.store.entry_denials.insert_one(dict(base))
     with pytest.raises(DuplicateKeyError):
-        await harness.db.entry_denials.insert_one(dict(base))
+        await harness.store.entry_denials.insert_one(dict(base))
     for bad in ({"source": "guess"}, {"reason": "OTHER"}, {"source_audit_id": None}, {"reason_code": "SHOPPING"}):
         with pytest.raises(WriteError):
-            await harness.db.entry_denials.insert_one(base | {"source_audit_id": ObjectId()} | bad)
+            await harness.store.entry_denials.insert_one(base | {"source_audit_id": new_record_id()} | bad)
     await apply_schema(harness.db)                                      # repeated migration is safe
-    assert await harness.db.entry_denials.count_documents({}) == 1
+    assert await harness.store.entry_denials.count_documents({}) == 1
 
 
 # ------------------------------------------------------------------------------------------ reports
@@ -382,9 +400,24 @@ async def test_security_counts_read_the_denials(harness, guard, directory):  # n
     now = datetime.now(UTC)
     counts = await reports_svc.security_counts(harness.db, now - timedelta(hours=1), now + timedelta(minutes=1))
     assert (counts.denied_entries, counts.watchlist_matches) == (2, 2)
-    assert await harness.db.entry_denials.count_documents({}) == 2
+    assert await harness.store.entry_denials.count_documents({}) == 2
 
 
 def test_no_route_exposes_denials_yet():
     from app.api.v1.router import api_router
     assert not [r.path for r in api_router.routes if "denial" in getattr(r, "path", "")]
+
+
+@mssql_only
+async def test_the_sql_table_validates_and_deduplicates(harness):
+    """The same rules as the MongoDB collection: one record per audit entry, only known reasons, sources and
+    purposes, never without its audit entry."""
+    duplicate, rejected = raw_database_errors()
+    base = {"at": datetime.now(UTC), "reason": "WATCHLIST", "source": "check_in", "source_audit_id": new_record_id()}
+    await harness.store.entry_denials.insert_one(dict(base))
+    with pytest.raises(duplicate):
+        await harness.store.entry_denials.insert_one(dict(base))
+    for bad in ({"source": "guess"}, {"reason": "OTHER"}, {"source_audit_id": None}, {"reason_code": "SHOPPING"}):
+        with pytest.raises(rejected):
+            await harness.store.entry_denials.insert_one(base | {"source_audit_id": new_record_id()} | bad)
+    assert await harness.store.entry_denials.count_documents({}) == 1

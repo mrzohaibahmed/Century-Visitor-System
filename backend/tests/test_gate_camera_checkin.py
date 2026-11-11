@@ -6,10 +6,9 @@ preview: nothing is stored until it is uploaded through the normal visitor photo
 import threading
 
 import pytest
-from bson import ObjectId
 
 from app.core.secrets import generate_key
-from tests.conftest import make_settings
+from tests.conftest import make_settings, record_id, same_database
 from tests.test_gate_camera import PASSWORD, USER, FakeCamera, jpeg
 from tests.test_visitors import new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
@@ -21,8 +20,8 @@ XML_ERROR = b"<ResponseStatus/>"
 
 
 @pytest.fixture
-def settings():
-    return make_settings(secrets_key=generate_key())
+def settings(settings):
+    return make_settings(**same_database(settings), secrets_key=generate_key())
 
 
 def _start() -> FakeCamera:
@@ -103,10 +102,10 @@ async def test_snapshot_is_a_preview_and_stores_nothing(harness, settings, admin
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
     assert "no-store" in r.headers["cache-control"]
     assert await picture_size(r) == (1024, 576)                        # checked and scaled like a visitor photo
-    assert await harness.db.photos.count_documents({}) == 0
-    assert (await harness.db.visitors.find_one({"_id": ObjectId(visitor["id"])})).get("current_photo_id") is None
+    assert await harness.store.photos.count_documents({}) == 0
+    assert (await harness.store.visitors.find_one({"_id": record_id(visitor["id"])})).get("current_photo_id") is None
     assert not settings.photo_dir.exists() or not any(settings.photo_dir.rglob("*.jpg"))
-    assert await harness.db.audit_logs.count_documents({"action": "PHOTO_CAPTURED"}) == 0
+    assert await harness.store.audit_logs.count_documents({"action": "PHOTO_CAPTURED"}) == 0
     for secret in (PASSWORD, USER, "127.0.0.1"):
         assert secret not in r.headers.values() and secret.encode() not in r.content
 
@@ -121,10 +120,10 @@ async def test_use_this_photo_goes_through_the_normal_visitor_photo_upload(harne
     assert uploaded.status_code == 201, uploaded.text
     photo = uploaded.json()
     assert (photo["width"], photo["height"]) == (1024, 576)
-    assert await harness.db.photos.count_documents({}) == 1
-    assert (await harness.db.visitors.find_one({"_id": ObjectId(visitor["id"])}))["current_photo_id"] == \
-        ObjectId(photo["id"])
-    assert await harness.db.audit_logs.count_documents({"action": "PHOTO_CAPTURED"}) == 1
+    assert await harness.store.photos.count_documents({}) == 1
+    assert (await harness.store.visitors.find_one({"_id": record_id(visitor["id"])}))["current_photo_id"] == \
+        record_id(photo["id"])
+    assert await harness.store.audit_logs.count_documents({"action": "PHOTO_CAPTURED"}) == 1
     visit = await check_in(guard, visitor["id"], directory, photo_id=photo["id"])
     assert visit.status_code == 201 and visit.json()["photo_id"] == photo["id"]
 
@@ -176,7 +175,7 @@ async def test_camera_failures_are_safe_errors(harness, admin, guard, cameras, s
     assert r.status_code == 502 and r.json()["error"]["code"] == code
     for secret in (PASSWORD, USER, "127.0.0.1", "Traceback"):
         assert secret not in r.text
-    assert await harness.db.photos.count_documents({}) == 0
+    assert await harness.store.photos.count_documents({}) == 0
 
 
 async def test_wrong_password_is_a_safe_error(admin, guard, cameras):
@@ -209,7 +208,7 @@ async def test_preview_is_the_cameras_own_frame_and_stores_nothing(harness, admi
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
     assert "no-store" in r.headers["cache-control"]
     assert await picture_size(r) == (1280, 720)                        # as the camera sent it, not scaled
-    assert await harness.db.photos.count_documents({}) == 0
+    assert await harness.store.photos.count_documents({}) == 0
     for secret in (PASSWORD, USER, "127.0.0.1"):
         assert secret not in r.headers.values() and secret.encode() not in r.content
 

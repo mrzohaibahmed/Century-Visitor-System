@@ -2,8 +2,8 @@
 import asyncio
 
 import pytest
-from bson import ObjectId
 
+from tests.conftest import record_id, unknown_id
 from tests.test_images import image_bytes
 from tests.test_visitors import new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
@@ -23,8 +23,8 @@ async def test_guard_captures_a_photo(harness, settings, guard):
     assert r.status_code == 201, r.text
     photo = r.json()
     assert set(photo) == {"id", "captured_at", "width", "height"}          # no file name, path or location
-    doc = await harness.db.photos.find_one({"_id": ObjectId(photo["id"])})
-    assert doc["visitor_id"] == ObjectId(visitor["id"]) and doc["content_type"] == "image/jpeg"
+    doc = await harness.store.photos.find_one({"_id": record_id(photo["id"])})
+    assert doc["visitor_id"] == record_id(visitor["id"]) and doc["content_type"] == "image/jpeg"
     stored = list(settings.photo_dir.rglob("*.jpg"))
     assert [p.stem for p in stored] == [doc["storage_key"]]                 # random name, not the CNIC
     assert "35201" not in str(stored[0]) and stored[0].read_bytes().startswith(b"\xff\xd8\xff")
@@ -32,9 +32,9 @@ async def test_guard_captures_a_photo(harness, settings, guard):
 
     lookup = (await guard.get(f"/api/v1/visitors/{visitor['id']}")).json()
     assert lookup["visitor"]["photo_id"] == photo["id"]
-    record = await harness.db.audit_logs.find_one({"action": "PHOTO_CAPTURED"})
-    assert record["resource"]["id"] == ObjectId(visitor["id"])
-    assert record["metadata"]["photo_id"] == ObjectId(photo["id"])
+    record = await harness.store.audit_logs.find_one({"action": "PHOTO_CAPTURED"})
+    assert record["resource"]["id"] == record_id(visitor["id"])
+    assert record["metadata"]["photo_id"] == record_id(photo["id"])
 
 
 @pytest.mark.parametrize("data,content_type,status,code", [
@@ -49,12 +49,12 @@ async def test_bad_uploads_are_refused_and_nothing_is_stored(harness, settings, 
     visitor = await new_visitor(guard)
     r = await upload(guard, visitor["id"], data=data, content_type=content_type)
     assert r.status_code == status and r.json()["error"]["code"] == code
-    assert await harness.db.photos.count_documents({}) == 0
+    assert await harness.store.photos.count_documents({}) == 0
     assert not settings.photo_dir.exists() or not any(settings.photo_dir.rglob("*.*"))
 
 
 async def test_photo_for_an_unknown_visitor_is_404(guard):
-    assert (await upload(guard, "0" * 24)).status_code == 404
+    assert (await upload(guard, unknown_id())).status_code == 404
 
 
 async def test_anonymous_and_forged_uploads_are_refused(harness, guard):
@@ -81,7 +81,7 @@ async def test_guards_cannot_browse_earlier_photos_but_admins_can(harness, admin
     await upload(guard, visitor["id"], data=image_bytes(color=(10, 200, 10)))
     r = await guard.get(f"/api/v1/photos/{old['id']}")
     assert r.status_code == 403
-    denied = await harness.db.audit_logs.find_one({"action": "ACCESS_DENIED", "resource.type": "photo"})
+    denied = await harness.store.audit_logs.find_one({"action": "ACCESS_DENIED", "resource.type": "photo"})
     assert denied["metadata"]["reason"] == "photo_not_needed_at_gate"
     assert (await admin.get(f"/api/v1/photos/{old['id']}")).status_code == 200
 
@@ -102,7 +102,7 @@ async def test_anonymous_viewing_is_refused(harness, guard):
 
 
 async def test_unknown_or_missing_photos_are_404(harness, settings, admin, guard):
-    for photo_id in ("nope", "0" * 24):
+    for photo_id in ("nope", unknown_id()):
         assert (await admin.get(f"/api/v1/photos/{photo_id}")).status_code == 404
     visitor = await new_visitor(guard)
     photo = (await upload(guard, visitor["id"])).json()
@@ -118,8 +118,8 @@ async def test_check_in_records_the_photo(harness, guard, directory):  # noqa: F
     photo = (await upload(guard, visitor["id"])).json()
     visit = (await check_in(guard, visitor["id"], directory, photo_id=photo["id"])).json()
     assert visit["photo_id"] == photo["id"]
-    doc = await harness.db.photos.find_one({"_id": ObjectId(photo["id"])})
-    assert doc["visit_id"] == ObjectId(visit["id"])
+    doc = await harness.store.photos.find_one({"_id": record_id(photo["id"])})
+    assert doc["visit_id"] == record_id(visit["id"])
 
 
 async def test_check_in_refuses_another_visitors_photo(guard, directory):  # noqa: F811
@@ -151,5 +151,5 @@ async def test_concurrent_captures_keep_one_current_photo(harness, guard):
     results = await asyncio.gather(*(upload(guard, visitor["id"], data=image_bytes(color=(i, i, i)))
                                      for i in range(4)))
     assert [r.status_code for r in results] == [201] * 4
-    current = (await harness.db.visitors.find_one({"_id": ObjectId(visitor["id"])}))["current_photo_id"]
+    current = (await harness.store.visitors.find_one({"_id": record_id(visitor["id"])}))["current_photo_id"]
     assert str(current) in {r.json()["id"] for r in results}

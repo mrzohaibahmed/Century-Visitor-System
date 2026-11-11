@@ -2,7 +2,8 @@
 from datetime import UTC, datetime
 
 import pytest
-from bson import ObjectId
+
+from tests.conftest import unknown_id
 
 pytestmark = pytest.mark.anyio
 
@@ -45,16 +46,17 @@ async def test_lookup_finds_by_any_format_and_is_audited_with_a_masked_id(harnes
     assert body["visitor"]["active_visit"] is None
     missing = await guard.get("/api/v1/visitors/lookup", params={"id_type": "CNIC", "id_number": "11111-1111111-1"})
     assert missing.status_code == 404
-    lookups = await harness.db.audit_logs.find({"action": "VISITOR_LOOKUP"}).sort("timestamp", 1).to_list(None)
+    lookups = await harness.store.audit_logs.find({"action": "VISITOR_LOOKUP"}).sort("timestamp", 1).to_list(None)
     assert [e["metadata"]["found"] for e in lookups] == [True, False]
     assert "1234567" not in str(lookups) and "1111111" not in str(lookups)
 
 
 async def test_lookup_reports_watchlist_matches(harness, guard):
     v = await new_visitor(guard)
-    await harness.db.watchlist.insert_one({
+    creator = (await harness.store.users.find_one({"username": "guard1"}))["_id"]   # an existing account
+    await harness.store.watchlist.insert_one({
         "identifier": f"CNIC:{CNIC}", "identity": {"type": "CNIC", "number": CNIC}, "reason": "Theft.",
-        "is_active": True, "expires_at": None, "created_by": ObjectId(), "created_at": datetime.now(UTC)})
+        "is_active": True, "expires_at": None, "created_by": creator, "created_at": datetime.now(UTC)})
     body = (await guard.get(f"/api/v1/visitors/{v['id']}")).json()
     assert body["screening"] == {"status": "BLOCKED", "reason": "Theft."}
 
@@ -135,11 +137,11 @@ async def test_bad_cursor_and_short_queries(guard):
 async def test_opening_a_visitor_is_audited(harness, guard):
     v = await new_visitor(guard)
     await guard.get(f"/api/v1/visitors/{v['id']}")
-    entry = await harness.db.audit_logs.find_one({"action": "VISITOR_VIEWED"})
+    entry = await harness.store.audit_logs.find_one({"action": "VISITOR_VIEWED"})
     assert entry["actor"]["username"] == "guard1" and str(entry["resource"]["id"]) == v["id"]
 
 
-@pytest.mark.parametrize("bad_id", ["nope", "0" * 24])
+@pytest.mark.parametrize("bad_id", ["nope", unknown_id()])
 async def test_unknown_visitor_is_404(guard, bad_id):
     assert (await guard.get(f"/api/v1/visitors/{bad_id}")).status_code == 404
 
@@ -150,7 +152,7 @@ async def test_only_admins_edit_visitors_and_changes_are_audited_masked(harness,
     assert (await guard.patch(f"/api/v1/visitors/{v['id']}", json=body)).status_code == 403
     r = await admin.patch(f"/api/v1/visitors/{v['id']}", json=body)
     assert r.status_code == 200 and r.json()["full_name"] == "Ali Raza Khan"
-    entry = await harness.db.audit_logs.find_one({"action": "VISITOR_UPDATED"})
+    entry = await harness.store.audit_logs.find_one({"action": "VISITOR_UPDATED"})
     assert entry["changes"]["full_name"] == {"from": "Ali Khan", "to": "Ali Raza Khan"}
     assert "7777777" not in str(entry) and "1234567" not in str(entry)
 

@@ -2,11 +2,10 @@
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from bson import ObjectId
 
 from app.services import entry_denials as denials_svc
 from app.services import reports as svc
-from tests.conftest import make_settings
+from tests.conftest import insert_seed, make_settings, mongo_only, new_record_id, store_of
 from tests.test_entry_denials import ban, lookup
 from tests.test_visitors import new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
@@ -28,9 +27,10 @@ async def counts(admin) -> tuple[int, int]:
 
 
 async def seed(db, at: datetime, source="check_in", reason="WATCHLIST", **extra) -> dict:
-    doc = {"at": at, "reason": reason, "source": source, "source_audit_id": ObjectId()} | extra
-    # bypass: only to plant a reason the validator does not allow yet (the counts must keep them apart)
-    doc["_id"] = (await db.entry_denials.insert_one(doc, bypass_document_validation=reason != "WATCHLIST")).inserted_id
+    doc = {"at": at, "reason": reason, "source": source, "source_audit_id": new_record_id()} | extra
+    # unchecked: only to plant a reason the schema does not allow yet (the counts must keep them apart)
+    planted = await insert_seed(store_of(db), "entry_denials", doc, unchecked_values=reason != "WATCHLIST")
+    doc["_id"] = planted.inserted_id
     return doc
 
 
@@ -78,11 +78,11 @@ async def test_visits_and_other_failures_count_nothing(admin, guard, harness, di
     assert (await check_in(guard, v["id"], directory)).status_code == 409            # already inside
     await guard.post(f"/api/v1/visits/{visit['id']}/check-out")                       # check-out
     assert (await check_in(guard, v["id"], directory, reason_code="OTHER")).status_code == 422     # validation
-    assert (await check_in(guard, str(ObjectId()), directory)).status_code == 404     # unknown visitor
+    assert (await check_in(guard, str(new_record_id()), directory)).status_code == 404     # unknown visitor
     assert (await guard.get("/api/v1/users")).status_code == 403                      # access denied
     await ban(harness, is_active=False)                                               # inactive ban
     assert (await lookup(guard)).json()["screening"]["status"] == "CLEAR"
-    await harness.db.watchlist.delete_many({})
+    await harness.store.watchlist.delete_many({})
     await ban(harness, expires_at=datetime.now(UTC) - timedelta(minutes=1))            # expired ban
     assert (await check_in(guard, v["id"], directory)).status_code == 201
     assert await counts(admin) == (0, 0)
@@ -102,12 +102,12 @@ async def test_audit_entries_are_never_counted(admin, guard, harness, directory)
     v = await new_visitor(guard)
     await ban(harness)
     await check_in(guard, v["id"], directory)
-    assert await harness.db.audit_logs.count_documents({"action": {"$in": ["WATCHLIST_MATCH", "VISIT_CHECKED_IN"]}}) \
-        == 2
+    sequence = {"action": {"$in": ["WATCHLIST_MATCH", "VISIT_CHECKED_IN"]}}
+    assert await harness.store.audit_logs.count_documents(sequence) == 2
     assert await counts(admin) == (1, 1)
     # Audit entries without a denial document (e.g. not yet backfilled) count nothing on their own.
     now = datetime.now(UTC)
-    await harness.db.audit_logs.insert_many([
+    await harness.store.audit_logs.insert_many([
         {"timestamp": now, "action": "WATCHLIST_MATCH", "result": "SUCCESS", "actor": {}, "resource": {}},
         {"timestamp": now, "action": "VISIT_CHECKED_IN", "result": "DENIED", "actor": {}, "resource": {},
          "metadata": {"reason": "watchlist"}}])
@@ -117,12 +117,14 @@ async def test_audit_entries_are_never_counted(admin, guard, harness, directory)
 async def test_backfilled_refusals_count_exactly_once(admin, harness):
     now = datetime.now(UTC)
     for minutes in (1, 2):
-        await harness.db.audit_logs.insert_one({
+        await harness.store.audit_logs.insert_one({
             "timestamp": now - timedelta(minutes=minutes), "action": "WATCHLIST_MATCH", "result": "SUCCESS",
-            "actor": {"user_id": ObjectId(), "username": "g"}, "resource": {"type": "visitor", "id": ObjectId()},
-            "metadata": {"watchlist_id": ObjectId(), "gate_id": ObjectId(), "identifier": "CNIC:***********67-1"}})
+            "actor": {"user_id": new_record_id(), "username": "g"},
+            "resource": {"type": "visitor", "id": new_record_id()},
+            "metadata": {"watchlist_id": new_record_id(), "gate_id": new_record_id(),
+                         "identifier": "CNIC:***********67-1"}})
         # the old pair: each refused check-in also wrote a denied VISIT_CHECKED_IN
-        await harness.db.audit_logs.insert_one({
+        await harness.store.audit_logs.insert_one({
             "timestamp": now - timedelta(minutes=minutes), "action": "VISIT_CHECKED_IN", "result": "DENIED",
             "actor": {}, "resource": {}, "metadata": {"reason": "watchlist"}})
     assert await counts(admin) == (0, 0)                            # before the backfill: nothing to count
@@ -206,6 +208,7 @@ def _stages(plan) -> list[dict]:
     return found
 
 
+@mongo_only           # MongoDB query plans (explain); not a SQL Server check
 async def test_the_counts_use_the_at_index(harness):
     for i in range(200):
         await seed(harness.db, kar(2026, 9, 1) + timedelta(hours=i))

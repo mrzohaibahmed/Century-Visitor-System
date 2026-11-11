@@ -3,12 +3,11 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from bson import ObjectId
 
 from app.core.secrets import generate_key
 from app.core.security import hash_token
 from app.services.passes import parse_qr
-from tests.conftest import make_settings
+from tests.conftest import make_settings, record_id
 from tests.test_visitors import CNIC, new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
 
@@ -38,9 +37,9 @@ async def test_pass_contains_only_a_random_token(harness, guard, inside):
     assert qr.startswith("CGP1:") and len(qr) == 5 + 64 and parse_qr(qr)
     for secret in (CNIC, CNIC.replace("-", ""), inside["visit_number"], inside["id"], "Ali", "0300"):
         assert secret not in qr
-    stored = await harness.db.visits.find_one({"_id": ObjectId(inside["id"])})
+    stored = await harness.store.visits.find_one({"_id": record_id(inside["id"])})
     assert stored["pass"]["token_hash"] == hash_token(qr[5:]) and qr[5:] not in str(stored)
-    record = await harness.db.audit_logs.find_one({"action": "PASS_ISSUED"})
+    record = await harness.store.audit_logs.find_one({"action": "PASS_ISSUED"})
     assert record["metadata"]["replaces_previous"] is False and qr[5:] not in str(record)
 
 
@@ -65,7 +64,7 @@ async def test_badge_has_what_the_gate_needs_and_no_id_number(settings, guard, i
 async def test_badge_print_is_recorded(harness, guard, inside):
     r = await guard.post(f"/api/v1/visits/{inside['id']}/badge-print")
     assert r.status_code == 204
-    record = await harness.db.audit_logs.find_one({"action": "BADGE_PRINT_REQUESTED"})
+    record = await harness.store.audit_logs.find_one({"action": "BADGE_PRINT_REQUESTED"})
     assert record["metadata"]["visit_number"] == inside["visit_number"]
     assert (await guard.post(f"/api/v1/visits/{'0' * 24}/badge-print")).status_code == 404
 
@@ -83,7 +82,7 @@ async def test_scanning_identifies_the_visit_and_changes_nothing(harness, guard,
     assert r.status_code == 200 and r.json()["status"] == "VALID"
     assert r.json()["visit"]["visit_number"] == inside["visit_number"]
     assert (await guard.get(f"/api/v1/visits/{inside['id']}")).json()["status"] == "CHECKED_IN"
-    assert await harness.db.audit_logs.count_documents({"action": "VISIT_CHECKED_OUT"}) == 0
+    assert await harness.store.audit_logs.count_documents({"action": "VISIT_CHECKED_OUT"}) == 0
 
 
 async def test_usb_scanners_may_change_case_and_add_whitespace(guard, inside):
@@ -100,7 +99,7 @@ async def test_check_out_with_a_pass_is_idempotent(harness, guard, inside):
     assert again.status_code == 200 and again.json()["already_checked_out"] is True
     after = await scan(guard, qr)
     assert after.json()["status"] == "CHECKED_OUT"                   # replay: shows who, does nothing
-    records = await harness.db.audit_logs.find({"action": "VISIT_CHECKED_OUT"}).to_list(length=5)
+    records = await harness.store.audit_logs.find({"action": "VISIT_CHECKED_OUT"}).to_list(length=5)
     assert len(records) == 1 and records[0]["metadata"]["method"] == "QR"
 
 
@@ -108,7 +107,7 @@ async def test_concurrent_scans_record_one_departure(harness, admin, guard, insi
     qr = (await issue(guard, inside))["qr_text"]
     results = await asyncio.gather(*(scan(c, qr, "check-out") for c in (admin, guard, admin, guard)))
     assert sorted(r.json()["already_checked_out"] for r in results) == [False, True, True, True]
-    assert await harness.db.audit_logs.count_documents({"action": "VISIT_CHECKED_OUT"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "VISIT_CHECKED_OUT"}) == 1
 
 
 async def test_a_pass_cannot_be_used_after_the_visitor_comes_back(guard, directory, inside):  # noqa: F811
@@ -130,7 +129,7 @@ async def test_tampered_passes_match_nothing(harness, guard, inside, mutate):
     r = await scan(guard, mutate(qr), "check-out")
     assert r.status_code == 404 and r.json()["error"]["code"] == "invalid_pass"
     assert (await guard.get(f"/api/v1/visits/{inside['id']}")).json()["status"] == "CHECKED_IN"
-    record = await harness.db.audit_logs.find_one({"action": "PASS_REJECTED"})
+    record = await harness.store.audit_logs.find_one({"action": "PASS_REJECTED"})
     assert record["metadata"]["reason"] == "unknown" and record["result"] == "FAILURE"
 
 
@@ -147,7 +146,7 @@ async def test_a_reprinted_badge_cancels_the_old_one(harness, guard, inside):
     r = await scan(guard, old, "check-out")
     assert r.status_code == 409 and r.json()["error"]["code"] == "pass_replaced"
     assert (await scan(guard, new)).json()["status"] == "VALID"
-    reissue = await harness.db.audit_logs.find_one({"action": "PASS_ISSUED", "metadata.replaces_previous": True})
+    reissue = await harness.store.audit_logs.find_one({"action": "PASS_ISSUED", "metadata.replaces_previous": True})
     assert reissue is not None
 
 
@@ -158,10 +157,10 @@ async def test_belongings_print_uses_the_current_badge_without_reissuing(harness
     response = await guard.get(path)
     assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
     assert response.json()["qr_text"] == original["qr_text"]
-    stored = await harness.db.visits.find_one({"_id": ObjectId(inside["id"])})
+    stored = await harness.store.visits.find_one({"_id": record_id(inside["id"])})
     assert stored["pass"]["qr_sealed"] and original["qr_text"] not in str(stored)
     assert (await scan(guard, original["qr_text"])).status_code == 200
-    assert await harness.db.audit_logs.count_documents({"action": "PASS_ISSUED"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "PASS_ISSUED"}) == 1
 
     replacement = await issue(guard, inside)
     assert (await guard.get(path)).json()["qr_text"] == replacement["qr_text"]
@@ -187,7 +186,7 @@ async def test_a_revoked_pass_is_refused_but_the_visit_can_still_be_closed(harne
     r = await guard.post(f"/api/v1/visits/{inside['id']}/pass/revoke")
     assert r.status_code == 200
     assert (await guard.post(f"/api/v1/visits/{inside['id']}/pass/revoke")).status_code == 200    # idempotent
-    assert await harness.db.audit_logs.count_documents({"action": "PASS_REVOKED"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "PASS_REVOKED"}) == 1
     refused = await scan(guard, qr, "check-out")
     assert refused.status_code == 409 and refused.json()["error"]["code"] == "pass_revoked"
     assert inside["visit_number"] in refused.json()["error"]["message"]
@@ -197,12 +196,12 @@ async def test_a_revoked_pass_is_refused_but_the_visit_can_still_be_closed(harne
 
 async def test_an_expired_pass_is_refused(harness, guard, inside):
     qr = (await issue(guard, inside))["qr_text"]
-    await harness.db.visits.update_one({"_id": ObjectId(inside["id"])},
+    await harness.store.visits.update_one({"_id": record_id(inside["id"])},
                                        {"$set": {"pass.expires_at": datetime.now(UTC) - timedelta(minutes=1)}})
     r = await scan(guard, qr, "check-out")
     assert r.status_code == 409 and r.json()["error"]["code"] == "pass_expired"
     assert (await guard.get(f"/api/v1/visits/{inside['id']}")).json()["status"] == "CHECKED_IN"
-    assert (await harness.db.audit_logs.find_one({"action": "PASS_REJECTED"}))["metadata"]["reason"] == "expired"
+    assert (await harness.store.audit_logs.find_one({"action": "PASS_REJECTED"}))["metadata"]["reason"] == "expired"
 
 
 async def test_pass_validity_is_gate_closing_today(settings, guard, inside):

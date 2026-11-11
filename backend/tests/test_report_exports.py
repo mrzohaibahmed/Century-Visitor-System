@@ -7,12 +7,11 @@ from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from bson import ObjectId
 
 from app.services import entry_denials as denials_svc
 from app.services import report_exports as exports
 from app.services import reports as svc
-from tests.conftest import make_settings
+from tests.conftest import insert_seed, make_settings, new_record_id, record_id, store_of
 from tests.test_entry_denials import ban, lookup
 from tests.test_report_endpoints import denial, kar, visit
 from tests.test_visitors import CNIC, new_visitor
@@ -62,7 +61,7 @@ async def people(harness, admin, guard, directory):  # noqa: F811
     vb = (await check_in(guard, b["id"], directory, host_id=None, unlisted_host_name="Imran Ali",
                          department_id=directory["other_dep"]["id"], reason_code="DELIVERY")).json()
     await admin.post(f"/api/v1/visits/{va['id']}/check-out")
-    users = {u["username"]: u["_id"] async for u in harness.db.users.find()}
+    users = {u["username"]: u["_id"] async for u in harness.store.users.find()}
     return {"a": a, "b": b, "va": va, "vb": vb, "users": users, **directory}
 
 
@@ -72,7 +71,7 @@ async def test_access(harness, admin, guard, report):
     assert (await harness.client().get(f"{BASE}/{report}/export")).status_code == 401
     r = await export(guard, report)
     assert r.status_code == 403 and "text/csv" not in r.headers.get("content-type", "")
-    denied = await harness.db.audit_logs.find_one({"action": "ACCESS_DENIED",
+    denied = await harness.store.audit_logs.find_one({"action": "ACCESS_DENIED",
                                                    "metadata.path": f"{BASE}/{report}/export"})
     assert denied["metadata"]["permission"] in ("reports:export", "reports:view")
     assert (await export(admin, report)).status_code == 200
@@ -135,11 +134,11 @@ def test_times_are_written_in_the_organisation_time_zone():
 
 async def test_quotes_commas_line_breaks_unicode_and_formulas_survive(harness, admin):
     db = harness.db
-    dep = ObjectId()
-    await db.departments.insert_one({"_id": dep, "name": 'R&D, "Labs"\nWest', "is_active": True,
+    dep = new_record_id()
+    await store_of(db).departments.insert_one({"_id": dep, "name": 'R&D, "Labs"\nWest', "is_active": True,
                                      "created_at": datetime.now(UTC), "updated_at": datetime.now(UTC)})
-    formula = ObjectId()
-    await db.departments.insert_one({"_id": formula, "name": "=cmd|' /C calc'!A0", "is_active": True,
+    formula = new_record_id()
+    await store_of(db).departments.insert_one({"_id": formula, "name": "=cmd|' /C calc'!A0", "is_active": True,
                                      "created_at": datetime.now(UTC), "updated_at": datetime.now(UTC)})
     now = datetime.now(UTC) - timedelta(minutes=5)
     await visit(db, now, minutes=1, dep=dep, visitor_name="علی خان", host_name="-Imran", host=None)
@@ -222,7 +221,7 @@ async def test_ranges_are_karachi_days_start_included_end_excluded(harness, admi
 
 async def test_grouped_exports_are_never_cut_to_the_screen_limit(harness, admin, monkeypatch):
     for i in range(3):
-        await visit(harness.db, datetime.now(UTC) - timedelta(minutes=i + 1), minutes=1, host=ObjectId(),
+        await visit(harness.db, datetime.now(UTC) - timedelta(minutes=i + 1), minutes=1, host=new_record_id(),
                     host_name=f"Host {chr(65 + i)}")
     monkeypatch.setattr(svc, "GROUP_LIMIT_MAX", 1)
     assert (await admin.get(f"{BASE}/hosts")).json()["truncated"] is True
@@ -242,7 +241,7 @@ async def test_an_export_over_the_limit_is_refused_not_cut(harness, admin, peopl
     monkeypatch.setattr(exports, "EXPORT_MAX_ROWS", 1)
     r = await export(admin, "visits")
     assert (r.status_code, r.json()["error"]["code"]) == (422, "export_too_large")
-    assert await harness.db.audit_logs.count_documents({"action": "REPORT_EXPORTED"}) == 0
+    assert await harness.store.audit_logs.count_documents({"action": "REPORT_EXPORTED"}) == 0
 
 
 async def test_a_too_broad_search_is_refused_before_the_download(admin, people, monkeypatch):
@@ -282,10 +281,10 @@ async def test_the_denial_export(harness, admin, guard, directory):  # noqa: F81
     await check_in(guard, v["id"], directory)                                   # refused at check-in
     await lookup(guard)                                                        # refused at the lookup
     audit_only = {"timestamp": datetime.now(UTC) - timedelta(minutes=5), "action": "WATCHLIST_MATCH",
-                  "result": "SUCCESS", "actor": {"user_id": ObjectId(), "username": "oldguard"},
-                  "resource": {"type": "visitor", "id": ObjectId(v["id"])},
+                  "result": "SUCCESS", "actor": {"user_id": new_record_id(), "username": "oldguard"},
+                  "resource": {"type": "visitor", "id": record_id(v["id"])},
                   "metadata": {"watchlist_id": entry["_id"], "gate_id": None, "identifier": "CNIC:***********67-1"}}
-    await harness.db.audit_logs.insert_one(audit_only)
+    await harness.store.audit_logs.insert_one(audit_only)
     rows = parse(await export(admin, "denials"))
     assert [r["Source"] for r in rows] == ["lookup", "check_in"]                # audit-only: not a denial yet
     await denials_svc.backfill_from_audit(harness.db)
@@ -300,8 +299,8 @@ async def test_the_denial_export(harness, admin, guard, directory):  # noqa: F81
 
 
 async def test_a_denial_reason_that_looks_like_a_formula_is_neutralised(harness, admin):
-    await harness.db.watchlist.insert_one({"_id": (w := ObjectId()), "identifier": "CNIC:1", "identity": {
-        "type": "CNIC", "number": "1"}, "reason": "@SUM(1+1)", "is_active": False, "created_by": ObjectId(),
+    await insert_seed(harness.store, "watchlist", {"_id": (w := new_record_id()), "identifier": "CNIC:1", "identity": {
+        "type": "CNIC", "number": "1"}, "reason": "@SUM(1+1)", "is_active": False, "created_by": new_record_id(),
         "created_at": datetime.now(UTC)})
     await denial(harness.db, datetime.now(UTC) - timedelta(minutes=1), watchlist_id=w)
     [row] = parse(await export(admin, "denials"))
@@ -311,7 +310,7 @@ async def test_a_denial_reason_that_looks_like_a_formula_is_neutralised(harness,
 # ------------------------------------------------------------------------------------------ audit
 async def test_exports_are_audited_without_their_contents(harness, admin, people):
     await export(admin, "visits", q="alia", status="CHECKED_IN", range="this_week")
-    [entry] = await harness.db.audit_logs.find({"action": "REPORT_EXPORTED"}).to_list(length=5)
+    [entry] = await harness.store.audit_logs.find({"action": "REPORT_EXPORTED"}).to_list(length=5)
     meta = entry["metadata"]
     assert (meta["report"], meta["format"], meta["rows"], meta["filters"]) == ("visits", "csv", 1, ["q", "status"])
     assert meta["range"]["preset"] == "this_week" and entry["actor"]["username"] == "admin"

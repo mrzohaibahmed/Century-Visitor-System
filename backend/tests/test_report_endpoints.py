@@ -5,12 +5,11 @@ import itertools
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from bson import ObjectId
 
 from app.services import entry_denials as denials_svc
 from app.services import reports as svc
 from app.services.visits import VisitFilter
-from tests.conftest import make_settings
+from tests.conftest import insert_seed, make_settings, mongo_only, new_record_id, record_id, store_of
 from tests.test_entry_denials import ban, lookup
 from tests.test_visitors import CNIC, new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
@@ -37,11 +36,11 @@ SEPT = custom(date(2026, 9, 1), date(2026, 9, 30))
 async def visit(db, at, *, minutes=None, visitor=None, visitor_name="Test Visitor", host=None, host_name="Sara Ahmed",
                 dep=None, dep_name="HR", gate=None, by=None, out_by=None, out_at=None) -> dict:
     """One visit checked in at `at`; checked out after `minutes` (or at `out_at`); None: still inside."""
-    by = by or ObjectId()
+    by = by or new_record_id()
     if out_at is None and minutes is not None:
         out_at = at + timedelta(minutes=minutes)
     doc = {
-        "visit_number": f"V-2026-{next(_numbers) + 500000:06d}", "visitor_id": visitor or ObjectId(),
+        "visit_number": f"V-2026-{next(_numbers) + 500000:06d}", "visitor_id": visitor or new_record_id(),
         "host_id": host, "host_unlisted": host is None, "department_id": dep, "gate_id": gate,
         "status": "CHECKED_OUT" if out_at else "CHECKED_IN", "check_in_at": at, "check_out_at": out_at,
         "checked_in_by": by, "checked_out_by": (out_by or by) if out_at else None, "reason_code": "OFFICIAL_MEETING",
@@ -50,13 +49,15 @@ async def visit(db, at, *, minutes=None, visitor=None, visitor_name="Test Visito
                      "gate_name": "Main Gate", "checked_in_by_name": "Guard"},
         "created_at": at, "updated_at": at,
     }
-    doc["_id"] = (await db.visits.insert_one(doc)).inserted_id
+    doc["_id"] = (await insert_seed(store_of(db), "visits", doc)).inserted_id      # references may be made up
     return doc
 
 
 async def denial(db, at, *, source="check_in", reason="WATCHLIST", **fields) -> dict:
-    doc = {"at": at, "reason": reason, "source": source, "source_audit_id": ObjectId()} | fields
-    doc["_id"] = (await db.entry_denials.insert_one(doc, bypass_document_validation=reason != "WATCHLIST")).inserted_id
+    doc = {"at": at, "reason": reason, "source": source, "source_audit_id": new_record_id()} | fields
+    # unchecked: only to plant a reason the schema does not allow yet (the counts must keep them apart)
+    planted = await insert_seed(store_of(db), "entry_denials", doc, unchecked_values=reason != "WATCHLIST")
+    doc["_id"] = planted.inserted_id
     return doc
 
 
@@ -81,14 +82,14 @@ async def test_access(harness, admin, guard, path):
     assert (await harness.client().get(path)).status_code == 401
     r = await guard.get(path)
     assert r.status_code == 403 and r.json()["error"]["code"] == "forbidden"
-    audit = await harness.db.audit_logs.find_one({"action": "ACCESS_DENIED", "metadata.path": path})
+    audit = await harness.store.audit_logs.find_one({"action": "ACCESS_DENIED", "metadata.path": path})
     assert audit["metadata"]["permission"] == "reports:view"
     assert (await admin.get(path)).status_code == 200
 
 
 @pytest.mark.parametrize("path", ENDPOINTS)
 async def test_no_parameter_lets_a_guard_in(harness, guard, path):
-    me = await harness.db.users.find_one({"username": "guard1"})
+    me = await harness.store.users.find_one({"username": "guard1"})
     for params in ({"guard_id": str(me["_id"])}, {"range": "custom", "from": "2026-09-01", "to": "2026-09-30"},
                    {"role": "ADMIN", "user_id": str(me["_id"])}, {"limit": "not-a-number"}):
         assert (await guard.get(path, params=params)).status_code == 403, params
@@ -113,7 +114,7 @@ async def test_invalid_parameters(admin, path, params, code):
 # ------------------------------------------------------------------------------------------ visitor summary
 async def test_visitor_summary_groups_the_range(harness):
     db = harness.db
-    a, b, c = ObjectId(), ObjectId(), ObjectId()
+    a, b, c = new_record_id(), new_record_id(), new_record_id()
     await visit(db, kar(2026, 9, 2, 9), minutes=30, visitor=a, visitor_name="Ali Khan")
     await visit(db, kar(2026, 9, 5, 9), minutes=90, visitor=a, visitor_name="Ali Khan")
     await visit(db, kar(2026, 9, 29, 9), visitor=a, visitor_name="Ali Khan")               # inside now
@@ -135,7 +136,7 @@ async def test_visitor_summary_pages_without_repeats(harness):
     db = harness.db
     ids = []
     for i in range(5):
-        v = ObjectId()
+        v = new_record_id()
         ids.append(v)
         for _ in range(i % 3 + 1):              # ties on the visit count
             await visit(db, kar(2026, 9, 1 + i, 9), minutes=5, visitor=v)
@@ -172,12 +173,12 @@ async def test_visitor_summary_over_http_is_masked(harness, admin, guard, direct
 # ------------------------------------------------------------------------------------------ hosts, departments
 async def test_hosts_and_departments(harness, admin):
     db = harness.db
-    hr = ObjectId((await admin.post("/api/v1/departments", json={"name": "HR"})).json()["id"])
-    stores = ObjectId((await admin.post("/api/v1/departments", json={"name": "Stores"})).json()["id"])
+    hr = record_id((await admin.post("/api/v1/departments", json={"name": "HR"})).json()["id"])
+    stores = record_id((await admin.post("/api/v1/departments", json={"name": "Stores"})).json()["id"])
     sara = (await admin.post("/api/v1/hosts", json={"name": "Sara Ahmed", "department_id": str(hr)})).json()
-    sara = ObjectId(sara["id"])
-    omar = ObjectId((await admin.post("/api/v1/hosts", json={"name": "Omar Latif"})).json()["id"])
-    x, y = ObjectId(), ObjectId()
+    sara = record_id(sara["id"])
+    omar = record_id((await admin.post("/api/v1/hosts", json={"name": "Omar Latif"})).json()["id"])
+    x, y = new_record_id(), new_record_id()
     await visit(db, kar(2026, 9, 2, 9), minutes=60, visitor=x, host=sara, dep=hr)
     await visit(db, kar(2026, 9, 3, 9), visitor=y, host=sara, dep=hr)                          # inside now
     await visit(db, kar(2026, 9, 4, 9), minutes=20, visitor=x, host=sara, dep=stores, dep_name="Stores")
@@ -321,11 +322,11 @@ async def test_denials_from_every_source(harness, admin, guard, directory):  # n
     assert (await check_in(guard, v["id"], directory)).status_code == 403          # check-in refusal
     await lookup(guard)                                                           # lookup refusal
     old = datetime.now(UTC) - timedelta(minutes=5)
-    await harness.db.audit_logs.insert_one({                                     # an older refusal, rebuilt
+    await harness.store.audit_logs.insert_one({                                     # an older refusal, rebuilt
         "timestamp": old, "action": "WATCHLIST_MATCH", "result": "SUCCESS",
-        "actor": {"user_id": ObjectId(), "username": "oldguard"},
-        "resource": {"type": "visitor", "id": ObjectId(v["id"])},
-        "metadata": {"watchlist_id": entry["_id"], "gate_id": ObjectId(directory["gate"]["id"]),
+        "actor": {"user_id": new_record_id(), "username": "oldguard"},
+        "resource": {"type": "visitor", "id": record_id(v["id"])},
+        "metadata": {"watchlist_id": entry["_id"], "gate_id": record_id(directory["gate"]["id"]),
                      "identifier": "CNIC:***********67-1"}})
     assert (await denials_svc.backfill_from_audit(harness.db)).created == 1
 
@@ -345,11 +346,11 @@ async def test_denials_from_every_source(harness, admin, guard, directory):  # n
     for secret in (CNIC, CNIC.replace("-", ""), "03001234567", "Laptop", "reason_note", "source_audit_id", "photo"):
         assert secret not in str(body), secret
     # Audit entries are never listed or counted: only entry_denials.
-    assert await harness.db.audit_logs.count_documents({"action": "WATCHLIST_MATCH"}) == 3
+    assert await harness.store.audit_logs.count_documents({"action": "WATCHLIST_MATCH"}) == 3
 
     by_source = (await admin.get("/api/v1/reports/denials", params={"source": "lookup"})).json()
     assert [i["source"] for i in by_source["items"]] == ["lookup"] and by_source["denied_entries"] == 3
-    me = await harness.db.users.find_one({"username": "guard1"})
+    me = await harness.store.users.find_one({"username": "guard1"})
     mine = (await admin.get("/api/v1/reports/denials", params={"guard_id": str(me["_id"])})).json()
     assert mine["total"] == 2
 
@@ -383,6 +384,7 @@ async def test_denials_page_newest_first(harness):
 
 
 # ------------------------------------------------------------------------------------------ indexes
+@mongo_only           # MongoDB query plans (explain); not a SQL Server check
 async def test_the_report_queries_use_indexes(harness):
     db = harness.db
     for i in range(300):

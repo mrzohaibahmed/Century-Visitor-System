@@ -6,13 +6,12 @@ import itertools
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from bson import ObjectId
 
 from app.core.pagination import encode_sort_cursor
 from app.schemas.reports import VisitReportSort
 from app.services import reports as svc
 from app.services.visits import VisitFilter
-from tests.conftest import make_settings
+from tests.conftest import insert_seed, make_settings, mongo_only, new_record_id, record_id, store_of
 from tests.test_visitors import CNIC, new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
 
@@ -35,10 +34,10 @@ def custom(first: date, last: date):
 async def seed(db, at: datetime, *, minutes: int | None = None, visitor=None, dep=None, dep_name="HR", gate=None,
                by=None, out_by=None, reason="OFFICIAL_MEETING", host=None) -> dict:
     """One visit checked in at `at`; checked out after `minutes` (None: still inside)."""
-    by = by or ObjectId()
+    by = by or new_record_id()
     doc = {
-        "visit_number": f"V-2026-{next(_numbers):06d}", "visitor_id": visitor or ObjectId(),
-        "host_id": host, "host_unlisted": host is None, "department_id": dep or ObjectId(), "gate_id": gate,
+        "visit_number": f"V-2026-{next(_numbers):06d}", "visitor_id": visitor or new_record_id(),
+        "host_id": host, "host_unlisted": host is None, "department_id": dep or new_record_id(), "gate_id": gate,
         "status": "CHECKED_IN" if minutes is None else "CHECKED_OUT", "check_in_at": at,
         "check_out_at": None if minutes is None else at + timedelta(minutes=minutes),
         "checked_in_by": by, "checked_out_by": None if minutes is None else (out_by or by),
@@ -47,7 +46,7 @@ async def seed(db, at: datetime, *, minutes: int | None = None, visitor=None, de
                      "gate_name": "Main Gate", "checked_in_by_name": "Guard"},
         "created_at": at, "updated_at": at,
     }
-    doc["_id"] = (await db.visits.insert_one(doc)).inserted_id
+    doc["_id"] = (await insert_seed(store_of(db), "visits", doc)).inserted_id      # references may be made up
     return doc
 
 
@@ -64,18 +63,18 @@ async def test_guards_are_refused_and_the_attempt_is_audited(harness, guard):
         r = await guard.get(path)
         assert r.status_code == 403 and r.json()["error"]["code"] == "forbidden"
         assert "items" not in r.text and "totals" not in r.text
-    denied = await harness.db.audit_logs.find({"action": "ACCESS_DENIED"}).to_list(length=10)
+    denied = await harness.store.audit_logs.find({"action": "ACCESS_DENIED"}).to_list(length=10)
     assert {(d["metadata"]["path"], d["metadata"]["permission"]) for d in denied} == {
         (OVERVIEW, "reports:view"), (VISITS, "reports:view")}
 
 
 async def test_no_filter_or_parameter_gets_a_guard_in(harness, guard):
-    me = await harness.db.users.find_one({"username": "guard1"})
+    me = await harness.store.users.find_one({"username": "guard1"})
     attempts = [
         {"guard_id": str(me["_id"])},                                       # "only my own visits"
         {"range": "custom", "from": "2026-01-01", "to": "2026-01-31"},
         {"range": "nonsense", "limit": 999, "host_id": "not-an-id"},        # invalid: still 403, not 422
-        {"cursor": encode_sort_cursor("check_in_desc", datetime.now(UTC), ObjectId())},
+        {"cursor": encode_sort_cursor("check_in_desc", datetime.now(UTC), new_record_id())},
         {"role": "ADMIN", "user_id": str(me["_id"])},                       # ignored: identity is the session
     ]
     for params in attempts:
@@ -113,7 +112,7 @@ async def test_invalid_ranges(admin, params, status, code):
     ({"limit": 0}, 422, "validation_error"),
     ({"q": "x" * 101}, 422, "validation_error"),
     ({"cursor": "garbage"}, 400, "invalid_cursor"),
-    ({"cursor": encode_sort_cursor("check_in_asc", datetime.now(UTC), ObjectId())}, 400, "invalid_cursor"),
+    ({"cursor": encode_sort_cursor("check_in_asc", datetime.now(UTC), new_record_id())}, 400, "invalid_cursor"),
     ({"q": {"$gt": ""}}, 200, None),                     # an operator is just text here, never a query
 ])
 async def test_invalid_visit_report_parameters(admin, params, status, code):
@@ -126,14 +125,14 @@ async def test_invalid_visit_report_parameters(admin, params, status, code):
 # ------------------------------------------------------------------------------------------ overview
 async def test_overview_totals_and_series(harness):
     db = harness.db
-    hr, stores = ObjectId(), ObjectId()
-    a, b, c = ObjectId(), ObjectId(), ObjectId()
+    hr, stores = new_record_id(), new_record_id()
+    a, b, c = new_record_id(), new_record_id(), new_record_id()
     await seed(db, kar(2026, 9, 1, 10, 15), minutes=60, visitor=a, dep=hr)
     await seed(db, kar(2026, 9, 1, 10, 45), minutes=120, visitor=b, dep=hr)
     await seed(db, kar(2026, 9, 2, 0, 30), minutes=30, visitor=a, dep=stores, dep_name="Stores")   # after midnight
     await seed(db, kar(2026, 9, 3, 9, 0), visitor=c, dep=stores, dep_name="Stores")               # still inside
     # Outside the range: not counted, except that the one still inside is inside NOW.
-    await seed(db, kar(2026, 8, 31, 23, 59), visitor=ObjectId())
+    await seed(db, kar(2026, 8, 31, 23, 59), visitor=new_record_id())
     await seed(db, kar(2026, 9, 4, 0, 0), minutes=10)
 
     now = kar(2026, 9, 30, 12)
@@ -218,7 +217,7 @@ async def test_custom_ranges_convert_local_days_to_utc(harness):
 
 async def test_renamed_departments_show_their_current_name(harness, admin):
     dep = (await admin.post("/api/v1/departments", json={"name": "HR"})).json()
-    await seed(harness.db, kar(2026, 9, 1, 9), minutes=5, dep=ObjectId(dep["id"]), dep_name="HR")
+    await seed(harness.db, kar(2026, 9, 1, 9), minutes=5, dep=record_id(dep["id"]), dep_name="HR")
     await admin.patch(f"/api/v1/departments/{dep['id']}", json={"name": "People"})
     out = await svc.overview(harness.db, custom(date(2026, 9, 1), date(2026, 9, 1)), now=kar(2026, 9, 2))
     assert out["series"]["by_department"] == [{"id": dep["id"], "name": "People", "count": 1}]
@@ -245,9 +244,9 @@ async def test_the_overview_over_http(harness, admin, guard, directory):  # noqa
 
 # ------------------------------------------------------------------------------------------ security counts
 async def _ban(harness):
-    await harness.db.watchlist.insert_one({
+    await insert_seed(harness.store, "watchlist", {                    # created by a made-up account
         "identifier": f"CNIC:{CNIC}", "identity": {"type": "CNIC", "number": CNIC}, "reason": "Theft of property.",
-        "is_active": True, "expires_at": None, "created_by": ObjectId(), "created_at": datetime.now(UTC)})
+        "is_active": True, "expires_at": None, "created_by": new_record_id(), "created_at": datetime.now(UTC)})
 
 
 async def test_one_refused_entry_counts_once_in_each(harness, admin, guard, directory):  # noqa: F811
@@ -255,8 +254,8 @@ async def test_one_refused_entry_counts_once_in_each(harness, admin, guard, dire
     await _ban(harness)
     assert (await check_in(guard, v["id"], directory)).status_code == 403
     # The sequence behind one refusal: exactly one WATCHLIST_MATCH and one denied VISIT_CHECKED_IN.
-    assert await harness.db.audit_logs.count_documents({"action": {"$in": ["WATCHLIST_MATCH", "VISIT_CHECKED_IN"]}}) \
-        == 2
+    sequence = {"action": {"$in": ["WATCHLIST_MATCH", "VISIT_CHECKED_IN"]}}
+    assert await harness.store.audit_logs.count_documents(sequence) == 2
     now = datetime.now(UTC)
     counts = await svc.security_counts(harness.db, now - timedelta(hours=1), now + timedelta(minutes=1))
     assert (counts.denied_entries, counts.watchlist_matches) == (1, 1)
@@ -276,7 +275,7 @@ async def test_other_refusals_and_events_are_not_counted(harness, admin, guard, 
     await guard.get(OVERVIEW)                                                    # ACCESS_DENIED: not a denial
     now = datetime.now(UTC)
     # A denied check-in for another reason, if one is ever added, is not a watchlist denial.
-    await harness.db.audit_logs.insert_one({"timestamp": now, "action": "VISIT_CHECKED_IN", "result": "DENIED",
+    await harness.store.audit_logs.insert_one({"timestamp": now, "action": "VISIT_CHECKED_IN", "result": "DENIED",
                                             "actor": {}, "resource": {}, "metadata": {"reason": "other"}})
     counts = await svc.security_counts(harness.db, now - timedelta(hours=1), now + timedelta(minutes=1))
     assert (counts.denied_entries, counts.watchlist_matches) == (0, 0)
@@ -286,8 +285,8 @@ async def test_security_counts_follow_the_range(harness):
     # Since step 4 the counts come from entry_denials (see test_security_counts.py).
     inside, before = kar(2026, 9, 2, 0, 30), kar(2026, 9, 1, 23, 50)
     for at in (inside, before):
-        await harness.db.entry_denials.insert_one({"at": at, "reason": "WATCHLIST", "source": "check_in",
-                                                   "source_audit_id": ObjectId()})
+        await harness.store.entry_denials.insert_one({"at": at, "reason": "WATCHLIST", "source": "check_in",
+                                                   "source_audit_id": new_record_id()})
     out = await svc.overview(harness.db, custom(date(2026, 9, 2), date(2026, 9, 2)), now=kar(2026, 9, 3))
     assert (out["totals"]["denied_entries"], out["totals"]["watchlist_matches"]) == (1, 1)
 
@@ -302,7 +301,7 @@ async def people(harness, admin, guard, directory):  # noqa: F811
     vb = (await check_in(guard, b["id"], directory, host_id=None, unlisted_host_name="Imran Ali",
                          department_id=directory["other_dep"]["id"], reason_code="DELIVERY")).json()
     await admin.post(f"/api/v1/visits/{va['id']}/check-out")                 # checked out by the admin
-    users = {u["username"]: u["_id"] async for u in harness.db.users.find()}
+    users = {u["username"]: u["_id"] async for u in harness.store.users.find()}
     return {"a": a, "b": b, "va": va, "vb": vb, "users": users, **directory}
 
 
@@ -418,7 +417,7 @@ async def test_duration_paging_keeps_the_first_pages_moment(harness):
 
 
 async def test_the_total_follows_the_filters_not_the_page(harness):
-    gate = ObjectId()
+    gate = new_record_id()
     for i in range(7):
         await seed(harness.db, kar(2026, 9, 1, 8, i), minutes=5, gate=gate if i % 2 else None)
     f = VisitFilter(start=kar(2026, 9, 1), end=kar(2026, 9, 2), gate_id=gate)
@@ -462,13 +461,14 @@ def _index_names(plan) -> set[str]:
     return found
 
 
+@mongo_only           # MongoDB query plans (explain); SQL Server has its own indexes for these filters
 async def test_the_guard_and_gate_filters_use_their_indexes(harness):
     db = harness.db
-    guards, gates = [ObjectId() for _ in range(10)], [ObjectId() for _ in range(10)]
+    guards, gates = [new_record_id() for _ in range(10)], [new_record_id() for _ in range(10)]
     docs = []
     for i in range(600):
         at = kar(2026, 9, 1) + timedelta(minutes=7 * i)
-        docs.append({"visit_number": f"V-2026-9{i:05d}", "visitor_id": ObjectId(), "status": "CHECKED_OUT",
+        docs.append({"visit_number": f"V-2026-9{i:05d}", "visitor_id": new_record_id(), "status": "CHECKED_OUT",
                      "check_in_at": at, "check_out_at": at + timedelta(minutes=5), "checked_in_by": guards[i % 10],
                      "checked_out_by": guards[(i + 3) % 10], "gate_id": gates[i % 10], "reason_code": "OTHER",
                      "snapshot": {"visitor_name": "X"}, "created_at": at, "updated_at": at})

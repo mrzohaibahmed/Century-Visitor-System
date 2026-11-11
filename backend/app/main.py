@@ -18,7 +18,8 @@ from app.core.errors import install_error_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.core.security import burn_verify_time
-from app.db.client import Database
+from app.db.backend import BACKEND
+from app.db.client import open_database
 from app.services.notifications import EmailWorker, OverstayWorker
 from app.services.photos import check_photo_dir
 
@@ -33,9 +34,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         # Fails the start-up (the service stops with this message in its log) rather than running without photos.
         check_photo_dir(settings, create=settings.environment != "production")
-        app.state.database = Database(settings)
+        app.state.database = open_database(settings)
         log.info("API starting (version %s, environment %s, database %s)",
-                 APP_VERSION, settings.environment, settings.mongo_db)
+                 APP_VERSION, settings.environment, app.state.database.name)
         if not settings.secure_cookies and settings.environment == "production":
             log.warning("Deployment mode http-lan: plain HTTP on a trusted LAN, cookies without Secure; "
                         "traffic between browsers and this server is not encrypted.")
@@ -55,6 +56,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                              on_queued=app.state.email_worker.wake)
             overstay = asyncio.create_task(overstay_worker.run())
             background.append(overstay)
+        if BACKEND == "mssql":
+            # SQL Server has no TTL indexes: expired sessions and rate-limit windows are deleted here.
+            from app.db.sql.cleanup import CleanupWorker
+            background.append(asyncio.create_task(CleanupWorker(app.state.database.db).run()))
         try:
             yield
         finally:

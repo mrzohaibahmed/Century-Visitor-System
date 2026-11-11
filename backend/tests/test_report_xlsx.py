@@ -9,11 +9,10 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 import pytest
-from bson import ObjectId
 
 from app.services import report_exports as exports
 from app.services import reports as svc
-from tests.conftest import make_settings
+from tests.conftest import make_settings, new_record_id, store_of
 from tests.test_entry_denials import ban, lookup
 from tests.test_report_endpoints import visit
 from tests.test_report_exports import HEADERS, REPORTS, parse, people  # noqa: F401 - fixture
@@ -238,8 +237,8 @@ async def test_workbooks_hold_nothing_private(harness, admin, people):  # noqa: 
 
 async def test_formula_like_and_unicode_text_stays_text(harness, admin):
     db = harness.db
-    formula = ObjectId()
-    await db.departments.insert_one({"_id": formula, "name": "=cmd|' /C calc'!A0", "is_active": True,
+    formula = new_record_id()
+    await store_of(db).departments.insert_one({"_id": formula, "name": "=cmd|' /C calc'!A0", "is_active": True,
                                      "created_at": datetime.now(UTC), "updated_at": datetime.now(UTC)})
     await visit(db, datetime.now(UTC) - timedelta(minutes=5), minutes=1, dep=formula, visitor_name="علی خان",
                 host=None, host_name="+Imran")
@@ -271,7 +270,7 @@ async def test_an_export_over_the_limit_is_refused_before_any_file_is_made(harne
     r = await xlsx(admin, "visits")
     assert (r.status_code, r.json()["error"]["code"]) == (422, "export_too_large")
     assert leftover_files() <= before
-    assert await harness.db.audit_logs.count_documents({"action": "REPORT_EXPORTED"}) == 0
+    assert await harness.store.audit_logs.count_documents({"action": "REPORT_EXPORTED"}) == 0
 
 
 async def test_a_failure_while_building_leaves_no_file_and_no_audit(harness, admin, people, monkeypatch):  # noqa: F811
@@ -286,11 +285,11 @@ async def test_a_failure_while_building_leaves_no_file_and_no_audit(harness, adm
     assert r.status_code == 500 and r.headers["content-type"].startswith("application/json")   # never a half file
     assert "database gone" not in r.text                                    # no internal detail
     assert leftover_files() <= before
-    assert await harness.db.audit_logs.count_documents({"action": "REPORT_EXPORTED"}) == 0
+    assert await harness.store.audit_logs.count_documents({"action": "REPORT_EXPORTED"}) == 0
 
 
 async def test_exports_are_audited_as_xlsx(harness, admin, people):  # noqa: F811
     await xlsx(admin, "visits", q="alia", range="this_week")
-    [entry] = await harness.db.audit_logs.find({"action": "REPORT_EXPORTED"}).to_list(length=5)
+    [entry] = await harness.store.audit_logs.find({"action": "REPORT_EXPORTED"}).to_list(length=5)
     assert (entry["metadata"]["format"], entry["metadata"]["rows"], entry["metadata"]["filters"]) == ("xlsx", 1, ["q"])
     assert "alia" not in str(entry).lower()

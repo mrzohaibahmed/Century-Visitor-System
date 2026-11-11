@@ -30,7 +30,7 @@ from pymongo.errors import OperationFailure
 
 from app.core.config import configuration_problems, get_settings
 from app.core.logging import configure_logging
-from app.db.client import Database
+from app.db.client import Database, open_database
 from app.db.migrate import LegacyDatabaseError, apply_schema, current_schema_version
 from app.db.schema import SCHEMA_VERSION
 
@@ -76,12 +76,12 @@ async def _check() -> int:
 async def _backfill_entry_denials() -> int:
     from app.services.entry_denials import backfill_from_audit
     settings = get_settings()
-    database = Database(settings)
+    database = open_database(settings)
     try:
         report = await backfill_from_audit(database.db)
     finally:
         await database.close()
-    print(json.dumps({"database": settings.mongo_db, **report.as_dict()}, indent=2))
+    print(json.dumps({"database": database.name, **report.as_dict()}, indent=2))
     return 1 if report.failed else 0
 
 
@@ -95,7 +95,7 @@ async def _first_admin() -> int:
     from app.services.users import create_user
     settings = get_settings()
     password = settings.first_admin_password.get_secret_value()       # CG_FIRST_ADMIN_PASSWORD (default admin1234)
-    database = Database(settings)
+    database = open_database(settings)
     try:
         if await users_repo.any_exist(database.db):
             print("Accounts already exist: nothing changed.")
@@ -132,7 +132,7 @@ async def _create_admin(username: str, display_name: str, password: str) -> int:
     from app.core.errors import AppError
     from app.core.permissions import Role
     from app.services.users import create_user
-    database = Database(get_settings())
+    database = open_database(get_settings())
     try:
         user = await create_user(database.db, actor=None, meta=None, username=username, display_name=display_name,
                                  role=Role.ADMIN, password=password, must_change_password=False)

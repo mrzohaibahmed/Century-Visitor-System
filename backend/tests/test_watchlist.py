@@ -2,8 +2,8 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from bson import ObjectId
 
+from tests.conftest import record_id
 from tests.test_visitors import CNIC, new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
 
@@ -29,14 +29,14 @@ async def test_admin_adds_an_entry_with_a_normalised_id(harness, admin):
     assert entry["identity"] == {"type": "CNIC", "number": CNIC} and entry["name"] == "ali khan"
     assert entry["status"] == "ACTIVE" and entry["expires_at"] is None
     assert entry["created_by"]["name"] == "Admin" and entry["created_at"]
-    stored = await harness.db.watchlist.find_one({"_id": ObjectId(entry["id"])})
+    stored = await harness.store.watchlist.find_one({"_id": record_id(entry["id"])})
     assert stored["identifier"] == f"CNIC:{CNIC}"
 
 
 async def test_adding_is_audited_without_the_full_id_number(harness, admin):
     entry = (await add(admin)).json()
-    record = await harness.db.audit_logs.find_one({"action": "WATCHLIST_ADDED"})
-    assert record["resource"] == {"type": "watchlist", "id": ObjectId(entry["id"])}
+    record = await harness.store.audit_logs.find_one({"action": "WATCHLIST_ADDED"})
+    assert record["resource"] == {"type": "watchlist", "id": record_id(entry["id"])}
     assert record["actor"]["username"] == "admin" and record["metadata"]["identifier"] == "CNIC:***********67-1"
     assert "1234567" not in str(record)
 
@@ -112,7 +112,7 @@ async def test_edit_reason_and_end_date(harness, admin):
     r = await admin.patch(f"{URL}/{entry['id']}", json={"reason": "Threatened staff.", "expires_at": until})
     assert r.status_code == 200 and r.json()["reason"] == "Threatened staff." and r.json()["expires_at"]
     assert r.json()["status"] == "ACTIVE" and r.json()["updated_at"]
-    record = await harness.db.audit_logs.find_one({"action": "WATCHLIST_UPDATED"})
+    record = await harness.store.audit_logs.find_one({"action": "WATCHLIST_UPDATED"})
     assert record["changes"]["reason"] == {"from": "Theft of company property.", "to": "Threatened staff."}
     cleared = await admin.patch(f"{URL}/{entry['id']}", json={"clear_expiry": True})
     assert cleared.json()["expires_at"] is None
@@ -132,7 +132,7 @@ async def test_expire_now_lifts_the_block_once(harness, admin, guard, directory)
     first = await admin.post(f"{URL}/{entry['id']}/expire")
     second = await admin.post(f"{URL}/{entry['id']}/expire")
     assert first.json()["status"] == "EXPIRED" and second.json()["status"] == "EXPIRED"
-    assert await harness.db.audit_logs.count_documents({"action": "WATCHLIST_EXPIRED"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "WATCHLIST_EXPIRED"}) == 1
     assert (await check_in(guard, visitor["id"], directory)).status_code == 201
 
 
@@ -144,7 +144,7 @@ async def test_disable_needs_a_note_lifts_the_block_and_freezes_the_entry(harnes
     body = r.json()
     assert body["status"] == "DISABLED" and body["disabled_reason"] == "Cleared by the HR inquiry."
     assert body["disabled_by"]["name"] == "Admin" and body["disabled_at"]
-    assert await harness.db.audit_logs.count_documents({"action": "WATCHLIST_DISABLED"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "WATCHLIST_DISABLED"}) == 1
     assert (await check_in(guard, visitor["id"], directory)).status_code == 201
     edit = await admin.patch(f"{URL}/{entry['id']}", json={"reason": "Changed my mind."})
     assert edit.status_code == 409 and edit.json()["error"]["code"] == "entry_disabled"
@@ -157,8 +157,8 @@ async def test_a_person_can_be_listed_again_after_an_entry_ends(harness, admin):
     assert new.status_code == 201
     retired = (await admin.get(f"{URL}/{old['id']}")).json()
     assert retired["status"] == "DISABLED" and retired["disabled_reason"] == "Replaced by a new entry."
-    assert (await harness.db.audit_logs.find_one({"action": "WATCHLIST_ADDED", "resource.id": ObjectId(
-        new.json()["id"])}))["metadata"]["replaces"] == ObjectId(old["id"])
+    assert (await harness.store.audit_logs.find_one({"action": "WATCHLIST_ADDED", "resource.id": record_id(
+        new.json()["id"])}))["metadata"]["replaces"] == record_id(old["id"])
 
 
 async def test_unknown_entries_are_404(admin):
@@ -215,7 +215,7 @@ async def test_guards_cannot_manage_the_watchlist(harness, admin, guard):
                                ("POST", f"{URL}/{entry['id']}/disable", {"note": "abc"})):
         r = await guard.request(method, path, json=body)
         assert r.status_code == 403, (method, path)
-    assert await harness.db.audit_logs.count_documents({"action": "ACCESS_DENIED",
+    assert await harness.store.audit_logs.count_documents({"action": "ACCESS_DENIED",
                                                          "metadata.permission": "watchlist:manage"}) == 6
 
 

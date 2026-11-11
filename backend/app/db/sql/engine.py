@@ -13,6 +13,7 @@ from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.core.config import Settings
+from app.db.sql.errors import describe_error  # noqa: F401 - re-exported (python -m app.db.sql uses it)
 
 APP_NAME = "century-gate-vms-api"
 
@@ -55,11 +56,3 @@ def sync_engine(settings: Settings, *, database: str | None = None, autocommit: 
     """For migrations and admin commands. autocommit: needed for CREATE/ALTER DATABASE."""
     options = {"isolation_level": "AUTOCOMMIT"} if autocommit else {}
     return create_engine(_url("mssql+pyodbc", settings, database), hide_parameters=True, **options)
-
-
-def describe_error(error: BaseException) -> str:
-    """A connection error for logs and the console: the driver's SQLSTATE and type, never the connection
-    string or password (pyodbc messages can quote the server, never the password, but stay careful)."""
-    orig = getattr(error, "orig", error)
-    state = orig.args[0] if getattr(orig, "args", None) and isinstance(orig.args[0], str) else None
-    return f"{type(orig).__name__}{f' (SQLSTATE {state})' if state else ''}"

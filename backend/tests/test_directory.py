@@ -1,7 +1,7 @@
 """Gates, departments, hosts and the session's gate."""
 import pytest
 
-from tests.conftest import GUARD_PASSWORD
+from tests.conftest import GUARD_PASSWORD, unknown_id
 
 pytestmark = pytest.mark.anyio
 
@@ -47,7 +47,7 @@ async def test_host_department_must_exist_and_be_active(admin):
     dep = (await admin.post("/api/v1/departments", json={"name": "Stores"})).json()
     await admin.patch(f"/api/v1/departments/{dep['id']}", json={"is_active": False})
     assert (await admin.post("/api/v1/hosts", json={"name": "Ali Khan", "department_id": dep["id"]})).status_code == 409
-    missing = "0" * 24
+    missing = unknown_id()
     assert (await admin.post("/api/v1/hosts", json={"name": "Ali Khan", "department_id": missing})).status_code == 404
 
 
@@ -59,9 +59,9 @@ async def test_invalid_gate_bodies(admin, body):
 async def test_directory_changes_are_audited(harness, admin):
     gate = (await admin.post("/api/v1/gates", json={"name": "Main Gate"})).json()
     await admin.patch(f"/api/v1/gates/{gate['id']}", json={"name": "North Gate"})
-    updated = await harness.db.audit_logs.find_one({"action": "GATE_UPDATED"})
+    updated = await harness.store.audit_logs.find_one({"action": "GATE_UPDATED"})
     assert updated["changes"]["name"] == {"from": "Main Gate", "to": "North Gate"}
-    assert await harness.db.audit_logs.count_documents({"action": "GATE_CREATED"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "GATE_CREATED"}) == 1
 
 
 # ---------------------------------------------------------------- session gate
@@ -82,7 +82,7 @@ async def test_with_several_gates_the_guard_chooses_one(harness, admin):
     assert me["session"]["gate"] is None and me["session"]["gate_selection_required"] is True
     r = await guard.put("/api/v1/auth/session/gate", json={"gate_id": east["id"]})
     assert r.status_code == 200 and r.json()["session"]["gate"]["name"] == "East Gate"
-    assert await harness.db.audit_logs.count_documents({"action": "GATE_SELECTED"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "GATE_SELECTED"}) == 1
 
 
 async def test_inactive_or_unknown_gates_cannot_be_selected(admin, guard):

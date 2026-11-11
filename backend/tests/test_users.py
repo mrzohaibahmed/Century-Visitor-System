@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.services import audit as audit_module
-from tests.conftest import ADMIN_PASSWORD, GUARD_PASSWORD, TEST_MONGO_URI
+from tests.conftest import ADMIN_PASSWORD, GUARD_PASSWORD, database_env
 
 pytestmark = pytest.mark.anyio
 
@@ -18,7 +18,7 @@ NEW_USER = {"username": "guard2", "display_name": "Gate Two", "role": "GUARD", "
 
 
 async def user_id(harness, username):
-    return str((await harness.db.users.find_one({"username": username}))["_id"])
+    return str((await harness.store.users.find_one({"username": username}))["_id"])
 
 
 # ---------------------------------------------------------------- RBAC
@@ -34,7 +34,7 @@ async def test_guards_cannot_use_user_administration(harness, guard, method, pat
 
 async def test_denied_access_is_audited(harness, guard):
     await guard.get(USERS)
-    entry = await harness.db.audit_logs.find_one({"action": "ACCESS_DENIED"})
+    entry = await harness.store.audit_logs.find_one({"action": "ACCESS_DENIED"})
     assert entry["result"] == "DENIED" and entry["actor"]["username"] == "guard1"
     assert entry["metadata"]["permission"] == "users:manage"
 
@@ -56,7 +56,8 @@ async def test_admin_creates_a_user_who_must_change_the_password(harness, admin)
     assert r.status_code == 201
     body = r.json()
     assert body["username"] == "guard2" and body["role"] == "GUARD" and body["must_change_password"] is True
-    entry = await harness.db.audit_logs.find_one({"action": "USER_CREATED"})
+    # The entry for guard2 (the admin fixture's own account has one too, recorded without an actor).
+    entry = await harness.store.audit_logs.find_one({"action": "USER_CREATED", "actor.username": "admin"})
     assert entry["actor"]["username"] == "admin" and entry["changes"]["role"] == "GUARD"
     assert "Temp-Guard-Pass-1" not in str(entry)
 
@@ -66,7 +67,7 @@ async def test_existing_usernames_are_never_overwritten(harness, admin, username
     await admin.post(USERS, json=NEW_USER)
     r = await admin.post(USERS, json={**NEW_USER, "username": username, "role": "ADMIN"})
     assert r.status_code == 409 and r.json()["error"]["code"] == "username_taken"
-    assert (await harness.db.users.find_one({"username": "guard2"}))["role"] == "GUARD"
+    assert (await harness.store.users.find_one({"username": "guard2"}))["role"] == "GUARD"
 
 
 @pytest.mark.parametrize("change,status", [
@@ -78,7 +79,7 @@ async def test_existing_usernames_are_never_overwritten(harness, admin, username
 async def test_invalid_new_users_are_refused(harness, admin, change, status):
     r = await admin.post(USERS, json={**NEW_USER, **change})
     assert r.status_code == status
-    assert await harness.db.users.find_one({"username": NEW_USER["username"]}) is None
+    assert await harness.store.users.find_one({"username": NEW_USER["username"]}) is None
 
 
 @pytest.mark.parametrize("bad_id", ["not-an-id", "000000000000000000000000"])
@@ -91,7 +92,7 @@ async def test_display_name_change_needs_no_reauthentication(harness, admin, gua
     uid = await user_id(harness, "guard1")
     r = await admin.patch(f"{USERS}/{uid}", json={"display_name": "Main Gate Guard"})
     assert r.status_code == 200 and r.json()["display_name"] == "Main Gate Guard"
-    entry = await harness.db.audit_logs.find_one({"action": "USER_UPDATED"})
+    entry = await harness.store.audit_logs.find_one({"action": "USER_UPDATED"})
     assert entry["changes"]["display_name"]["to"] == "Main Gate Guard"
 
 
@@ -102,7 +103,7 @@ async def test_role_change_requires_the_admins_password(harness, admin, guard, c
     body = {"role": "ADMIN"} | ({"confirm_password": confirm} if confirm else {})
     r = await admin.patch(f"{USERS}/{uid}", json=body)
     assert r.status_code == 403 and r.json()["error"]["code"] == code
-    assert (await harness.db.users.find_one({"username": "guard1"}))["role"] == "GUARD"
+    assert (await harness.store.users.find_one({"username": "guard1"}))["role"] == "GUARD"
 
 
 async def test_role_change_applies_to_the_next_request(harness, admin, guard):
@@ -111,7 +112,7 @@ async def test_role_change_applies_to_the_next_request(harness, admin, guard):
     r = await admin.patch(f"{USERS}/{uid}", json={"role": "ADMIN", "confirm_password": ADMIN_PASSWORD})
     assert r.status_code == 200
     assert (await guard.get(USERS)).status_code == 200            # the role is read from the database each time
-    entry = await harness.db.audit_logs.find_one({"action": "ROLE_CHANGED"})
+    entry = await harness.store.audit_logs.find_one({"action": "ROLE_CHANGED"})
     assert entry["changes"]["role"] == {"from": "GUARD", "to": "ADMIN"}
 
 
@@ -123,7 +124,7 @@ async def test_disabling_signs_the_user_out_and_blocks_login(harness, admin, gua
     assert (await harness.client().login("guard1", GUARD_PASSWORD)).json()["error"]["code"] == "account_disabled"
     await admin.patch(f"{USERS}/{uid}", json={"is_active": True, "confirm_password": ADMIN_PASSWORD})
     assert (await harness.client().login("guard1", GUARD_PASSWORD)).status_code == 200
-    actions = [d["action"] async for d in harness.db.audit_logs.find({"action": {"$in": ["USER_DISABLED",
+    actions = [d["action"] async for d in harness.store.audit_logs.find({"action": {"$in": ["USER_DISABLED",
                                                                                             "USER_ENABLED"]}})]
     assert actions == ["USER_DISABLED", "USER_ENABLED"]
 
@@ -149,7 +150,7 @@ async def test_two_admins_disabling_each_other_at_once_leave_one_admin(harness, 
         admin2.patch(f"{USERS}/{id1}", json={"is_active": False, "confirm_password": "Admin-Two-Pass-1"}),
     )
     statuses = sorted(r.status_code for r in results)
-    assert await harness.db.users.count_documents({"role": "ADMIN", "is_active": True}) == 1
+    assert await harness.store.users.count_documents({"role": "ADMIN", "is_active": True}) == 1
     # One succeeds; the other is refused (last admin) or finds its own session already revoked.
     assert statuses[0] == 200 and statuses[1] in (401, 409)
 
@@ -162,7 +163,7 @@ async def test_user_change_and_audit_record_are_atomic(harness, admin, guard, mo
     monkeypatch.setattr(audit_module, "record", broken_record)
     r = await admin.patch(f"{USERS}/{uid}", json={"display_name": "Should Not Stick"})
     assert r.status_code == 500
-    assert (await harness.db.users.find_one({"username": "guard1"}))["display_name"] != "Should Not Stick"
+    assert (await harness.store.users.find_one({"username": "guard1"}))["display_name"] != "Should Not Stick"
 
 
 # ---------------------------------------------------------------- password reset & unlock
@@ -182,7 +183,7 @@ async def test_reset_password_signs_out_unlocks_and_forces_a_change(harness, adm
     assert (await guard.get(ME)).status_code == 401
     fresh = await harness.logged_in("guard1", "Reset-Guard-Pass-1")        # also proves the lock was cleared
     assert (await fresh.get(ME)).json()["user"]["must_change_password"] is True
-    assert await harness.db.audit_logs.count_documents({"action": "PASSWORD_RESET"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "PASSWORD_RESET"}) == 1
 
 
 async def test_admin_cannot_reset_own_password_through_the_admin_endpoint(harness, admin):
@@ -200,7 +201,7 @@ async def test_unlock(harness, admin, guard):
     r = await admin.post(f"{USERS}/{uid}/unlock")
     assert r.status_code == 200 and r.json()["locked"] is False
     assert (await harness.client().login("guard1", GUARD_PASSWORD)).status_code == 200
-    assert await harness.db.audit_logs.count_documents({"action": "USER_UNLOCKED"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "USER_UNLOCKED"}) == 1
 
 
 async def test_no_password_ever_reaches_the_audit_log(harness, admin, guard):
@@ -209,15 +210,14 @@ async def test_no_password_ever_reaches_the_audit_log(harness, admin, guard):
     await admin.post(f"{USERS}/{uid}/reset-password",
                      json={"new_password": "Reset-Guard-Pass-1", "confirm_password": ADMIN_PASSWORD})
     await admin.patch(f"{USERS}/{uid}", json={"role": "ADMIN", "confirm_password": ADMIN_PASSWORD})
-    everything = str(await harness.db.audit_logs.find({}).to_list(None))
+    everything = str(await harness.store.audit_logs.find({}).to_list(None))
     for secret in (ADMIN_PASSWORD, GUARD_PASSWORD, "Temp-Guard-Pass-1", "Reset-Guard-Pass-1", "argon2"):
         assert secret not in everything
 
 
 # ---------------------------------------------------------------- create-admin CLI
 def run_cli(settings, *args, stdin=""):
-    env = {**os.environ, "CG_MONGO_URI": TEST_MONGO_URI, "CG_MONGO_DB": settings.mongo_db,
-           "CG_ENVIRONMENT": "test"}
+    env = {**os.environ, **database_env(settings), "CG_ENVIRONMENT": "test"}
     api_dir = Path(__file__).resolve().parents[1]
     return subprocess.run([sys.executable, "-m", "app.cli", *args], input=stdin, capture_output=True, text=True,
                           cwd=api_dir, env=env, timeout=60)
@@ -234,5 +234,5 @@ async def test_create_admin_cli(harness, settings):
     c = await harness.logged_in("director", "Chief-Admin-Pass-1")
     me = (await c.get(ME)).json()
     assert me["user"]["role"] == "ADMIN" and me["user"]["must_change_password"] is False
-    entry = await harness.db.audit_logs.find_one({"action": "USER_CREATED"})
+    entry = await harness.store.audit_logs.find_one({"action": "USER_CREATED"})
     assert entry["metadata"] == {"source": "cli"}

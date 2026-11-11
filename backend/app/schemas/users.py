@@ -11,6 +11,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from app.core.permissions import ROLE_PERMISSIONS, Role
+from app.schemas.common import IdStr
 
 Username = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$")]
 DisplayName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
@@ -112,7 +113,7 @@ class MeResponse(BaseModel):
 
 
 class GateSelectRequest(StrictModel):
-    gate_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{24}$")]
+    gate_id: IdStr                 # a record ID of the backend in use (was a 24-hex ObjectId pattern)
 
 
 class UserListResponse(BaseModel):

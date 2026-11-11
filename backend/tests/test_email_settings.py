@@ -12,13 +12,12 @@ import ssl
 import threading
 from pathlib import Path
 
-import bson
 import pytest
 
 from app.core.secrets import generate_key
 from app.services import email_settings as svc
 from app.services import notifications as notifications_svc
-from tests.conftest import make_settings
+from tests.conftest import make_settings, same_database, stored_bytes
 from tests.fake_smtp import FakeSMTP
 from tests.test_notifications import HOST_EMAIL, check_in, directory, only_notification  # noqa: F401 - fixture
 
@@ -29,10 +28,10 @@ SECRET = "Smtp-App-Pass-9 xyz"                     # with a space, like a Gmail 
 
 
 @pytest.fixture
-def settings():
+def settings(settings):
     # No CG_SMTP_* (no environment fallback) unless a test sets it; the background sender is off so
     # the tests drive delivery themselves.
-    return make_settings(secrets_key=generate_key(), email_worker=False)
+    return make_settings(**same_database(settings), secrets_key=generate_key(), email_worker=False)
 
 
 def body(**change) -> dict:
@@ -42,9 +41,9 @@ def body(**change) -> dict:
 
 
 async def stored(harness) -> bytes:
-    """Raw BSON of every settings document and audit entry."""
-    docs = await harness.db.settings.find({}).to_list(None) + await harness.db.audit_logs.find({}).to_list(None)
-    return b"".join(bson.encode(d) for d in docs)
+    """Every stored byte of the settings documents and audit entries (see conftest.stored_bytes)."""
+    docs = await harness.store.settings.find({}).to_list(None) + await harness.store.audit_logs.find({}).to_list(None)
+    return stored_bytes(docs)
 
 
 # ---------------------------------------------------------------- recording stand-in for smtplib
@@ -104,7 +103,7 @@ async def test_only_administrators_can_see_change_or_test_the_settings(harness, 
         assert r.status_code == 403, (method, path)
         assert (await anonymous.request(method, path, json=payload)).status_code in (401, 403)
     assert (await admin.get(URL)).status_code == 200
-    assert await harness.db.settings.find_one({"_id": svc.DOC_ID}) is None
+    assert await harness.store.settings.find_one({"_id": svc.DOC_ID}) is None
 
 
 async def test_changes_need_the_csrf_token(admin):
@@ -131,27 +130,27 @@ async def test_saved_settings_encrypt_the_password_and_never_return_it(harness, 
         assert leaked not in got
     assert SECRET not in r.text and SECRET not in (await admin.get(URL)).text
 
-    doc = await harness.db.settings.find_one({"_id": svc.DOC_ID})
+    doc = await harness.store.settings.find_one({"_id": svc.DOC_ID})
     assert set(doc["password"]) == {"v", "kid", "nonce", "ct"}
     assert SECRET.encode() not in await stored(harness)               # nowhere in plain text, audit included
-    entry = await harness.db.audit_logs.find_one({"action": "EMAIL_SETTINGS_UPDATED"})
+    entry = await harness.store.audit_logs.find_one({"action": "EMAIL_SETTINGS_UPDATED"})
     assert entry["changes"]["password"] == "changed" and entry["changes"]["smtp_host"]["to"] == "smtp.gmail.com"
     assert entry["metadata"] == {"created": True}
 
 
 async def test_the_password_is_kept_unless_it_would_go_somewhere_else(harness, admin):
     await admin.put(URL, json=body())
-    sealed = (await harness.db.settings.find_one({"_id": svc.DOC_ID}))["password"]
+    sealed = (await harness.store.settings.find_one({"_id": svc.DOC_ID}))["password"]
     r = await admin.put(URL, json=body(password=None, from_name="Main Gate", reply_to=None, enabled=False))
     assert r.status_code == 200 and r.json()["password_status"] == "SAVED" and r.json()["enabled"] is False
-    assert (await harness.db.settings.find_one({"_id": svc.DOC_ID}))["password"] == sealed
+    assert (await harness.store.settings.find_one({"_id": svc.DOC_ID}))["password"] == sealed
     for change in ({"smtp_host": "smtp.office365.com"}, {"smtp_port": 465}, {"security": "ssl"},
                    {"username": "other@gmail.com"}):
         r = await admin.put(URL, json=body(password=None, **change))
         assert r.status_code == 422 and r.json()["error"]["code"] == "email_password_required", change
     r = await admin.put(URL, json=body(smtp_host="smtp.office365.com", password="New-Pass-2"))
     assert r.status_code == 200 and r.json()["smtp_host"] == "smtp.office365.com"
-    assert (await harness.db.settings.find_one({"_id": svc.DOC_ID}))["password"] != sealed
+    assert (await harness.store.settings.find_one({"_id": svc.DOC_ID}))["password"] != sealed
 
 
 async def test_the_first_save_with_a_user_name_needs_a_password(admin):
@@ -164,8 +163,8 @@ async def test_no_user_name_means_no_login_and_no_password(harness, admin):
     r = await admin.put(URL, json=body(smtp_host="smtp.company.local", smtp_port=25, security="none",
                                        username=None, password=None))
     assert r.status_code == 200 and r.json()["password_status"] == "NOT_SET" and r.json()["username"] is None
-    assert "password" not in await harness.db.settings.find_one({"_id": svc.DOC_ID})
-    entry = await harness.db.audit_logs.find({"action": "EMAIL_SETTINGS_UPDATED"}).sort("timestamp", -1).to_list(1)
+    assert "password" not in await harness.store.settings.find_one({"_id": svc.DOC_ID})
+    entry = await harness.store.audit_logs.find({"action": "EMAIL_SETTINGS_UPDATED"}).sort("timestamp", -1).to_list(1)
     assert entry[0]["changes"]["password"] == "removed"
     r = await admin.put(URL, json=body(username=None, password=SECRET))
     assert r.status_code == 422 and SECRET not in r.text
@@ -183,7 +182,7 @@ async def test_invalid_settings_are_refused_without_echoing_them(harness, admin,
     r = await admin.put(URL, json=body(**change))
     assert r.status_code == 422, change
     assert SECRET not in r.text and "x" * 257 not in r.text
-    assert await harness.db.settings.find_one({"_id": svc.DOC_ID}) is None
+    assert await harness.store.settings.find_one({"_id": svc.DOC_ID}) is None
 
 
 @pytest.mark.parametrize("host, port", [("smtp.gmail.com", 587), ("smtp.office365.com", 587), ("mail.example.com", 465),
@@ -222,8 +221,8 @@ async def test_deleting_returns_to_the_environment_settings(harness, admin):
     assert (await admin.delete(URL)).status_code == 204
     got = (await admin.get(URL)).json()
     assert (got["source"], got["saved"], got["environment_configured"]) == ("environment", False, True)
-    assert await harness.db.settings.find_one({"_id": svc.DOC_ID}) is None
-    assert await harness.db.audit_logs.count_documents({"action": "EMAIL_SETTINGS_REMOVED"}) == 1
+    assert await harness.store.settings.find_one({"_id": svc.DOC_ID}) is None
+    assert await harness.store.audit_logs.count_documents({"action": "EMAIL_SETTINGS_REMOVED"}) == 1
     assert (await admin.delete(URL)).status_code == 404
 
 
@@ -316,7 +315,7 @@ async def test_the_test_email_is_audited_without_the_recipient_or_password(harne
         await admin.put(URL, json=body(smtp_host="127.0.0.1", smtp_port=smtp.port, security="none",
                                        username=None, password=None))
         await admin.post(f"{URL}/test", json={"to": "someone.private@century.test"})
-    entry = await harness.db.audit_logs.find_one({"action": "EMAIL_TEST_SENT"})
+    entry = await harness.store.audit_logs.find_one({"action": "EMAIL_TEST_SENT"})
     assert entry["result"] == "SUCCESS"
     assert entry["metadata"] == {"reason": None, "source": "database", "recipient_domain": "century.test"}
     assert b"someone.private" not in await stored(harness)
@@ -416,7 +415,7 @@ async def test_host_emails_use_the_saved_settings_without_a_restart(harness, adm
     with FakeSMTP() as first, FakeSMTP() as second:
         await admin.put(URL, json=_plain(first.port))
         await check_in(guard, directory)
-        assert (await only_notification(harness.db))["email"]["status"] == "PENDING"
+        assert (await only_notification(harness.store))["email"]["status"] == "PENDING"
         await notifications_svc.dispatch_due(harness.db, harness.app.state.settings)
         [message] = first.messages
         assert message["To"] == HOST_EMAIL and message["Reply-To"] == "reception@century.test"
@@ -459,7 +458,7 @@ async def test_switched_off_settings_send_nothing_even_with_an_environment(harne
                                                    smtp_security="none", smtp_from="env@century.test")
         await admin.put(URL, json=_plain(environment.port, enabled=False))
         await check_in(guard, directory)
-        n = await only_notification(harness.db)
+        n = await only_notification(harness.store)
         assert (n["email"]["status"], n["email"]["reason"]) == ("NONE", "email_disabled")
         await notifications_svc.dispatch_due(harness.db, harness.app.state.settings)
         assert environment.messages == []
@@ -471,13 +470,13 @@ async def test_switching_off_after_queueing_stops_the_email(harness, admin, guar
         await check_in(guard, directory)
         await admin.put(URL, json=_plain(smtp.port, enabled=False))
         await notifications_svc.dispatch_due(harness.db, harness.app.state.settings)
-        n = await only_notification(harness.db)
+        n = await only_notification(harness.store)
         assert (n["email"]["status"], n["email"]["error"]) == ("FAILED", "email_disabled") and smtp.messages == []
 
 
 async def test_nothing_configured_queues_no_email(harness, guard, directory):  # noqa: F811 - fixture
     await check_in(guard, directory)
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert (n["email"]["status"], n["email"]["reason"]) == ("NONE", "email_disabled")
 
 
@@ -487,7 +486,7 @@ async def test_unreadable_credentials_are_retried_not_leaked(harness, admin, gua
     await check_in(guard, directory)
     harness.app.state.settings = make_settings(secrets_key=generate_key(), email_worker=False)    # key changed
     await notifications_svc.dispatch_due(harness.db, harness.app.state.settings)
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert (n["email"]["status"], n["email"]["error"]) == ("PENDING", "email_credentials_unreadable")
     assert SECRET not in caplog.text and SECRET not in str(n)
 

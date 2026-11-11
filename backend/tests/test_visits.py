@@ -3,10 +3,10 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from bson import ObjectId
 
 from app.core.timeutil import local_today
 from app.services.visits import MONTHS
+from tests.conftest import record_id, unknown_id
 from tests.test_visitors import CNIC, new_visitor
 
 pytestmark = pytest.mark.anyio
@@ -45,7 +45,7 @@ async def test_check_in(harness, settings, guard, directory):
     assert visit["department"]["name"] == "HR"                    # taken from the host
     assert visit["gate"]["name"] == "Main Gate"                   # taken from the session, not the request
     assert visit["checked_in_by"]["name"] == "Guard1" and visit["vehicle_registration"] == "LEA1234"
-    entry = await harness.db.audit_logs.find_one({"action": "VISIT_CHECKED_IN", "result": "SUCCESS"})
+    entry = await harness.store.audit_logs.find_one({"action": "VISIT_CHECKED_IN", "result": "SUCCESS"})
     assert entry["metadata"]["visit_number"] == visit["visit_number"]
 
 
@@ -82,7 +82,7 @@ async def test_two_gates_checking_in_the_same_person_at_once(harness, admin, gua
     v = await new_visitor(guard)
     results = await asyncio.gather(*(check_in(c, v["id"], directory) for c in (admin, guard, admin, guard)))
     assert sorted(r.status_code for r in results) == [201, 409, 409, 409]
-    assert await harness.db.visits.count_documents({"status": "CHECKED_IN"}) == 1
+    assert await harness.store.visits.count_documents({"status": "CHECKED_IN"}) == 1
 
 
 async def test_visit_numbers_are_unique_and_gap_free_under_load(harness, settings, guard, directory):
@@ -96,25 +96,27 @@ async def test_visit_numbers_are_unique_and_gap_free_under_load(harness, setting
 
 async def test_watchlist_blocks_entry_in_any_id_format(harness, guard, directory):
     v = await new_visitor(guard, number="3520112345671")
-    await harness.db.watchlist.insert_one({
+    creator = (await harness.store.users.find_one({"username": "guard1"}))["_id"]   # an existing account
+    await harness.store.watchlist.insert_one({
         "identifier": f"CNIC:{CNIC}", "identity": {"type": "CNIC", "number": CNIC}, "reason": "Theft of property.",
-        "is_active": True, "expires_at": None, "created_by": ObjectId(), "created_at": datetime.now(UTC)})
+        "is_active": True, "expires_at": None, "created_by": creator, "created_at": datetime.now(UTC)})
     r = await check_in(guard, v["id"], directory)
     assert r.status_code == 403 and r.json()["error"]["code"] == "entry_denied"
     assert "Theft of property." in r.json()["error"]["message"]
-    assert await harness.db.visits.count_documents({}) == 0
-    match = await harness.db.audit_logs.find_one({"action": "WATCHLIST_MATCH"})
+    assert await harness.store.visits.count_documents({}) == 0
+    match = await harness.store.audit_logs.find_one({"action": "WATCHLIST_MATCH"})
     assert match["actor"]["username"] == "guard1" and "1234567" not in str(match)
-    assert await harness.db.audit_logs.count_documents({"action": "VISIT_CHECKED_IN", "result": "DENIED"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "VISIT_CHECKED_IN", "result": "DENIED"}) == 1
 
 
 @pytest.mark.parametrize("entry", [{"is_active": False, "expires_at": None},
                                    {"is_active": True, "expires_at": datetime.now(UTC) - timedelta(days=1)}])
 async def test_inactive_or_expired_bans_do_not_block(harness, guard, directory, entry):
     v = await new_visitor(guard)
-    await harness.db.watchlist.insert_one({
+    creator = (await harness.store.users.find_one({"username": "guard1"}))["_id"]   # an existing account
+    await harness.store.watchlist.insert_one({
         "identifier": f"CNIC:{CNIC}", "identity": {"type": "CNIC", "number": CNIC}, "reason": "Old.",
-        "created_by": ObjectId(), "created_at": datetime.now(UTC), **entry})
+        "created_by": creator, "created_at": datetime.now(UTC), **entry})
     assert (await check_in(guard, v["id"], directory)).status_code == 201
 
 
@@ -174,7 +176,7 @@ async def test_check_out_is_idempotent_and_audited_once(harness, guard, director
     assert first.json()["visit"]["checkout_method"] == "MANUAL" and first.json()["visit"]["checkout_gate"]["name"]
     assert second.status_code == 200 and second.json()["already_checked_out"] is True
     assert second.json()["visit"]["check_out_at"] == first.json()["visit"]["check_out_at"]
-    assert await harness.db.audit_logs.count_documents({"action": "VISIT_CHECKED_OUT"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "VISIT_CHECKED_OUT"}) == 1
 
 
 async def test_concurrent_check_outs_record_one_departure(harness, admin, guard, directory):
@@ -182,7 +184,7 @@ async def test_concurrent_check_outs_record_one_departure(harness, admin, guard,
     visit = (await check_in(guard, v["id"], directory)).json()
     results = await asyncio.gather(*(c.post(f"/api/v1/visits/{visit['id']}/check-out") for c in (admin, guard, admin)))
     assert sorted(r.json()["already_checked_out"] for r in results) == [False, True, True]
-    assert await harness.db.audit_logs.count_documents({"action": "VISIT_CHECKED_OUT"}) == 1
+    assert await harness.store.audit_logs.count_documents({"action": "VISIT_CHECKED_OUT"}) == 1
 
 
 async def test_check_out_by_visit_number_or_id_number(guard, directory):
@@ -257,7 +259,7 @@ async def test_date_filters_use_the_organisation_time_zone(harness, guard, direc
     v = await new_visitor(guard)
     visit = (await check_in(guard, v["id"], directory)).json()
     # 20:30 UTC on 24 Sept is 01:30 on 25 Sept in Asia/Karachi (UTC+5).
-    await harness.db.visits.update_one({"_id": ObjectId(visit["id"])},
+    await harness.store.visits.update_one({"_id": record_id(visit["id"])},
                                        {"$set": {"check_in_at": datetime(2026, 9, 24, 20, 30, tzinfo=UTC)}})
     on_25 = (await guard.get("/api/v1/visits", params={"from": "2026-09-25", "to": "2026-09-25"})).json()["items"]
     on_24 = (await guard.get("/api/v1/visits", params={"from": "2026-09-24", "to": "2026-09-24"})).json()["items"]
@@ -290,14 +292,14 @@ async def test_history_gate_filter_and_unmatched_searches(guard, directory):
         return [i["visit_number"] for i in r.json()["items"]]
 
     assert await numbers(gate_id=directory["gate"]["id"]) == [visit["visit_number"]]
-    assert await numbers(gate_id="0" * 24) == []
+    assert await numbers(gate_id=unknown_id()) == []
     assert await numbers(q="V-2020-999999") == []                     # a visit number that does not exist
     assert await numbers(q="nobody by this name") == []
     assert await numbers(q="   ") == [visit["visit_number"]]           # blank search: no filter
 
 
 async def test_history_with_a_malformed_id_filter_is_404(guard, directory):
-    # Existing behaviour, kept as it is: a filter id that is not an ObjectId answers "not found".
+    # Existing behaviour, kept as it is: a filter id that is not a record ID answers "not found".
     for field in ("host_id", "department_id", "gate_id"):
         r = await guard.get("/api/v1/visits", params={field: "not-an-id"})
         assert r.status_code == 404 and r.json()["error"]["code"] == "not_found", field

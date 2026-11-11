@@ -6,14 +6,11 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from bson import ObjectId
-from pymongo import MongoClient
-from pymongo.errors import DuplicateKeyError
 
 from app.core.config import Settings
 from app.services import email as email_svc
 from app.services import notifications as svc
-from tests.conftest import TEST_MONGO_URI, make_settings
+from tests.conftest import make_settings, new_record_id, raw_database_errors, record_id, same_database, unknown_id
 from tests.fake_smtp import FakeSMTP
 from tests.test_visitors import CNIC, new_visitor
 
@@ -32,20 +29,19 @@ SMTP_PORT = _free_port()          # the fake server listens here only in the tes
 
 
 @pytest.fixture
-def settings():
+def settings(settings):
     """E-mail switched on (plain SMTP to the local fake server); the background sender is off so each
-    test drives delivery itself with dispatch_due()."""
-    s = make_settings(smtp_host="127.0.0.1", smtp_port=SMTP_PORT, smtp_security="none",
-                      smtp_from="Century Gate VMS <vms@century.test>", email_worker=False)
-    yield s
-    MongoClient(TEST_MONGO_URI).drop_database(s.mongo_db)
+    test drives delivery itself with dispatch_due(). The shared settings fixture provides the test
+    database (and cleans it up)."""
+    return make_settings(**same_database(settings), smtp_host="127.0.0.1", smtp_port=SMTP_PORT,
+                         smtp_security="none", smtp_from="Century Gate VMS <vms@century.test>", email_worker=False)
 
 
 @pytest.fixture
 async def directory(harness, admin):
     gate = (await admin.post("/api/v1/gates", json={"name": "Main Gate"})).json()
     dep = (await admin.post("/api/v1/departments", json={"name": "HR"})).json()
-    me = await harness.db.users.find_one({"username": "admin"})
+    me = await harness.store.users.find_one({"username": "admin"})
     host = (await admin.post("/api/v1/hosts", json={"name": "Sara Ahmed", "department_id": dep["id"],
                                                     "email": HOST_EMAIL, "linked_user_id": str(me["_id"])})).json()
     return {"gate": gate, "dep": dep, "host": host, "admin_id": me["_id"]}
@@ -69,10 +65,10 @@ async def only_notification(db):
 async def test_check_in_creates_one_notification_for_the_linked_account_and_the_host_email(harness, guard,
                                                                                             directory):
     visit = await check_in(guard, directory)
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert n["event_key"] == f"HOST_VISITOR_ARRIVAL:{visit['id']}" and n["type"] == "HOST_VISITOR_ARRIVAL"
     assert n["recipient_user_id"] == directory["admin_id"] and n["read_at"] is None
-    assert n["visit_id"] == ObjectId(visit["id"]) and n["host_id"] == ObjectId(directory["host"]["id"])
+    assert n["visit_id"] == record_id(visit["id"]) and n["host_id"] == record_id(directory["host"]["id"])
     assert n["email"]["status"] == "PENDING" and n["email"]["to"] == HOST_EMAIL and n["email"]["attempts"] == 0
     assert n["data"]["visitor_name"] == "Ali Khan" and n["data"]["gate_name"] == "Main Gate"
     assert n["data"]["department_name"] == "HR" and CNIC not in str(n) and "0300" not in str(n)
@@ -90,7 +86,7 @@ async def test_partial_hosts(harness, admin, guard, directory, host_fields, reci
         body["linked_user_id"] = str(directory["admin_id"])
     host = (await admin.post("/api/v1/hosts", json=body)).json()
     await check_in(guard, {**directory, "host": host})
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert (n["recipient_user_id"] is not None) is recipient and n["email"]["status"] == email_status
     if email_status == "NONE":
         assert n["email"]["reason"] == "no_address" and n["email"]["to"] is None
@@ -100,7 +96,7 @@ async def test_nobody_to_tell_means_no_notification(harness, admin, guard, direc
     body = {"name": "Imran Ali", "department_id": directory["dep"]["id"]}
     host = (await admin.post("/api/v1/hosts", json=body)).json()
     await check_in(guard, {**directory, "host": host})
-    assert await harness.db.notifications.count_documents({}) == 0
+    assert await harness.store.notifications.count_documents({}) == 0
 
 
 async def test_unlisted_host_is_never_emailed_and_the_visit_stays_flagged(harness, guard, directory):
@@ -108,35 +104,38 @@ async def test_unlisted_host_is_never_emailed_and_the_visit_stays_flagged(harnes
     r = await guard.post("/api/v1/visits", json={"visitor_id": visitor["id"], "unlisted_host_name": "Imran Ali",
                                                  "department_id": directory["dep"]["id"], "reason_code": "DELIVERY"})
     assert r.status_code == 201 and r.json()["host_unlisted"] is True
-    assert await harness.db.notifications.count_documents({}) == 0
+    assert await harness.store.notifications.count_documents({}) == 0
 
 
 async def test_a_disabled_linked_account_gets_nothing_in_app(harness, admin, guard, directory):
-    guard_user = await harness.db.users.find_one({"username": "guard1"})
+    guard_user = await harness.store.users.find_one({"username": "guard1"})
     await admin.patch(f"/api/v1/hosts/{directory['host']['id']}", json={"linked_user_id": str(guard_user["_id"])})
-    await harness.db.users.update_one({"_id": guard_user["_id"]}, {"$set": {"is_active": False}})
+    await harness.store.users.update_one({"_id": guard_user["_id"]}, {"$set": {"is_active": False}})
     await check_in(admin, directory)
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert n["recipient_user_id"] is None and n["email"]["status"] == "PENDING"
 
 
 async def test_email_switched_off_records_why(harness, guard, directory):
-    visit = {"_id": ObjectId(), "visitor_id": ObjectId(), "check_in_at": datetime.now(UTC), "reason_code": "INTERVIEW",
-             "snapshot": {"visitor_name": "Ali Khan", "host_name": "Sara Ahmed"}}
-    host = {"_id": ObjectId(), "email": HOST_EMAIL}
+    # A real visit with an unlisted host (so its check-in notified nobody) and the real host record.
+    checked_in = await check_in(guard, directory, host_id=None, unlisted_host_name="Visiting Host",
+                                department_id=directory["dep"]["id"])
+    visit = await harness.store.visits.find_one({"_id": record_id(checked_in["id"])})
+    host = {"_id": record_id(directory["host"]["id"]), "email": HOST_EMAIL}
     doc = await svc.create_host_arrival(harness.db, make_settings(), visit, host, session=None)
     assert doc["email"] == {"status": "NONE", "to": None, "attempts": 0, "reason": "email_disabled"}
 
 
 async def test_one_notification_per_visit_is_enforced_by_the_database(harness, guard, directory):
     visit = await check_in(guard, directory)
-    n = await only_notification(harness.db)
-    with pytest.raises(DuplicateKeyError):
-        await harness.db.notifications.insert_one({**n, "_id": ObjectId()})
+    n = await only_notification(harness.store)
+    duplicate, _ = raw_database_errors()
+    with pytest.raises(duplicate):
+        await harness.store.notifications.insert_one({**n, "_id": new_record_id()})
     # Repeating the check-in request does not create a second visit or notification.
     again = await guard.post("/api/v1/visits", json={"visitor_id": visit["visitor"]["id"],
                                                      "host_id": directory["host"]["id"], "reason_code": "INTERVIEW"})
-    assert again.status_code == 409 and await harness.db.notifications.count_documents({}) == 1
+    assert again.status_code == 409 and await harness.store.notifications.count_documents({}) == 1
 
 
 async def test_notification_and_visit_are_all_or_nothing(harness, guard, directory, monkeypatch):
@@ -147,7 +146,7 @@ async def test_notification_and_visit_are_all_or_nothing(harness, guard, directo
     r = await guard.post("/api/v1/visits", json={"visitor_id": visitor["id"], "host_id": directory["host"]["id"],
                                                  "reason_code": "INTERVIEW"})
     assert r.status_code == 500
-    assert await harness.db.visits.count_documents({}) == 0          # no visit without its notification
+    assert await harness.store.visits.count_documents({}) == 0          # no visit without its notification
 
 
 # ---------------------------------------------------------------------------------------------- e-mail
@@ -156,7 +155,7 @@ async def test_check_in_succeeds_while_the_mail_server_is_down(harness, settings
     await check_in(guard, directory)                                     # nothing listens on SMTP_PORT
     assert time.perf_counter() - started < 5
     assert await svc.dispatch_due(harness.db, settings) == 1
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert n["email"]["status"] == "PENDING" and n["email"]["attempts"] == 1
     assert n["email"]["error"] == "ConnectionRefusedError"
     retry_in = n["email"]["next_attempt_at"] - datetime.now(UTC)
@@ -177,7 +176,7 @@ async def test_email_is_sent_once_with_safe_content(harness, settings, guard, di
     raw = message.as_string()
     for secret in (CNIC, CNIC.replace("-", ""), visit["id"], visit["visitor"]["id"], "0300"):
         assert secret not in raw
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert n["email"]["status"] == "SENT" and n["email"]["sent_at"] and n["email"]["attempts"] == 1
 
 
@@ -192,7 +191,7 @@ async def _department_email(admin, directory, address=DEPT_EMAIL):
 async def test_the_department_is_emailed_too(harness, settings, admin, guard, directory):
     await _department_email(admin, directory)
     visit = await check_in(guard, directory)
-    dept = await harness.db.notifications.find_one({"type": "DEPARTMENT_VISITOR_ARRIVAL"})
+    dept = await harness.store.notifications.find_one({"type": "DEPARTMENT_VISITOR_ARRIVAL"})
     assert dept["event_key"] == f"DEPARTMENT_VISITOR_ARRIVAL:{visit['id']}" and dept["recipient_user_id"] is None
     assert dept["email"]["status"] == "PENDING" and dept["email"]["to"] == DEPT_EMAIL
     with FakeSMTP(port=SMTP_PORT) as smtp:
@@ -215,7 +214,7 @@ async def test_the_department_is_emailed_for_an_unlisted_host(harness, admin, gu
     r = await guard.post("/api/v1/visits", json={"visitor_id": visitor["id"], "unlisted_host_name": "Imran Ali",
                                                  "department_id": directory["dep"]["id"], "reason_code": "DELIVERY"})
     assert r.status_code == 201
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert n["type"] == "DEPARTMENT_VISITOR_ARRIVAL" and n["email"]["to"] == DEPT_EMAIL
     assert n["host_id"] is None and n["data"]["host_name"] == "Imran Ali"
 
@@ -223,15 +222,15 @@ async def test_the_department_is_emailed_for_an_unlisted_host(harness, admin, gu
 async def test_the_department_is_not_emailed_twice_at_the_hosts_address(harness, admin, guard, directory):
     await _department_email(admin, directory, HOST_EMAIL.upper())
     await check_in(guard, directory)
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert n["type"] == "HOST_VISITOR_ARRIVAL"
 
 
 async def test_no_department_email_when_email_is_switched_off(harness, admin, guard, directory):
     await _department_email(admin, directory)
-    visit = {"_id": ObjectId(), "visitor_id": ObjectId(), "check_in_at": datetime.now(UTC), "reason_code": "INTERVIEW",
-             "snapshot": {"visitor_name": "Ali Khan", "host_name": "Sara Ahmed"}}
-    department = {"_id": ObjectId(), "name": "HR", "notification_email": DEPT_EMAIL}
+    visit = {"_id": new_record_id(), "visitor_id": new_record_id(), "check_in_at": datetime.now(UTC),
+             "reason_code": "INTERVIEW", "snapshot": {"visitor_name": "Ali Khan", "host_name": "Sara Ahmed"}}
+    department = {"_id": new_record_id(), "name": "HR", "notification_email": DEPT_EMAIL}
     assert await svc.create_department_arrival(harness.db, make_settings(), visit, department, None,
                                                session=None) is None
 
@@ -240,7 +239,7 @@ async def test_a_refused_recipient_is_not_retried(harness, settings, guard, dire
     await check_in(guard, directory)
     with FakeSMTP(mode="reject", port=SMTP_PORT):
         await svc.dispatch_due(harness.db, settings)
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert n["email"]["status"] == "FAILED" and n["email"]["error"] == "SMTPRecipientsRefused 550"
     assert n["email"]["next_attempt_at"] is None
 
@@ -249,7 +248,7 @@ async def test_a_temporary_refusal_is_retried(harness, settings, guard, director
     await check_in(guard, directory)
     with FakeSMTP(mode="tempfail", port=SMTP_PORT):
         await svc.dispatch_due(harness.db, settings)
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert n["email"]["status"] == "PENDING" and n["email"]["error"] == "SMTPRecipientsRefused 451"
 
 
@@ -263,10 +262,10 @@ async def test_retries_are_bounded_with_growing_delays(harness, settings, guard,
 
     delays = []
     for _ in range(10):
-        await harness.db.notifications.update_many({"email.status": "PENDING"},
+        await harness.store.notifications.update_many({"email.status": "PENDING"},
                                                    {"$set": {"email.next_attempt_at": datetime.now(UTC)}})
         await svc.dispatch_due(harness.db, settings, send=failing)
-        n = await only_notification(harness.db)
+        n = await only_notification(harness.store)
         if n["email"]["status"] == "PENDING":
             delays.append(round((n["email"]["next_attempt_at"] - n["email"]["last_attempt_at"]).total_seconds() / 60))
     assert len(calls) == svc.MAX_ATTEMPTS == 5
@@ -277,11 +276,11 @@ async def test_retries_are_bounded_with_growing_delays(harness, settings, guard,
 async def test_an_interrupted_send_is_never_repeated(harness, settings, guard, directory):
     await check_in(guard, directory)
     past = datetime.now(UTC) - timedelta(minutes=5)
-    await harness.db.notifications.update_one({}, {"$set": {"email.status": "SENDING", "email.lease_until": past,
+    await harness.store.notifications.update_one({}, {"$set": {"email.status": "SENDING", "email.lease_until": past,
                                                             "email.attempts": 1}})
     sent = []
     await svc.dispatch_due(harness.db, settings, send=lambda *a: sent.append(1))
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert sent == [] and n["email"]["status"] == "FAILED" and n["email"]["error"] == "interrupted"
 
 
@@ -294,39 +293,36 @@ async def test_the_smtp_password_never_reaches_logs_or_the_database(harness, gua
     caplog.set_level(logging.DEBUG)
     with FakeSMTP(port=SMTP_PORT):                       # offers no AUTH: the login attempt fails
         await svc.dispatch_due(harness.db, configured)
-    n = await only_notification(harness.db)
+    n = await only_notification(harness.store)
     assert n["email"]["error"] == "SMTPNotSupportedError"
     assert secret not in caplog.text and secret not in str(n)
     assert HOST_EMAIL not in caplog.text                 # addresses are not logged either
 
 
-async def test_the_background_sender_emails_right_after_check_in(harness):
+async def test_the_background_sender_emails_right_after_check_in(harness, settings):
     from app.main import create_app
+    from tests.conftest import ADMIN_PASSWORD, AuthHarness, prepare_schema
     with FakeSMTP() as smtp:
-        s = make_settings(smtp_host="127.0.0.1", smtp_port=smtp.port, smtp_security="none",
-                          smtp_from="vms@century.test", email_worker=True)
+        # A second app on the same test database, with the background sender switched on.
+        s = make_settings(**same_database(settings), smtp_host="127.0.0.1", smtp_port=smtp.port,
+                          smtp_security="none", smtp_from="vms@century.test", email_worker=True)
         app = create_app(s)
-        try:
-            async with app.router.lifespan_context(app):
-                from app.db.migrate import apply_schema
-                from tests.conftest import ADMIN_PASSWORD, AuthHarness
-                await apply_schema(app.state.database.db)
-                h = AuthHarness(app, app.state.database.db)
-                await h.create_user("admin", ADMIN_PASSWORD, "ADMIN")
-                c = await h.logged_in("admin", ADMIN_PASSWORD)
-                await c.post("/api/v1/gates", json={"name": "Main Gate"})
-                dep = (await c.post("/api/v1/departments", json={"name": "HR"})).json()
-                host = (await c.post("/api/v1/hosts", json={"name": "Sara Ahmed", "email": HOST_EMAIL,
-                                                            "department_id": dep["id"]})).json()
-                await check_in(c, {"host": host})
-                for _ in range(50):
-                    if smtp.messages:
-                        break
-                    await asyncio.sleep(0.1)
-                assert len(smtp.messages) == 1                   # woken by the check-in, not the 30 s timer
-                await h.close()
-        finally:
-            MongoClient(TEST_MONGO_URI).drop_database(s.mongo_db)
+        async with app.router.lifespan_context(app):
+            await prepare_schema(app.state.database)
+            h = AuthHarness(app, app.state.database.db)
+            await h.create_user("admin", ADMIN_PASSWORD, "ADMIN")
+            c = await h.logged_in("admin", ADMIN_PASSWORD)
+            await c.post("/api/v1/gates", json={"name": "Main Gate"})
+            dep = (await c.post("/api/v1/departments", json={"name": "HR"})).json()
+            host = (await c.post("/api/v1/hosts", json={"name": "Sara Ahmed", "email": HOST_EMAIL,
+                                                        "department_id": dep["id"]})).json()
+            await check_in(c, {"host": host})
+            for _ in range(50):
+                if smtp.messages:
+                    break
+                await asyncio.sleep(0.1)
+            assert len(smtp.messages) == 1                   # woken by the check-in, not the 30 s timer
+            await h.close()
 
 
 # ---------------------------------------------------------------------------------------------- in-app API
@@ -356,7 +352,7 @@ async def test_mark_read_is_idempotent_and_private(harness, admin, guard, direct
     assert first.json()["read"] is True and second.json()["read_at"] == first.json()["read_at"]
     assert (await admin.get(LIST)).json()["unread_count"] == 0
     assert (await admin.get(LIST, params={"unread_only": "true"})).json()["items"] == []
-    for bad in ("nope", "0" * 24):
+    for bad in ("nope", unknown_id()):
         assert (await admin.post(f"{LIST}/{bad}/read")).status_code == 404
 
 
@@ -405,12 +401,12 @@ async def test_admin_links_and_unlinks_an_app_account(harness, admin, directory)
     assert r.status_code == 200 and r.json()["linked_user"] == {"id": guard_user_id, "name": "Guard2"}
     r = await admin.patch(f"/api/v1/hosts/{host['id']}", json={"clear_linked_user": True})
     assert r.json()["linked_user"] is None
-    record = await harness.db.audit_logs.find({"action": "HOST_UPDATED"}).sort("timestamp", -1).to_list(length=1)
+    record = await harness.store.audit_logs.find({"action": "HOST_UPDATED"}).sort("timestamp", -1).to_list(length=1)
     assert record[0]["changes"]["linked_user_id"] == {"from": guard_user_id, "to": None}
 
 
-@pytest.mark.parametrize("body", [{"linked_user_id": "0" * 24}, {"linked_user_id": "not-an-id"},
-                                  {"linked_user_id": str(ObjectId()), "clear_linked_user": True},
+@pytest.mark.parametrize("body", [{"linked_user_id": unknown_id()}, {"linked_user_id": "not-an-id"},
+                                  {"linked_user_id": unknown_id(), "clear_linked_user": True},
                                   {"clear_linked_user": False}])
 async def test_invalid_links_are_refused(admin, directory, body):
     r = await admin.patch(f"/api/v1/hosts/{directory['host']['id']}", json=body)
@@ -419,7 +415,7 @@ async def test_invalid_links_are_refused(admin, directory, body):
 
 async def test_a_disabled_account_cannot_be_linked(harness, admin, directory):
     user = await harness.create_user("oldguard", "Guard-Test-Pass-3", "GUARD")
-    await harness.db.users.update_one({"_id": user["_id"]}, {"$set": {"is_active": False}})
+    await harness.store.users.update_one({"_id": user["_id"]}, {"$set": {"is_active": False}})
     r = await admin.patch(f"/api/v1/hosts/{directory['host']['id']}", json={"linked_user_id": str(user["_id"])})
     assert r.status_code == 422 and r.json()["error"]["code"] == "invalid_linked_user"
 
@@ -452,15 +448,15 @@ async def test_overstay_emails_host_and_department_once(harness, settings, admin
     visit = await check_in(guard, directory)
     await guard.post(f"/api/v1/visits/{visit['id']}/pass")
     # Still inside, badge already past gate closing → overstay notices.
-    await harness.db.visits.update_one(
-        {"_id": ObjectId(visit["id"])},
+    await harness.store.visits.update_one(
+        {"_id": record_id(visit["id"])},
         {"$set": {"pass.expires_at": datetime.now(UTC) - timedelta(minutes=1)}})
 
     assert await svc.queue_overstays(harness.db, settings) == 2
     assert await svc.queue_overstays(harness.db, settings) == 0          # idempotent
 
-    host_n = await harness.db.notifications.find_one({"type": "HOST_VISITOR_OVERSTAY"})
-    dept_n = await harness.db.notifications.find_one({"type": "DEPARTMENT_VISITOR_OVERSTAY"})
+    host_n = await harness.store.notifications.find_one({"type": "HOST_VISITOR_OVERSTAY"})
+    dept_n = await harness.store.notifications.find_one({"type": "DEPARTMENT_VISITOR_OVERSTAY"})
     assert host_n["event_key"] == f"HOST_VISITOR_OVERSTAY:{visit['id']}"
     assert host_n["email"]["status"] == "PENDING" and host_n["email"]["to"] == HOST_EMAIL
     assert dept_n["email"]["to"] == DEPT_EMAIL and dept_n["recipient_user_id"] is None
@@ -487,4 +483,4 @@ async def test_no_overstay_while_the_badge_is_still_valid(harness, settings, gua
     visit = await check_in(guard, directory)
     await guard.post(f"/api/v1/visits/{visit['id']}/pass")
     assert await svc.queue_overstays(harness.db, settings) == 0
-    assert await harness.db.notifications.count_documents({"type": {"$regex": "OVERSTAY"}}) == 0
+    assert await harness.store.notifications.count_documents({"type": {"$regex": "OVERSTAY"}}) == 0
