@@ -1,26 +1,38 @@
 """First-run account (python -m app.cli first-admin, run by start-dev.bat and production.ps1)."""
-import uuid
-
 import pytest
-from pymongo import MongoClient
+from sqlalchemy import select
 
 from app import cli
 from app.core.config import get_settings
+from app.db.sql.engine import sync_engine
 from app.main import create_app
-from tests.conftest import TEST_MONGO_URI, ApiClient, make_settings
+from app.repositories import tables
+from tests.conftest import ApiClient, database_env, make_settings, same_database
 
 
 @pytest.fixture
-def dev_env(monkeypatch, tmp_path):
-    db_name = f"cgvms_test_{uuid.uuid4().hex[:10]}"
-    for key, value in {"CG_ENVIRONMENT": "development", "CG_MONGO_URI": TEST_MONGO_URI, "CG_MONGO_DB": db_name,
-                       "CG_PHOTO_DIR": str(tmp_path),
+def dev_env(monkeypatch, tmp_path, settings):
+    """The commands run in this process, on the (emptied) test database."""
+    for key, value in {**database_env(settings), "CG_ENVIRONMENT": "development", "CG_PHOTO_DIR": str(tmp_path),
                        "CG_FIRST_ADMIN_PASSWORD": "admin1234"}.items():    # independent of backend/.env
         monkeypatch.setenv(key, value)
     get_settings.cache_clear()
-    yield db_name
+    yield settings
     get_settings.cache_clear()
-    MongoClient(TEST_MONGO_URI).drop_database(db_name)
+
+
+def stored_users(settings) -> list[dict]:
+    engine = sync_engine(settings)
+    try:
+        with engine.connect() as conn:
+            return [dict(row._mapping) for row in conn.execute(select(tables.users))]
+    finally:
+        engine.dispose()
+
+
+def stored_admin(settings) -> dict:
+    [user] = [u for u in stored_users(settings) if u["username"] == "admin"]
+    return user
 
 
 def run(monkeypatch, command="first-admin") -> int:
@@ -33,7 +45,7 @@ def test_creates_admin_admin1234_that_must_be_changed(monkeypatch, dev_env, caps
     assert run(monkeypatch, "migrate") == 0
     assert run(monkeypatch) == 0
     assert "admin / admin1234" in capsys.readouterr().out
-    user = MongoClient(TEST_MONGO_URI)[dev_env].users.find_one({"username": "admin"})
+    user = stored_admin(dev_env)
     assert user["role"] == "ADMIN" and user["must_change_password"] is True
     assert "admin1234" not in str(user)                                  # only the argon2 hash is stored
 
@@ -41,21 +53,21 @@ def test_creates_admin_admin1234_that_must_be_changed(monkeypatch, dev_env, caps
 def test_does_nothing_when_accounts_exist(monkeypatch, dev_env, capsys):
     assert run(monkeypatch, "migrate") == 0
     assert run(monkeypatch) == 0
-    before = MongoClient(TEST_MONGO_URI)[dev_env].users.find_one({"username": "admin"})["password_hash"]
+    before = stored_admin(dev_env)["password_hash"]
     assert run(monkeypatch) == 0
     assert "nothing changed" in capsys.readouterr().out
-    users = list(MongoClient(TEST_MONGO_URI)[dev_env].users.find())
+    users = stored_users(dev_env)
     assert len(users) == 1 and users[0]["password_hash"] == before
 
 
 def test_works_in_production_as_started_by_production_ps1(monkeypatch, dev_env, capsys):
-    for key, value in {"CG_ENVIRONMENT": "production", "CG_DEPLOYMENT_MODE": "http-lan",
-                       "CG_MONGO_LOCALHOST_WITHOUT_LOGIN": "true"}.items():
+    # SQL Server on this PC with Windows authentication (the service account), as production.ps1 sets it up.
+    for key, value in {"CG_ENVIRONMENT": "production", "CG_DEPLOYMENT_MODE": "http-lan"}.items():
         monkeypatch.setenv(key, value)
     assert run(monkeypatch, "migrate") == 0
     assert run(monkeypatch) == 0
     assert "admin / admin1234" in capsys.readouterr().out
-    user = MongoClient(TEST_MONGO_URI)[dev_env].users.find_one({"username": "admin"})
+    user = stored_admin(dev_env)
     assert user["role"] == "ADMIN" and user["must_change_password"] is True
 
 
@@ -66,7 +78,7 @@ def test_password_from_the_environment_is_used_and_not_printed(monkeypatch, dev_
     out = capsys.readouterr().out
     assert "Gate-First-Run-7" not in out and "CG_FIRST_ADMIN_PASSWORD" in out
     from app.core.security import verify_password
-    user = MongoClient(TEST_MONGO_URI)[dev_env].users.find_one({"username": "admin"})
+    user = stored_admin(dev_env)
     assert user["must_change_password"] is True
     assert verify_password("Gate-First-Run-7", user["password_hash"])
 
@@ -79,7 +91,7 @@ def test_blank_environment_password_falls_back_to_the_default(monkeypatch, dev_e
 def test_old_command_name_still_works(monkeypatch, dev_env):
     assert run(monkeypatch, "migrate") == 0
     assert run(monkeypatch, "dev-first-admin") == 0
-    assert MongoClient(TEST_MONGO_URI)[dev_env].users.count_documents({}) == 1
+    assert len(stored_users(dev_env)) == 1
 
 
 def test_first_login_forces_a_proper_new_password(monkeypatch, dev_env):
@@ -91,7 +103,7 @@ def test_first_login_forces_a_proper_new_password(monkeypatch, dev_env):
     change = "/api/v1/auth/change-password"
 
     async def first_login():
-        app = create_app(make_settings(environment="development", mongo_db=dev_env))
+        app = create_app(make_settings(environment="development", **same_database(dev_env)))
         async with app.router.lifespan_context(app):
             async with ApiClient(transport=httpx.ASGITransport(app=app), base_url="https://testserver") as c:
                 r = await c.login("admin", "admin1234")

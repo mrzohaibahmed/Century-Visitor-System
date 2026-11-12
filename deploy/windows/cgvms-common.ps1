@@ -8,7 +8,7 @@ $script:EventSource = 'CenturyGateVMS'
 
 # The application runs from this repository as normal processes (start-production.bat).
 # Everything comes from the project itself: backend\.env and all local operational data under .cgvms\.
-# MongoDB remains isolated on 127.0.0.1:27018. Gate PCs use plain
+# The database is in SQL Server (CG_MSSQL_SERVER in backend\.env). Gate PCs use plain
 # HTTP on port 6543 (no Caddy, no certificate): the health check reads readiness through the web server.
 function Get-CgvmsLocalConfig {
     $app = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path.TrimEnd('\')
@@ -23,7 +23,7 @@ function Get-CgvmsLocalConfig {
     $site = if ($env:CGVMS_SITE) { $env:CGVMS_SITE } else { $env:COMPUTERNAME.ToLowerInvariant() }
     return @{
         AppDir = $app; Root = $root; DataDir = $dataDir; RunDir = (Join-Path $root 'run')
-        PhotoDir = $photoDir; MongoDir = (Join-Path $dataDir 'mongo'); MongoPort = 27018
+        PhotoDir = $photoDir
         SiteName = $site; HealthUrl = 'http://127.0.0.1:6543/api/v1/health/ready'
         DiskMinFreePercent = 15; DiskMinFreeGB = 10
     }

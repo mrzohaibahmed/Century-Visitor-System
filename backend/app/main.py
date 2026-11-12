@@ -18,12 +18,14 @@ from app.core.errors import install_error_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.core.security import burn_verify_time
-from app.db.backend import BACKEND
 from app.db.client import open_database
+from app.db.sql.cleanup import CleanupWorker
 from app.services.notifications import EmailWorker, OverstayWorker
 from app.services.photos import check_photo_dir
 
 log = logging.getLogger(__name__)
+
+SHUTDOWN_GRACE_SECONDS = 10          # how long background workers get to finish their current pass
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -45,30 +47,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Host e-mails (Phase 6A): sent in the background, never during a request. Always running, so
         # SMTP settings saved later by an administrator work without a restart; with e-mail off it
         # finds nothing to send.
-        app.state.email_worker, sender, overstay = None, None, None
-        background: list[asyncio.Task] = []
+        app.state.email_worker = None
+        workers: list = []
         if settings.email_worker:
             app.state.email_worker = EmailWorker(app.state.database.db, settings)
-            sender = asyncio.create_task(app.state.email_worker.run())
-            background.append(sender)
+            workers.append(app.state.email_worker)
             # Overstay e-mails reuse the same SMTP queue; wake the sender when new rows are queued.
-            overstay_worker = OverstayWorker(app.state.database.db, settings,
-                                             on_queued=app.state.email_worker.wake)
-            overstay = asyncio.create_task(overstay_worker.run())
-            background.append(overstay)
-        if BACKEND == "mssql":
-            # SQL Server has no TTL indexes: expired sessions and rate-limit windows are deleted here.
-            from app.db.sql.cleanup import CleanupWorker
-            background.append(asyncio.create_task(CleanupWorker(app.state.database.db).run()))
+            workers.append(OverstayWorker(app.state.database.db, settings, on_queued=app.state.email_worker.wake))
+        # SQL Server has no TTL indexes: expired sessions and rate-limit windows are deleted here.
+        workers.append(CleanupWorker(app.state.database.db))
+        background = [asyncio.create_task(worker.run()) for worker in workers]
         try:
             yield
         finally:
             warm_up.cancel()
-            for task in background:
-                task.cancel()
-            for task in background:
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+            # Stop the workers between passes, not by cancelling them mid-query: with SQL Server a driver
+            # call runs in a thread that a cancellation does not stop, and closing its connection under it
+            # crashes the process. Cancel only what has not stopped by itself after a few seconds.
+            for worker in workers:
+                worker.stop()
+            if background:
+                _, still_running = await asyncio.wait(background, timeout=SHUTDOWN_GRACE_SECONDS)
+                for task in still_running:
+                    task.cancel()
+                for task in still_running:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
             await app.state.database.close()
             log.info("API stopped")
 

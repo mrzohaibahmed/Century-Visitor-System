@@ -4,10 +4,10 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.141.1-009688.svg)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-16.3.6-black.svg)](https://nextjs.org/)
 [![React](https://img.shields.io/badge/React-19.2.8-61dafb.svg)](https://react.dev/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-8.x-47A248.svg)](https://www.mongodb.com/)
+[![SQL Server](https://img.shields.io/badge/SQL_Server-2022_Express-CC2927.svg)](https://www.microsoft.com/sql-server)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4.0-38B2AC.svg)](https://tailwindcss.com/)
 
-**Century Gate VMS** is a high-security, web-based enterprise Visitor Management System built to replace legacy desktop installations. Powered by FastAPI, Next.js 16, and MongoDB, it delivers rapid visitor check-in/check-out workflows, CR80 badge printing with cryptographically secure QR passes, watchlist ban enforcement, Hikvision IP gate camera integration, real-time host notifications, and audit logging.
+**Century Gate VMS** is a high-security, web-based enterprise Visitor Management System built to replace legacy desktop installations. Powered by FastAPI, Next.js 16, and Microsoft SQL Server, it delivers rapid visitor check-in/check-out workflows, CR80 badge printing with cryptographically secure QR passes, watchlist ban enforcement, Hikvision IP gate camera integration, real-time host notifications, and audit logging.
 
 ---
 
@@ -47,18 +47,18 @@
 | (ISAPI Snapshot Engine)|                |              [127.0.0.1:8000]               |
 +------------------------+                +---------------------------------------------+
                                                                  |
-                                                          PyMongo Async
+                                              SQLAlchemy Core + ODBC Driver 18 (encrypted)
                                                                  v
                                           +---------------------------------------------+
-                                          |          MongoDB Replica Set                |
-                                          |     (century_gate_vms @ 127.0.0.1:27018)   |
+                                          |       Microsoft SQL Server (.\SQLEXPRESS)   |
+                                          |         database century_gate_vms           |
                                           +---------------------------------------------+
 ```
 
 ### Architectural Highlights
 - **Zero Direct Database Exposure**: Browsers communicate exclusively with the API layer over HTTP/REST. Database connection credentials remain isolated within backend services.
 - **Strict Legacy Isolation**: Operates exclusively on its dedicated database (`century_gate_vms`). The application explicitly refuses to launch or migrate legacy database names (`century_gate_system`).
-- **Transaction Safety**: Utilizes MongoDB replica set transactions to process visits, audit logs, and notification creations within atomic multi-document ACID transactions.
+- **Transaction Safety**: Visits, audit logs and notifications are written in one SQL Server transaction (read-committed snapshot isolation; a deadlock victim is retried). Filtered unique indexes enforce the business rules (one active visit per visitor, one active ban per identifier), and foreign keys connect the records.
 
 ---
 
@@ -122,7 +122,7 @@
 | Domain | Technology | Description |
 | :--- | :--- | :--- |
 | **Backend Framework** | FastAPI `0.141.1` | High-performance Python 3.12 async web framework |
-| **Database** | MongoDB Community `8.x` | Document database using PyMongo async driver with Replica Set ACID transactions |
+| **Database** | Microsoft SQL Server `2022` (Express) | SQLAlchemy Core (no ORM) over aioodbc / pyodbc and ODBC Driver 18; Alembic migrations |
 | **Auth & Security** | Argon2id & Cryptography | `argon2-cffi` for password hashing; AES-256-GCM for hardware credential encryption |
 | **PDF & Excel** | ReportLab & XlsxWriter | Direct canvas rendering with `uharfbuzz` for Urdu/Arabic RTL text shaping |
 | **Frontend Framework**| Next.js `16.3.6` | React 19 App Router with TypeScript |
@@ -140,7 +140,7 @@ century-gate-vms/
 │   ├── app/                  # Application source code
 │   │   ├── api/v1/           # REST API routes (auth, visitors, visits, watchlist, etc.)
 │   │   ├── core/             # Configuration, security, cryptography, logging
-│   │   ├── db/               # MongoDB client, indices, migrations
+│   │   ├── db/               # SQL Server connection, transactions, migrations (db/sql)
 │   │   ├── repositories/     # Data access layer
 │   │   ├── schemas/          # Pydantic v2 request/response schemas
 │   │   ├── services/         # Business logic (check-in, passes, photos, emails)
@@ -160,7 +160,7 @@ century-gate-vms/
 ├── deploy/                   # Windows single-PC deployment scripts & runbooks
 │   ├── windows/              # PowerShell management & health diagnostic scripts
 │   └── PRODUCTION-COMMANDS.md# Step-by-step production runbook
-├── scripts/                  # Development utility scripts (dev_mongo.py, etc.)
+├── scripts/                  # Development utility scripts (e2e_reset_db.py)
 ├── start-production.bat      # One-click Windows production startup batch script
 ├── stop-production.bat       # Production shutdown batch script
 └── README.md                 # Project documentation
@@ -173,21 +173,16 @@ century-gate-vms/
 ### Prerequisites
 - **Python**: `3.12+`
 - **Node.js**: `24+` & `npm`
-- **MongoDB**: Community Server `8.x` binary installed (Windows MongoDB service does **not** need to be running).
+- **SQL Server**: SQL Server 2022 Express (or any edition) on this PC, instance `.\SQLEXPRESS` by default, with the Windows service **"SQL Server (SQLEXPRESS)"** running.
+- **ODBC Driver 18 for SQL Server** (Microsoft download; the Python packages use it).
 
 ---
 
-### Step 1: Start Isolated Development Database
+### Step 1: The Development Database
 
-The development stack requires a local MongoDB replica set running on port `27018` with data stored in `.cgvms/data/mongo/` (isolated from any legacy database on port 27017). All machine-local operational data lives under `.cgvms/`.
+The API uses its own database, `century_gate_vms`, on the SQL Server instance named in `CG_MSSQL_SERVER` (default `.\SQLEXPRESS`). Other databases on that instance are never touched, and the legacy desktop database `century_gate_system` is refused by name. By default the API signs in with **Windows authentication** (the account that runs it); `CG_MSSQL_USERNAME` / `CG_MSSQL_PASSWORD` select a SQL login instead. The connection is always encrypted; `CG_MSSQL_TRUST_SERVER_CERTIFICATE=true` (in `.env.example`) accepts the self-signed certificate of an instance **on this PC** and is refused for a server on the network.
 
-```powershell
-# Start local development MongoDB replica set on 127.0.0.1:27018
-backend\.venv\Scripts\python scripts\dev_mongo.py start
-
-# Check status
-backend\.venv\Scripts\python scripts\dev_mongo.py status
-```
+The database is created and migrated in Step 2 (`create-database`, `migrate`). Machine-local operational data (photos, process state, logs) lives under `.cgvms/`.
 
 ---
 
@@ -203,7 +198,8 @@ python -m venv .venv
 # Copy environment configuration
 copy .env.example .env
 
-# Run database migrations (idempotent: creates collections, validators, indexes)
+# Create the database if it is missing, then bring its tables to the current revision (both idempotent)
+.venv\Scripts\python -m app.cli create-database
 .venv\Scripts\python -m app.cli migrate
 
 # Option A: Create default first administrator (admin / admin1234)
@@ -248,9 +244,12 @@ All backend API settings are managed via environment variables prefixed with `CG
 | :--- | :--- | :--- |
 | `CG_ENVIRONMENT` | `development` | Environment mode (`development`, `test`, `production`) |
 | `CG_DEPLOYMENT_MODE` | `https` | Deployment mode (`https` or `http-lan` for private trusted LANs) |
-| `CG_MONGO_URI` | `mongodb://127.0.0.1:27018/?replicaSet=cgvms-dev` | MongoDB connection URI string |
-| `CG_MONGO_DB` | `century_gate_vms` | Database name (refuses legacy `century_gate_system`) |
-| `CG_MONGO_LOCALHOST_WITHOUT_LOGIN` | `false` | Set to `true` by deployment scripts for 127.0.0.1 DBs without auth |
+| `CG_MSSQL_SERVER` | `.\SQLEXPRESS` | SQL Server instance (`host\instance` or `host,port`) |
+| `CG_MSSQL_DATABASE` | `century_gate_vms` | Database name (letters, digits, `_`; refuses legacy `century_gate_system`) |
+| `CG_MSSQL_USERNAME` / `CG_MSSQL_PASSWORD` | *(empty)* | Empty: Windows authentication. Both set: a SQL login |
+| `CG_MSSQL_TRUST_SERVER_CERTIFICATE` | `false` | `true` accepts a self-signed certificate; only allowed for an instance on this PC |
+| `CG_MSSQL_DRIVER` | `ODBC Driver 18 for SQL Server` | ODBC driver name |
+| `CG_MSSQL_TIMEOUT_SECONDS` | `5` | Connection timeout |
 | `CG_PHOTO_DIR` | `.cgvms/data/photos` | Private filesystem directory for visitor photos |
 | `CG_PHOTO_MAX_BYTES` | `2097152` (2 MB) | Maximum permitted photo file upload size |
 | `CG_COOKIE_SECURE` | `true` | Requires HTTPS secure cookies (`false` automatically in `http-lan`) |
@@ -280,7 +279,7 @@ The system supports single-machine production deployment on Windows 11 PC for en
                           |                                          |
 Gate PC Browsers -------> | Node Server (server.mjs) @ 0.0.0.0:6543   |
  (HTTP LAN Access)        |   ├──> FastAPI (uvicorn) @ 127.0.0.1:8000|
-                          |   └──> MongoDB           @ 127.0.0.1:27018|
+                          |   └──> SQL Server        @ .\SQLEXPRESS   |
                           +------------------------------------------+
 ```
 
@@ -290,8 +289,8 @@ Production batch files are located in the project root folder:
 
 | Batch / Script File | Purpose |
 | :--- | :--- |
-| `start-production.bat` | Initializes MongoDB, runs migrations, verifies admin, builds Next.js frontend, and launches services |
-| `stop-production.bat` | Gracefully shuts down Node web server, FastAPI backend, and MongoDB service |
+| `start-production.bat` | Checks SQL Server and creates the database if missing, runs migrations, verifies admin, builds Next.js frontend, and launches services |
+| `stop-production.bat` | Gracefully shuts down the Node web server and the FastAPI backend (SQL Server keeps running: it is a Windows service shared with other databases) |
 | `deploy\windows\check-health.ps1` | Comprehensive health check diagnostic script |
 
 To start production:
@@ -310,8 +309,10 @@ The backend CLI utility (`backend/app/cli.py`) manages database migrations, admi
 ```powershell
 cd backend
 
-# 1. Run database schema migrations & indexes
+# 1. Create the database if it is missing, migrate its tables, check readiness
+.venv\Scripts\python -m app.cli create-database
 .venv\Scripts\python -m app.cli migrate
+.venv\Scripts\python -m app.cli check
 
 # 2. Seed default admin account (admin / admin1234) if no accounts exist
 .venv\Scripts\python -m app.cli first-admin
@@ -324,7 +325,22 @@ cd backend
 
 # 5. Backfill historical entry denial records from audit log WATCHLIST_MATCH entries
 .venv\Scripts\python -m app.cli backfill-entry-denials
+
+# 6. Back up the database (a verified full .bak file; see Backups below)
+.venv\Scripts\python -m app.cli backup --to D:\CenturyGateVMS\backups
 ```
+
+`create-database` and `migrate` need a login that may create the database and change tables. The application itself only needs to read and write data, so a separate, smaller login can be used for the API.
+
+### Backups
+
+A complete backup is **the database plus the photo folder**: photos are files in `CG_PHOTO_DIR`, and the database holds only their names. Keep `CG_SECRETS_KEY` safe too, because the encrypted camera passwords and badge data cannot be read without it.
+
+1. `python -m app.cli backup [--to <folder>]` writes `<folder>\century_gate_vms-<date>-<time>.bak`: a full **COPY_ONLY** backup with page checksums, read back once with `RESTORE VERIFYONLY`. COPY_ONLY means it never disturbs another backup plan on the instance. **The SQL Server service writes the file**, so the folder must exist on the database server and its service account (`NT SERVICE\MSSQL$SQLEXPRESS`) must be allowed to write there. Without `--to`, the file goes to the instance's own backup folder.
+2. Copy the photo folder (`CG_PHOTO_DIR`) at the same time.
+3. Keep copies off this PC (another disk or a network share), and test a restore now and then (SQL Server Management Studio: *Restore Database* from the `.bak` file).
+
+SQL Server Express has no SQL Agent, so schedule the backup with **Windows Task Scheduler**, for example daily: `backend\.venv\Scripts\python.exe -m app.cli backup --to D:\CenturyGateVMS\backups`, started in `backend\`.
 
 ---
 
@@ -332,9 +348,8 @@ cd backend
 
 ### 1. Automated Health Diagnostics
 Run `deploy\windows\check-health.ps1` to inspect system integrity. It evaluates:
-- MongoDB connectivity and replica set state.
 - FastAPI backend readiness (`/api/v1/health/ready`).
-- Database schema version compliance.
+- SQL Server connectivity and the database's schema revision (through the API).
 - Photo directory availability and disk space (alerts if <15% or <10GB free).
 - Windows Event Log logging (`CenturyGateVMS` event source, Event IDs `1000`/`1001`).
 
@@ -345,7 +360,7 @@ Run `deploy\windows\check-health.ps1` to inspect system integrity. It evaluates:
 | **Gate PCs cannot reach server** | Network issue or Web service offline | Run `check-health.ps1`. If services are down, execute `stop-production.bat` then `start-production.bat`. Verify gate PCs use `http://<SERVER_IP>:6543`. |
 | **API fails to start** | Environment variable configuration invalid | Inspect **CGVMS API** terminal window for exact validation error. Update `backend\.env` and run `start-production.bat`. |
 | **Photo upload failure** | `CG_PHOTO_DIR` folder unavailable or disk full | Verify path in `CG_PHOTO_DIR`. Check disk space on server. Restart services once path is mounted. |
-| **MongoDB process stopped** | Disk space exhausted or lock conflict | Inspect `.cgvms\data\mongo\mongod.log` for severe errors (`"s":"F"`). Free disk space and execute `start-production.bat`. |
+| **SQL Server not reachable** | The "SQL Server (SQLEXPRESS)" service stopped, or the disk is full | `start-production.bat` stops at step 1 with this message. Start the service in `services.msc` (Windows Event Viewer / the SQL Server error log shows why it stopped), free disk space, then run `start-production.bat`. |
 
 ---
 
@@ -357,7 +372,8 @@ The project enforces quality assurance across both backend and frontend codebase
 ```powershell
 cd backend
 
-# Run pytest suite (requires development database running on port 27018)
+# Run pytest suite (needs SQL Server on this PC, .\SQLEXPRESS or CG_TEST_MSSQL_SERVER, with the Windows
+# login; the run creates a throw-away cgvms_test_* database and drops it at the end)
 .venv\Scripts\python -m pytest
 
 # Run Ruff linter & static code analysis

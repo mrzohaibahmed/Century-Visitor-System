@@ -1,9 +1,9 @@
 """
 `harness.store`: direct access to the stored records for tests that inspect or prepare them.
 
-MongoDB: the database itself. SQL Server: SqlStore below, which offers the same few collection calls the
-tests use (find_one, find(...).sort().to_list() / async for, count_documents, insert_one, update_one /
-update_many with $set) on the SQL tables, and returns records in the shape the repositories return them.
+SqlStore below offers a few MongoDB-style collection calls on the SQL tables (the tests were written
+that way first): find_one, find(...).sort().to_list() / async for, count_documents, insert_one, update_one /
+update_many with $set. It returns records in the shape the repositories return them.
 Filters: equality (None = no value), and $in / $ne / $gt / $gte / $lt / $lte; field names as in the
 documents ("_id", "actor.username", "identity.number", and fields inside the audit's JSON such as
 "metadata.permission"). Anything else raises NotImplementedError, so a test never silently checks less.
@@ -15,15 +15,15 @@ from types import SimpleNamespace
 from sqlalchemy import Table, and_, func, or_, select, true, update
 from sqlalchemy import insert as sql_insert
 
-from app.repositories.mssql import audit_logs as sql_audit_logs
-from app.repositories.mssql import notifications as sql_notifications
-from app.repositories.mssql import settings as sql_settings
-from app.repositories.mssql import tables
-from app.repositories.mssql import visits as sql_visits
-from app.repositories.mssql.connection import connection
-from app.repositories.mssql.rows import as_doc, identity_columns, new_row
-from app.repositories.mssql.visitors import visitor_doc
-from app.repositories.mssql.watchlist import entry_doc as watchlist_doc
+from app.repositories import audit_logs as sql_audit_logs
+from app.repositories import notifications as sql_notifications
+from app.repositories import settings as sql_settings
+from app.repositories import tables
+from app.repositories import visits as sql_visits
+from app.repositories.connection import connection
+from app.repositories.rows import as_doc, identity_columns, new_row
+from app.repositories.visitors import visitor_doc
+from app.repositories.watchlist import entry_doc as watchlist_doc
 
 
 def _same(doc: dict) -> dict:
@@ -45,7 +45,8 @@ _IDENTITY = {"identity.type": "identity_type", "identity.number": "identity_numb
 SPECS = {
     "users": _Spec(tables.users),
     "sessions": _Spec(tables.sessions),
-    "rate_limits": _Spec(tables.rate_limits, fields={"_id": "window_key"}),
+    "rate_limits": _Spec(tables.rate_limits, lambda row: {"_id": row.window_key, "count": row.count,
+                                                        "expires_at": row.expires_at}, fields={"_id": "window_key"}),
     "gates": _Spec(tables.gates),
     "departments": _Spec(tables.departments),
     "hosts": _Spec(tables.hosts),

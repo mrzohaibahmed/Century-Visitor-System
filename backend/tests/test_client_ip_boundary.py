@@ -15,10 +15,9 @@ import httpx
 import pytest
 
 from app.core.permissions import Role
-from app.db.migrate import apply_schema
 from app.main import create_app
 from app.services.users import create_user
-from tests.conftest import GUARD_PASSWORD, make_settings
+from tests.conftest import GUARD_PASSWORD, make_settings, same_database, store_of
 
 NODE = shutil.which("node")
 FORWARDING = Path(__file__).resolve().parents[2] / "frontend" / "server" / "forwarding.mjs"
@@ -70,15 +69,14 @@ def test_the_web_server_replaces_spoofed_addresses():
 @pytest.fixture
 async def api(settings):
     """The API as the web server reaches it: every request arrives from the loopback peer."""
-    app = create_app(make_settings(mongo_db=settings.mongo_db, login_ip_limit=3))
+    app = create_app(make_settings(**same_database(settings), login_ip_limit=3))
     async with app.router.lifespan_context(app):
         db = app.state.database.db
-        await apply_schema(db)
         await create_user(db, actor=None, meta=None, username="guard1", display_name="Guard", role=Role.GUARD,
                           password=GUARD_PASSWORD, must_change_password=False)
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False, client=NEXT_JS_PEER)
         async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as client:
-            yield client, db
+            yield client, store_of(db)            # the stored records, to inspect
 
 
 async def _login(client, headers, password=GUARD_PASSWORD):

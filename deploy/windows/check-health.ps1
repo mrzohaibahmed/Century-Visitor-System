@@ -6,14 +6,14 @@
       powershell -NoProfile -ExecutionPolicy Bypass -File check-health.ps1
 
   Checks, without reading any password, and prints one line per part:
-    MongoDB      listening on 127.0.0.1:<MongoPort>
     API          http://127.0.0.1:8000/api/v1/health/ready answers "ready"
-    Database     (from the API) database reachable, schema up to date, transactions, photo folder
+    Database     (from the API) SQL Server reachable, schema up to date, transactions, photo folder
     Web          http://127.0.0.1:6543/login answers
     Web to API   HealthUrl (http://127.0.0.1:6543/api/v1/health/ready) answers "ready" through the web
                  server's /api/* (plain HTTP, no certificate: the way gate PCs reach the API)
   Each part is checked directly, so a problem in one never hides the state of the others. Also:
-    - every drive holding Root, PhotoDir or the database keeps DiskMinFreePercent / DiskMinFreeGB free.
+    - every drive holding Root or PhotoDir keeps DiskMinFreePercent / DiskMinFreeGB free (SQL Server's own
+      data and backup folders are watched like any other SQL Server database on this PC).
   Writes status\health.json every run. Writes to the Windows event log (source CenturyGateVMS)
   only when the state changes (1000 = healthy again, 1001 = problem) and once a day while a
   problem continues, so a healthy system does not flood the log. Exit code 0 = healthy, 1 = problem.
@@ -28,10 +28,6 @@ $parts = New-Object System.Collections.Generic.List[object]
 function Part([string]$Name, [bool]$Ok, [string]$Detail) {
     $parts.Add([pscustomobject]@{ part = $Name; healthy = $Ok; detail = $Detail })
     if (-not $Ok) { $problems.Add("${Name}: $Detail") }
-}
-function Test-LocalPort([int]$Port) {
-    $tcp = New-Object Net.Sockets.TcpClient
-    try { $tcp.Connect('127.0.0.1', $Port); return $true } catch { return $false } finally { $tcp.Dispose() }
 }
 # GET a URL; returns @{ ok; status; body; error } (a 503 "not ready" still has a body).
 function Get-Url([string]$Url) {
@@ -51,11 +47,6 @@ function Read-Ready($Result) {
     if (-not $Result.body) { return $null }
     try { return $Result.body | ConvertFrom-Json } catch { return $null }
 }
-
-# MongoDB
-$p = ''
-if (-not (Test-LocalPort ([int]$cfg.MongoPort))) { $p = "not listening on 127.0.0.1:$($cfg.MongoPort)" }
-Part 'MongoDB' (-not $p) $(if ($p) { $p } else { "running on 127.0.0.1:$($cfg.MongoPort)" })
 
 # API, and through it the database (directly on the loopback port: no web server, no name involved).
 $p = ''
@@ -87,7 +78,7 @@ if (-not $viaWeb) {
 Part 'Web to API (HTTP)' (-not $p) $(if ($p) { $p } else { "$($cfg.HealthUrl) ready" })
 
 # Disk space on every drive that holds application data.
-$paths = @($cfg.Root, $cfg.PhotoDir, $cfg.MongoDir)
+$paths = @($cfg.Root, $cfg.PhotoDir)
 $drives = $paths | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Get-Item -LiteralPath $_).PSDrive.Name } | Sort-Object -Unique
 foreach ($d in $drives) {
     $info = Get-PSDrive -Name $d

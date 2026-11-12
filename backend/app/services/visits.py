@@ -5,7 +5,7 @@ Check-in is one transaction: visit number, visit and audit record succeed or
 fail together. The business rules are enforced on the server:
 - the gate and operator come from the session, never from the request;
 - watchlist screening blocks the entry (and is audited);
-- at most one active visit per visitor (a partial unique index in MongoDB, so
+- at most one active visit per visitor (a filtered unique index in SQL Server, so
   two gates checking in the same person at once cannot both succeed).
 Check-out is a single conditional update: atomic and idempotent.
 """

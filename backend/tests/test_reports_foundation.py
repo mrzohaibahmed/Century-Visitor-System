@@ -3,19 +3,17 @@ filter, masking and the report row schema. No report endpoint exists yet."""
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from pymongo.asynchronous.collection import AsyncCollection
 
 from app.core.errors import AppError
 from app.core.identity import mask_sensitive
 from app.core.permissions import ROLE_PERMISSIONS, Permission, Role, has_permission
 from app.core.timeutil import MAX_RANGE_DAYS, InvalidRange, RangePreset, resolve_range
-from app.db.backend import BACKEND
 from app.repositories import reports as reports_repo
 from app.repositories import visits as visits_repo
 from app.schemas.reports import ReportRangeOut, VisitReportRow
 from app.services import reports as reports_svc
 from app.services.visits import TOO_BROAD, VisitFilter, visit_query
-from tests.conftest import make_settings, mongo_only, new_record_id, record_id, visitor_ids_in
+from tests.conftest import make_settings, new_record_id, record_id, visitor_ids_in
 from tests.test_visitors import CNIC, new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
 
@@ -133,25 +131,6 @@ def test_mask_sensitive(value, masked):
 
 
 # ------------------------------------------------------------------------------------------ shared filter
-@mongo_only           # the exact MongoDB filter; on SQL Server the history and report tests run it on real data
-async def test_the_filter_builder(harness):
-    db = harness.db
-    ids = [new_record_id() for _ in range(5)]
-    start, end = datetime(2026, 9, 24, 19, tzinfo=UTC), datetime(2026, 9, 25, 19, tzinfo=UTC)
-    assert await visit_query(db, VisitFilter()) == {}
-    assert await visit_query(db, VisitFilter(start=start)) == {"check_in_at": {"$gte": start}}
-    assert await visit_query(db, VisitFilter(
-        start=start, end=end, status="CHECKED_OUT", host_id=ids[0], department_id=ids[1], gate_id=ids[2],
-        visitor_id=ids[3], reason_code="DELIVERY")) == {
-        "status": "CHECKED_OUT", "check_in_at": {"$gte": start, "$lt": end}, "host_id": ids[0],
-        "department_id": ids[1], "gate_id": ids[2], "visitor_id": ids[3], "reason_code": "DELIVERY"}
-    # A guard handled a visit when they checked it in OR out.
-    assert await visit_query(db, VisitFilter(guard_id=ids[4])) == {
-        "$or": [{"checked_in_by": ids[4]}, {"checked_out_by": ids[4]}]}
-    assert await visit_query(db, VisitFilter(q=" v-2026-000042 ")) == {"visit_number": "V-2026-000042"}
-    assert await visit_query(db, VisitFilter(q="   ")) == {}
-
-
 async def test_a_name_search_finds_visitors(harness, guard):
     v = await new_visitor(guard)
     for q in ("ali", CNIC, "0300-1234567"):
@@ -199,23 +178,14 @@ async def test_report_rows_mask_the_id_and_phone_and_look_them_up_in_one_query(h
     visit = (await check_in(guard, v["id"], directory)).json()
     doc = await harness.store.visits.find_one({"_id": record_id(visit["id"])})
     calls = []
-    if BACKEND == "mongo":                    # count the driver's queries on visitors
-        original = AsyncCollection.find
+    # Count the lookups (each is one query).
+    original_lookup = reports_repo.fields_by_id
 
-        def counting_find(self, *args, **kwargs):
-            if self.name == "visitors":
-                calls.append(args[1])
-            return original(self, *args, **kwargs)
-        monkeypatch.setattr(AsyncCollection, "find", counting_find)
-        expected = [{"identity": 1, "phone": 1}]
-    else:                                     # SQL Server: count the lookups (each is one query)
-        original_lookup = reports_repo.fields_by_id
-
-        async def counting_lookup(db, collection, ids, fields):
-            calls.append((collection, fields))
-            return await original_lookup(db, collection, ids, fields)
-        monkeypatch.setattr(reports_repo, "fields_by_id", counting_lookup)
-        expected = [("visitors", ("identity", "phone"))]
+    async def counting_lookup(db, collection, ids, fields):
+        calls.append((collection, fields))
+        return await original_lookup(db, collection, ids, fields)
+    monkeypatch.setattr(reports_repo, "fields_by_id", counting_lookup)
+    expected = [("visitors", ("identity", "phone"))]
     people = await reports_svc.visitor_identities(harness.db, [doc["visitor_id"], doc["visitor_id"]])
     monkeypatch.undo()
     assert calls == expected                                              # one query, two fields only

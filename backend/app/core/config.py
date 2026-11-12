@@ -1,8 +1,8 @@
 """
 Application settings, read from environment variables (prefix CG_) or backend/.env.
 
-Secrets (the MongoDB URI) exist only here, on the server. They are never sent
-to the browser or to the Next.js frontend.
+Secrets (the SQL Server password, the SMTP password, the secrets key) exist only here, on the
+server. They are never sent to the browser or to the Next.js frontend.
 """
 import re
 from functools import lru_cache
@@ -12,8 +12,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pymongo.errors import ConfigurationError, InvalidURI
-from pymongo.uri_parser import parse_uri
 
 from app.core.secrets import parse_key
 
@@ -23,9 +21,6 @@ API_DIR = Path(__file__).resolve().parents[2]
 LEGACY_DATABASE_NAMES = frozenset({"century_gate_system"})
 
 APP_VERSION = "0.1.0"
-
-# Connection options that switch off certificate or host-name checks: refused in production.
-_INSECURE_TLS_OPTIONS = ("tlsInsecure", "tlsAllowInvalidCertificates", "tlsAllowInvalidHostnames")
 
 # SQL Server: a database name used unquoted in CREATE DATABASE, so deliberately strict.
 MSSQL_DATABASE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,99}")
@@ -49,15 +44,7 @@ class Settings(BaseSettings):
 
     environment: Literal["development", "test", "production"] = "development"
 
-    mongo_uri: SecretStr = SecretStr("mongodb://127.0.0.1:27018/?replicaSet=cgvms-dev")
-    mongo_db: str = "century_gate_vms"
-    mongo_timeout_ms: int = Field(default=5000, ge=100, le=60_000)
-    # Single-PC production: allow a database WITHOUT login/TLS, but only when every host in
-    # CG_MONGO_URI is on this machine (127.0.0.1 / localhost / ::1) and mongod listens on loopback
-    # only. Anyone who can run programs on this PC can then read the database. Default: off.
-    mongo_localhost_without_login: bool = False
-
-    # --- SQL Server (replacing MongoDB step by step; see app/db/sql) ---------------------
+    # --- SQL Server (see app/db/sql) ----------------------------------------------------
     # The instance (".\SQLEXPRESS" = this PC's Express instance) and the application's own database.
     mssql_server: str = ".\\SQLEXPRESS"
     mssql_database: str = "century_gate_vms"
@@ -147,16 +134,6 @@ class Settings(BaseSettings):
     def _default_first_admin_password(cls, value: SecretStr) -> SecretStr:
         return value if value.get_secret_value().strip() else SecretStr("admin1234")
 
-    @field_validator("mongo_db")
-    @classmethod
-    def _not_the_legacy_database(cls, value: str) -> str:
-        if value.strip().lower() in LEGACY_DATABASE_NAMES:
-            raise ValueError(
-                f"'{value}' is the legacy desktop database. The web application must use its own database.")
-        if not value or any(ch in value for ch in '/\\. "$'):
-            raise ValueError("Invalid MongoDB database name.")
-        return value
-
     @field_validator("mssql_database")
     @classmethod
     def _valid_mssql_database(cls, value: str) -> str:
@@ -222,39 +199,6 @@ class Settings(BaseSettings):
     def _explicit_photo_dir_in_production(self):
         if self.environment == "production" and "photo_dir" not in self.model_fields_set:
             raise ValueError("CG_PHOTO_DIR must be set in production (a private folder that is backed up).")
-        return self
-
-    @model_validator(mode="after")
-    def _secure_database_connection_in_production(self):
-        """Production refuses a database connection without a login, without TLS, or with
-        certificate checks switched off (the messages never contain the URI or password)."""
-        if self.environment != "production":
-            return self
-        try:
-            # validate=False: option values stay text and the CA file is not opened here
-            # (a missing file is reported when connecting).
-            parsed = parse_uri(self.mongo_uri.get_secret_value(), validate=False)
-        except (InvalidURI, ConfigurationError, ValueError):
-            raise ValueError("CG_MONGO_URI is not a valid MongoDB connection string.") from None
-        options = parsed["options"]
-
-        def enabled(name: str) -> bool:
-            return str(options.get(name, "")).strip().lower() == "true"
-
-        if self.mongo_localhost_without_login:
-            hosts = {host.strip("[]").lower() for host, _port in parsed.get("nodelist", [])}
-            if not hosts or not hosts <= {"127.0.0.1", "localhost", "::1"}:
-                raise ValueError("CG_MONGO_LOCALHOST_WITHOUT_LOGIN only allows a database on this machine "
-                                 "(127.0.0.1 or localhost) in CG_MONGO_URI.")
-            return self
-        if not parsed.get("username") or not parsed.get("password"):
-            raise ValueError("CG_MONGO_URI must include the application's database user and password in production.")
-        if not (enabled("tls") or enabled("ssl")):
-            raise ValueError("CG_MONGO_URI must use TLS in production (tls=true with tlsCAFile).")
-        for insecure in _INSECURE_TLS_OPTIONS:
-            if enabled(insecure):
-                raise ValueError(f"CG_MONGO_URI must not use {insecure} in production: "
-                                 "the database certificate has to be validated.")
         return self
 
     @field_validator("secrets_key")

@@ -1,5 +1,5 @@
 """
-The SQL Server database for the app's lifetime (CG_DB_BACKEND=mssql): the counterpart of app/db/client.py.
+The SQL Server database for the app's lifetime (app.db.client.Database).
 
 - SqlDatabase: created in the FastAPI lifespan; owns the connection pool; answers /health/ready.
 - SqlDb:       what repositories receive as `db` (app.db.types.Db): just the pool, nothing to manage.
@@ -34,7 +34,7 @@ class SqlDatabase:
             await conn.execute(text("SELECT 1"))
 
     async def transactions_available(self) -> bool:
-        return True                                    # always, unlike a stand-alone MongoDB
+        return True                                    # always on SQL Server
 
     async def schema_status(self) -> str:
         """ok, missing (never migrated) or outdated."""

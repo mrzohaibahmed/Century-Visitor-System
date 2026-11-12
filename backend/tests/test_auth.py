@@ -8,7 +8,7 @@ from argon2 import PasswordHasher
 from app.core import security
 from app.core.security import hash_token
 from app.services import auth as auth_service
-from tests.conftest import ADMIN_PASSWORD, GUARD_PASSWORD, make_settings, prepare_schema, same_database
+from tests.conftest import ADMIN_PASSWORD, GUARD_PASSWORD, make_settings, same_database
 
 pytestmark = pytest.mark.anyio
 
@@ -160,7 +160,6 @@ async def test_login_rate_limit_per_client_ip(settings, client_for):
     s = make_settings(**same_database(settings), login_ip_limit=3)
     app = create_app(s)
     async for client in client_for(app):
-        await prepare_schema(app.state.database)
         await create_user(app.state.database.db, actor=None, meta=None, username="guard1", display_name="G",
                           role=Role.GUARD, password=GUARD_PASSWORD, must_change_password=False)
         gate1 = {"X-Forwarded-For": "10.0.0.11"}

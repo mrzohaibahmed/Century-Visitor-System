@@ -11,7 +11,7 @@ import pytest
 from app.services import entry_denials as denials_svc
 from app.services import report_exports as exports
 from app.services import reports as svc
-from tests.conftest import insert_seed, make_settings, new_record_id, record_id, store_of
+from tests.conftest import insert_seed, make_settings, new_record_id, record_id, store_of, unknown_id
 from tests.test_entry_denials import ban, lookup
 from tests.test_report_endpoints import denial, kar, visit
 from tests.test_visitors import CNIC, new_visitor
@@ -169,7 +169,7 @@ async def test_the_visit_export_follows_every_filter(admin, people):
     cases = [
         {}, {"status": "CHECKED_OUT"}, {"status": "CHECKED_IN"}, {"q": "alia"}, {"q": "3520112345671"},
         {"q": "0321 7654321"}, {"q": va.lower()}, {"host_id": people["host"]["id"]},
-        {"department_id": people["other_dep"]["id"]}, {"gate_id": people["gate"]["id"]}, {"gate_id": "0" * 24},
+        {"department_id": people["other_dep"]["id"]}, {"gate_id": people["gate"]["id"]}, {"gate_id": unknown_id()},
         {"guard_id": str(users["admin"])}, {"guard_id": str(users["guard1"])}, {"reason_code": "DELIVERY"},
         {"range": "yesterday"}, {"sort": "check_in_asc"}, {"sort": "check_out_desc"}, {"sort": "duration_desc"},
     ]
@@ -229,7 +229,8 @@ async def test_grouped_exports_are_never_cut_to_the_screen_limit(harness, admin,
 
 
 async def test_large_exports_stream_every_row_in_order(harness, admin):
-    start = datetime.now(UTC) - timedelta(hours=10)
+    # Today in Karachi, whatever the time of day ("now - 10 hours" was yesterday before 10:00 local time).
+    start = svc.report_range(make_settings(), "today", None, None).start + timedelta(minutes=1)
     for i in range(250):                                                     # 3 pages, 2 chunks
         await visit(harness.db, start + timedelta(seconds=i), minutes=1)
     rows = parse(await export(admin, "visits"))

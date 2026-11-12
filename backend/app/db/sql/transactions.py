@@ -1,6 +1,5 @@
-"""SQL Server transactions: `work(connection)` runs in one transaction, retried if chosen as a deadlock victim
-(MongoDB's with_transaction() retried write conflicts the same way). Everything inside `work` must use
-that connection (passed on as session=)."""
+"""SQL Server transactions: `work(connection)` runs in one transaction, retried if chosen as a deadlock victim.
+Everything inside `work` must use that connection (passed on as session=)."""
 import asyncio
 import random
 from collections.abc import Awaitable, Callable

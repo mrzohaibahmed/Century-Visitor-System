@@ -1,9 +1,9 @@
 import pytest
 
 from app.core.config import APP_VERSION
-from app.db.migrate import apply_schema
+from app.db.sql import revision
 from app.main import create_app
-from tests.conftest import make_settings
+from tests.conftest import make_settings, same_database
 
 pytestmark = pytest.mark.anyio
 
@@ -14,38 +14,39 @@ async def test_liveness(client):
     assert r.json() == {"status": "ok", "version": APP_VERSION}
 
 
-async def test_ready_reports_unmigrated_database(client):
-    r = await client.get("/api/v1/health/ready")
-    assert r.status_code == 503
-    assert r.json() == {"status": "not_ready",
-                        "checks": {"database": "ok", "schema_version": "missing", "transactions": "ok",
-                                   "photo_storage": "ok"}}
-
-
-async def test_ready_after_migration(client, app):
-    await apply_schema(app.state.database.db)
-    r = await client.get("/api/v1/health/ready")
+async def test_ready_on_the_migrated_database(settings, client_for):
+    async for client in client_for(create_app(make_settings(**same_database(settings)))):
+        r = await client.get("/api/v1/health/ready")
     assert r.status_code == 200
     assert r.json() == {"status": "ready",
                         "checks": {"database": "ok", "schema_version": "ok", "transactions": "ok",
                                    "photo_storage": "ok"}}
 
 
-async def test_ready_reports_outdated_schema(client, app):
-    await apply_schema(app.state.database.db)
-    await app.state.database.db.settings.update_one({"_id": "schema"}, {"$set": {"version": 0}})
-    r = await client.get("/api/v1/health/ready")
+async def test_ready_reports_an_outdated_schema(settings, client_for, monkeypatch):
+    # This code expecting a newer revision than the database has = the database needs `migrate`.
+    monkeypatch.setattr(revision, "head_revision", lambda: "9999")
+    async for client in client_for(create_app(make_settings(**same_database(settings)))):
+        r = await client.get("/api/v1/health/ready")
     assert r.status_code == 503 and r.json()["checks"]["schema_version"] == "outdated"
 
 
-async def test_unreachable_database_fails_fast_without_revealing_the_uri(client_for):
-    settings = make_settings(mongo_uri="mongodb://dbuser:Db-Secret-2@127.0.0.1:1/?directConnection=true",
-                             mongo_timeout_ms=300)
+def test_schema_states():
+    head = revision.head_revision()
+    assert head is not None
+    assert revision.schema_status(None) == "missing"            # never migrated
+    assert revision.schema_status(head) == "ok"
+    assert revision.schema_status("0001") == "outdated" != head
+
+
+async def test_an_unreachable_database_fails_fast_without_revealing_where(client_for):
+    settings = make_settings(mssql_server="127.0.0.1,1", mssql_database="cgvms_test_unreachable",
+                             mssql_username="dbuser", mssql_password="Db-Secret-2", mssql_timeout_seconds=1,
+                             mssql_trust_server_certificate=True)
     async for client in client_for(create_app(settings)):
         r = await client.get("/api/v1/health/ready")
-    assert r.status_code == 503
-    assert r.json()["checks"]["database"] == "unavailable"
-    assert "Db-Secret-2" not in r.text and "127.0.0.1" not in r.text
+    assert r.status_code == 503 and r.json()["checks"]["database"] == "unavailable"
+    assert "Db-Secret-2" not in r.text and "127.0.0.1" not in r.text and "dbuser" not in r.text
 
 
 async def test_docs_are_disabled_outside_development(client):

@@ -301,14 +301,13 @@ async def test_the_smtp_password_never_reaches_logs_or_the_database(harness, gua
 
 async def test_the_background_sender_emails_right_after_check_in(harness, settings):
     from app.main import create_app
-    from tests.conftest import ADMIN_PASSWORD, AuthHarness, prepare_schema
+    from tests.conftest import ADMIN_PASSWORD, AuthHarness
     with FakeSMTP() as smtp:
         # A second app on the same test database, with the background sender switched on.
         s = make_settings(**same_database(settings), smtp_host="127.0.0.1", smtp_port=smtp.port,
                           smtp_security="none", smtp_from="vms@century.test", email_worker=True)
         app = create_app(s)
         async with app.router.lifespan_context(app):
-            await prepare_schema(app.state.database)
             h = AuthHarness(app, app.state.database.db)
             await h.create_user("admin", ADMIN_PASSWORD, "ADMIN")
             c = await h.logged_in("admin", ADMIN_PASSWORD)

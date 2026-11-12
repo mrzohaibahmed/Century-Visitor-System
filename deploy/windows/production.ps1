@@ -9,28 +9,32 @@
 
   Runs the EXISTING project from this folder as normal processes (no Windows services, no copy), the API
   and the web server each in its own console window ("CGVMS API", "CGVMS Web") as start-dev.bat does:
-    MongoDB   scripts\dev_mongo.py start       the project's own instance, 127.0.0.1:27018, data in .cgvms\data\mongo
-    Schema    python -m app.cli migrate         idempotent database validators and indexes
+    SQL Server python -m app.cli create-database  connects to CG_MSSQL_SERVER (default .\SQLEXPRESS) and creates
+                                                the database if it is missing (an existing one is never changed)
+    Schema    python -m app.cli migrate         idempotent: brings the tables to the expected revision
     API       python -m app.serve               production server (no reload, no API docs), 127.0.0.1:8000
     Web       node server.mjs                   production build (npm run build), 0.0.0.0:6543 (plain HTTP);
                                                 sets the client address the API sees (frontend\server\forwarding.mjs)
   Gate PCs use http://<this PC's name or IP>:6543 on the organization's network: no TLS, no certificate, no
-  Caddy. Only the web server listens on the network; the API and MongoDB stay on 127.0.0.1. The Windows
+  Caddy. Only the web server listens on the network; the API stays on 127.0.0.1. The Windows
   network profile (Public, Private, Domain) is not a start requirement. Windows Firewall is not part of
   this deployment and is never changed. HTTP is not encrypted, and browsers allow
   the webcam fallback only on HTTPS or on this PC itself; the gate cameras (Hikvision) are read by the
   server and still work.
 
-  Settings: backend\.env as it is, with four production values set for the API process only
-  (environment variables override backend\.env, so start-dev.bat keeps working unchanged):
+  SQL Server itself is a Windows service ("SQL Server (SQLEXPRESS)") that also holds other databases: this
+  script never starts or stops it. If it is not running, start it in services.msc, then start again.
+
+  Settings: backend\.env as it is (CG_MSSQL_* for the database), with three production values set for the
+  API process only (environment variables override backend\.env, so start-dev.bat keeps working unchanged):
     CG_ENVIRONMENT=production
     CG_DEPLOYMENT_MODE=http-lan             plain HTTP on the LAN: cookies without Secure (README)
-    CG_MONGO_LOCALHOST_WITHOUT_LOGIN=true   the project's database has no login (allowed on 127.0.0.1 only)
     CG_PHOTO_DIR=<project>\.cgvms\data\photos  the existing photos (unless backend\.env sets CG_PHOTO_DIR)
   Optional: CGVMS_SITE (the name gate PCs use in messages; default: this PC's computer name).
 
   Output: live in the "CGVMS API" and "CGVMS Web" windows (closing one stops that server).
-  All local operational data is in .cgvms\: database, photos, process state, logs and health status.
+  Local operational data is in .cgvms\: photos, process state, logs and health status; the database is
+  in SQL Server (backups: python -m app.cli backup, README).
 #>
 param(
     [Parameter(Mandatory = $true)][ValidateSet('start', 'stop', 'status')][string]$Action,
@@ -120,9 +124,7 @@ if ($Action -eq 'stop') {
     $legacy = Get-Ours 'Caddy' 'caddy'
     if ($legacy) { Stop-Process -Id $legacy.Id -Force; Say '  Caddy (former HTTPS setup) stopped.' }
     if (Test-Path -LiteralPath $pidFile) { Remove-Item -LiteralPath $pidFile -Force }
-    $ErrorActionPreference = 'Continue'
-    & $python (Join-Path $app 'scripts\dev_mongo.py') stop
-    $ErrorActionPreference = 'Stop'
+    Say '  SQL Server keeps running (a Windows service shared with other databases).'
     Say 'Century Gate VMS is stopped.'
     exit 0
 }
@@ -157,20 +159,23 @@ foreach ($item in @(@('API', 'python', 8000), @('Web', 'node', 6543))) {
     }
 }
 
-Say ''
-Say '[1/5] MongoDB (127.0.0.1:27018, data in .cgvms\data\mongo) ...'
-$ErrorActionPreference = 'Continue'
-& $python (Join-Path $app 'scripts\dev_mongo.py') start
-$mongoExit = $LASTEXITCODE
-$ErrorActionPreference = 'Stop'
-if ($mongoExit -ne 0) { Fail "MongoDB did not start; see $($cfg.MongoDir)\mongod.log" }
-
 $envText = Get-Content -LiteralPath (Join-Path $app 'backend\.env') -Raw
 $env:CG_ENVIRONMENT = 'production'
 $env:CG_DEPLOYMENT_MODE = 'http-lan'
-$env:CG_MONGO_LOCALHOST_WITHOUT_LOGIN = 'true'
 if ($envText -notmatch '(?m)^\s*CG_PHOTO_DIR\s*=') { $env:CG_PHOTO_DIR = $cfg.PhotoDir }
 $env:PYTHONUNBUFFERED = '1'
+
+Say ''
+Say '[1/5] SQL Server (CG_MSSQL_SERVER, the application database) ...'
+Push-Location (Join-Path $app 'backend')
+$ErrorActionPreference = 'Continue'
+& $python -m app.cli create-database
+$sqlExit = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+Pop-Location
+if ($sqlExit -ne 0) {
+    Fail 'SQL Server is not reachable or refused the login (see above). Is the "SQL Server (SQLEXPRESS)" service running (services.msc)?'
+}
 
 Say ''
 Say '[2/5] Database schema ...'
@@ -231,7 +236,7 @@ if (Get-Ours 'Web' 'node') {
 if (Get-Ours 'Caddy' 'caddy') {
     Say '      NOTE: Caddy from the former HTTPS setup is still running on 443; stop-production.bat stops it.'
 }
-# Only the web server (6543) listens on the network; the API (8000) and MongoDB (27018) on 127.0.0.1 only.
+# Only the web server (6543) listens on the network; the API (8000) on 127.0.0.1 only.
 $lanIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object { $_.InterfaceIndex -in $networks.InterfaceIndex } | ForEach-Object { $_.IPAddress })
 
@@ -244,7 +249,7 @@ Say 'Century Gate VMS is running in production mode.'
 foreach ($ip in $lanIps) { Say "  Gate PCs:   http://${ip}:6543   (plain HTTP on the trusted LAN)" }
 Say "             http://${site}:6543   (this PC's name, if the gate PCs can resolve it)"
 Say '  This PC:    http://localhost:6543'
-Say "  Output:     the `"CGVMS API`" and `"CGVMS Web`" windows; MongoDB log: $($cfg.MongoDir)\mongod.log"
+Say "  Output:     the `"CGVMS API`" and `"CGVMS Web`" windows"
 Say 'Closing the "CGVMS API" or "CGVMS Web" window stops that server; closing this window does not.'
 Say 'They also stop at sign-out or shutdown (stop-production.bat stops everything).'
 exit 0

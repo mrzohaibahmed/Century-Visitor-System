@@ -1,7 +1,7 @@
 """The production deployment files (deploy/) keep their security properties.
 
 These are text-level checks of the start-production.bat scripts that cannot run in the test suite itself:
-a later edit that, say, binds MongoDB to all interfaces or starts the Next.js development server fails here.
+a later edit that, say, binds the API to all interfaces or starts the Next.js development server fails here.
 """
 import shutil
 import subprocess
@@ -30,8 +30,17 @@ def test_the_local_production_start_keeps_api_and_database_on_loopback():
     script = _production_script()
     assert "python.exe -m app.serve --host 127.0.0.1 --port 8000'" in script
     assert script.count("--host ") == 1 and "--reload" not in script
-    dev_mongo = (DEPLOY.parent / "scripts" / "dev_mongo.py").read_text(encoding="utf-8")
-    assert 'HOST = "127.0.0.1"' in dev_mongo and '"--bind_ip", HOST' in dev_mongo and "bind_ip_all" not in dev_mongo
+    # The database is SQL Server, configured in backend\.env only: the script never points the API elsewhere.
+    assert "$env:CG_MSSQL_" not in script
+
+
+def test_the_local_production_start_never_stops_or_reconfigures_sql_server():
+    """SQL Server is a Windows service shared with other databases: started and stopped outside the VMS."""
+    code = _code(_production_script())
+    for gone in ("Stop-Service", "net stop", "net start", "Restart-Service", "sqlcmd", "MSSQL$", "dev_mongo"):
+        assert gone not in code, gone
+    sql = code.index("& $python -m app.cli create-database")
+    assert sql < code.index("& $python -m app.cli migrate") < code.index("& $python -m app.cli first-admin")
 
 
 def test_the_local_production_start_selects_http_lan_explicitly():
@@ -57,12 +66,10 @@ def test_the_local_production_start_fails_when_final_health_check_fails():
 
 def test_local_operational_data_uses_one_cgvms_folder():
     common = (DEPLOY / "windows" / "cgvms-common.ps1").read_text(encoding="utf-8")
-    mongo = (REPO / "scripts" / "dev_mongo.py").read_text(encoding="utf-8")
     config = (REPO / "backend" / "app" / "core" / "config.py").read_text(encoding="utf-8")
     assert "Join-Path $app '.cgvms'" in common
-    assert 'ROOT / ".cgvms" / "data" / "mongo"' in mongo
     assert 'API_DIR.parent / ".cgvms" / "data" / "photos"' in config
-    assert ".dev\\mongo" not in common + _production_script()
+    assert "mongo" not in (common + _production_script()).lower()
     assert ".prod" not in common + _production_script()
 
 
@@ -119,7 +126,7 @@ def test_secret_files_are_ignored_by_git():
 # ---------------------------------------------------------------- any organization network
 # The VMS starts on whatever network the organization uses: Windows' network profile (Public, Private, Domain),
 # the network's name and its addresses never decide. The boundary is the binding (only the web server on
-# 0.0.0.0:6543; API and MongoDB on 127.0.0.1), not a network check or a firewall rule.
+# 0.0.0.0:6543; the API on 127.0.0.1), not a network check or a firewall rule.
 POWERSHELL = shutil.which("powershell.exe")
 WINDOWS = DEPLOY / "windows"
 
@@ -147,7 +154,7 @@ def test_the_connected_networks_only_list_the_addresses_for_gate_pcs():
     assert "$networks = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue)" in code
     assert code.count("$networks") == 2                      # read once, used once: the printed addresses
     assert "Where-Object { $_.InterfaceIndex -in $networks.InterfaceIndex }" in code
-    start = code.index("Say '[1/5] MongoDB")
+    start = code.index("Say '[1/5] SQL Server")
     assert not [line for line in code[:start].splitlines() if "Fail" in line and "network" in line.lower()]
 
 

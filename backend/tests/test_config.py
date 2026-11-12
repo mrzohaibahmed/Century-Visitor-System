@@ -1,24 +1,27 @@
 import pytest
 from pydantic import ValidationError
 
-from app.core.config import Settings
+from app.core.config import Settings, mssql_server_is_local
 from tests.conftest import make_settings
 
 
 @pytest.mark.parametrize("name", ["century_gate_system", "Century_Gate_System", " century_gate_system "])
 def test_legacy_desktop_database_is_refused(name):
     with pytest.raises(ValidationError, match="legacy desktop database"):
-        make_settings(mongo_db=name)
+        make_settings(mssql_database=name)
 
 
-@pytest.mark.parametrize("name", ["", "bad/name", "bad.name", "has space"])
+@pytest.mark.parametrize("name", ["", "bad/name", "bad.name", "has space", "x]; DROP DATABASE y", "1starts_with_digit",
+                                  "a" * 101])
 def test_invalid_database_names_are_refused(name):
-    with pytest.raises(ValidationError):
-        make_settings(mongo_db=name)
+    with pytest.raises(ValidationError, match="Invalid SQL Server database name"):
+        make_settings(mssql_database=name)
 
 
 def test_default_database_is_the_new_one():
-    assert Settings(_env_file=None).mongo_db == "century_gate_vms"
+    s = Settings(_env_file=None)
+    assert (s.mssql_server, s.mssql_database) == (".\\SQLEXPRESS", "century_gate_vms")
+    assert s.mssql_username is None and s.mssql_trust_server_certificate is False      # Windows login, TLS checked
 
 
 def test_unknown_timezone_is_refused():
@@ -30,8 +33,8 @@ def test_organisation_timezone_default():
     assert Settings(_env_file=None).timezone == "Asia/Karachi"
 
 
-def test_mongo_uri_is_never_shown_in_repr():
-    s = make_settings(mongo_uri="mongodb://app:Db-Secret-1@db.internal:27017/?replicaSet=rs0")
+def test_the_database_password_is_never_shown_in_repr():
+    s = make_settings(mssql_username="cgvms_app", mssql_password="Db-Secret-1")
     assert "Db-Secret-1" not in repr(s) and "Db-Secret-1" not in str(s.model_dump())
 
 
@@ -58,45 +61,34 @@ def test_phase_4_defaults():
     assert s.photo_dir.name == "photos" and "web" not in s.photo_dir.parts
 
 
-# ---------------------------------------------------------------- production database connection (Phase 7A)
-SECURE = "mongodb://cgvms_app:App-Pass-1@localhost:27018/?replicaSet=cgvms&tls=true&tlsCAFile=C:/vms/ca.pem"
-
-
-def test_a_secure_production_connection_is_accepted():
-    assert make_settings(environment="production", mongo_uri=SECURE).environment == "production"
-
-
-@pytest.mark.parametrize("uri,message", [
-    ("mongodb://localhost:27018/?replicaSet=cgvms&tls=true&tlsCAFile=ca.pem", "user and password"),
-    ("mongodb://cgvms_app:App-Pass-1@localhost:27018/?replicaSet=cgvms", "must use TLS"),
-    ("mongodb://cgvms_app:App-Pass-1@localhost:27018/?tls=false", "must use TLS"),
-    (SECURE + "&tlsAllowInvalidCertificates=true", "tlsAllowInvalidCertificates"),
-    (SECURE + "&tlsAllowInvalidHostnames=true", "tlsAllowInvalidHostnames"),
-    (SECURE + "&tlsInsecure=true", "tlsInsecure"),
-    ("not a uri", "not a valid MongoDB connection string"),
-])
-def test_an_insecure_production_connection_is_refused(uri, message):
-    with pytest.raises(ValidationError, match=message) as error:
-        make_settings(environment="production", mongo_uri=uri)
+# ---------------------------------------------------------------- database connection
+@pytest.mark.parametrize("username,password", [("cgvms_app", None), ("cgvms_app", ""), (None, "App-Pass-1")])
+def test_a_sql_login_needs_both_its_name_and_password(username, password):
+    with pytest.raises(ValidationError, match="CG_MSSQL_USERNAME and CG_MSSQL_PASSWORD") as error:
+        make_settings(mssql_username=username, mssql_password=password)
     assert "App-Pass-1" not in str(error.value).split("input_value")[0]     # the message never names the password
 
 
-@pytest.mark.parametrize("uri", ["mongodb://127.0.0.1:27018/?replicaSet=cgvms-dev",
-                                 "mongodb://localhost:27018/?replicaSet=cgvms-dev"])
-def test_production_accepts_a_local_database_without_login_only_when_allowed(uri):
-    with pytest.raises(ValidationError, match="user and password"):
-        make_settings(environment="production", mongo_uri=uri)
-    s = make_settings(environment="production", mongo_uri=uri, mongo_localhost_without_login=True)
-    assert s.environment == "production" and s.cookie_secure is True
+@pytest.mark.parametrize("server,local", [
+    (".", True), (".\\SQLEXPRESS", True), ("(local)\\VMS", True), ("localhost", True), ("LOCALHOST,1433", True),
+    ("127.0.0.1", True), ("::1", True), (" .\\SQLEXPRESS ", True),
+    ("db.example.com", False), ("192.168.0.7\\SQLEXPRESS", False), ("localhost.example.com", False),
+    ("SERVER01", False), ("tcp:localhost", False),
+])
+def test_which_servers_are_on_this_pc(server, local):
+    assert mssql_server_is_local(server) is local
 
 
-@pytest.mark.parametrize("uri", ["mongodb://192.168.0.7:27018/?replicaSet=cgvms-dev",
-                                 "mongodb://127.0.0.1:27018,db2.example.com:27018/?replicaSet=x",
-                                 "mongodb+srv://cluster.example.com/"])
-def test_the_no_login_exception_never_covers_another_machine(uri):
-    with pytest.raises(ValidationError):
-        make_settings(environment="production", mongo_uri=uri, mongo_localhost_without_login=True)
+@pytest.mark.parametrize("environment", ["development", "production"])
+def test_skipping_the_certificate_check_is_only_for_an_instance_on_this_pc(environment):
+    assert make_settings(environment=environment, mssql_server=".\\SQLEXPRESS",
+                         mssql_trust_server_certificate=True).mssql_trust_server_certificate
+    with pytest.raises(ValidationError, match="only allowed for a SQL Server instance on this PC"):
+        make_settings(environment=environment, mssql_server="db.example.com", mssql_trust_server_certificate=True)
 
 
-def test_development_keeps_the_local_unauthenticated_database():
-    assert make_settings(environment="development").mongo_uri.get_secret_value().startswith("mongodb://127.0.0.1")
+def test_production_accepts_windows_authentication_and_a_sql_login():
+    assert make_settings(environment="production", mssql_server=".\\SQLEXPRESS").mssql_username is None
+    s = make_settings(environment="production", mssql_server="db.example.com", mssql_trust_server_certificate=False,
+                      mssql_username="cgvms_app", mssql_password="App-Pass-1")
+    assert s.environment == "production" and s.mssql_trust_server_certificate is False

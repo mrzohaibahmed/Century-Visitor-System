@@ -11,7 +11,7 @@ from app.core.pagination import encode_sort_cursor
 from app.schemas.reports import VisitReportSort
 from app.services import reports as svc
 from app.services.visits import VisitFilter
-from tests.conftest import insert_seed, make_settings, mongo_only, new_record_id, record_id, store_of
+from tests.conftest import insert_seed, make_settings, new_record_id, record_id, store_of, unknown_id
 from tests.test_visitors import CNIC, new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
 
@@ -321,7 +321,7 @@ async def test_the_visit_report_filters(admin, people):
     assert await numbers(host_id=people["host"]["id"]) == [va]
     assert await numbers(department_id=people["other_dep"]["id"]) == [vb]
     assert await numbers(gate_id=people["gate"]["id"]) == [vb, va]
-    assert await numbers(gate_id="0" * 24) == []
+    assert await numbers(gate_id=unknown_id()) == []
     assert await numbers(reason_code="DELIVERY") == [vb]
     assert await numbers(guard_id=str(people["users"]["guard1"])) == [vb, va]     # checked both in
     assert await numbers(guard_id=str(people["users"]["admin"])) == [va]          # checked one out
@@ -444,43 +444,3 @@ async def test_pages_over_http(admin, harness):
         if not cursor:
             break
     assert len(set(seen)) == 3
-
-
-# ------------------------------------------------------------------------------------------ indexes
-def _index_names(plan) -> set[str]:
-    found: set[str] = set()
-    stack = [plan]
-    while stack:
-        p = stack.pop()
-        if isinstance(p, dict):
-            if p.get("indexName"):
-                found.add(p["indexName"])
-            stack.extend(p.values())
-        elif isinstance(p, list):
-            stack.extend(p)
-    return found
-
-
-@mongo_only           # MongoDB query plans (explain); SQL Server has its own indexes for these filters
-async def test_the_guard_and_gate_filters_use_their_indexes(harness):
-    db = harness.db
-    guards, gates = [new_record_id() for _ in range(10)], [new_record_id() for _ in range(10)]
-    docs = []
-    for i in range(600):
-        at = kar(2026, 9, 1) + timedelta(minutes=7 * i)
-        docs.append({"visit_number": f"V-2026-9{i:05d}", "visitor_id": new_record_id(), "status": "CHECKED_OUT",
-                     "check_in_at": at, "check_out_at": at + timedelta(minutes=5), "checked_in_by": guards[i % 10],
-                     "checked_out_by": guards[(i + 3) % 10], "gate_id": gates[i % 10], "reason_code": "OTHER",
-                     "snapshot": {"visitor_name": "X"}, "created_at": at, "updated_at": at})
-    await db.visits.insert_many(docs)
-    r = custom(date(2026, 9, 1), date(2026, 9, 3))
-    for f, expected in (
-        (VisitFilter(start=r.start, end=r.end, guard_id=guards[0]),
-         {"checked_in_by_history", "checked_out_by_history"}),
-        (VisitFilter(start=r.start, end=r.end, gate_id=gates[0]), {"gate_history"}),
-    ):
-        query = await svc.report_visit_query(db, f)
-        page = await db.visits.find(query).sort([("check_in_at", -1), ("_id", -1)]).limit(26).explain()
-        count = await db.command("explain", {"count": "visits", "query": query}, verbosity="queryPlanner")
-        assert _index_names(page["queryPlanner"]["winningPlan"]) == expected
-        assert _index_names(count["queryPlanner"]["winningPlan"]) == expected

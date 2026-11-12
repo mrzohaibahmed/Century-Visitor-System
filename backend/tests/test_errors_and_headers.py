@@ -20,7 +20,7 @@ def app_with_test_routes(settings):
 
     @app.get("/api/v1/_test/boom", dependencies=[Depends(public)])
     async def boom():
-        raise RuntimeError("internal detail: mongodb://u:Secret-9@host")
+        raise RuntimeError("internal detail: mssql+pyodbc://u:Secret-9@host")
 
     @app.post("/api/v1/_test/echo", dependencies=[Depends(public)])
     async def echo(body: Body):

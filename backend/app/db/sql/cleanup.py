@@ -1,5 +1,5 @@
 """
-Deletes expired sessions and login rate-limit windows on SQL Server (CG_DB_BACKEND=mssql).
+Deletes expired sessions and login rate-limit windows.
 
 MongoDB removed them itself (TTL indexes on expires_at); SQL Server has no TTL, so the API does it in the
 background. Only rows whose expires_at has passed go, exactly what the TTL indexes removed: a session is
@@ -14,7 +14,7 @@ from sqlalchemy import delete
 
 from app.db.sql.database import SqlDb
 from app.db.sql.errors import describe_error
-from app.repositories.mssql import tables
+from app.repositories import tables
 
 log = logging.getLogger(__name__)
 
@@ -37,10 +37,19 @@ class CleanupWorker:
     def __init__(self, db: SqlDb, interval_seconds: int = INTERVAL_SECONDS):
         self._db = db
         self._interval = interval_seconds
+        self._stopping = asyncio.Event()
+
+    def stop(self) -> None:
+        """Ends the loop (never in the middle of a database call)."""
+        self._stopping.set()
 
     async def run(self) -> None:
         while True:
-            await asyncio.sleep(self._interval)
+            try:
+                await asyncio.wait_for(self._stopping.wait(), timeout=self._interval)
+                return                                # asked to stop
+            except TimeoutError:
+                pass
             try:
                 removed = await delete_expired(self._db)
                 if any(removed.values()):

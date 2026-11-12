@@ -11,22 +11,19 @@ import httpx
 import pytest
 from fastapi import Response
 from pydantic import ValidationError
-from pymongo import MongoClient
 
 from app import serve
 from app.api.deps import clear_session_cookies, session_cookie_name, set_session_cookies
 from app.core.config import Settings
-from app.db.migrate import apply_schema
 from app.main import create_app
 from app.services.auth import NewSession
 from tests.conftest import (
     ADMIN_PASSWORD,
     GUARD_PASSWORD,
-    PRODUCTION_LIKE_URI,
-    TEST_MONGO_URI,
     ApiClient,
     AuthHarness,
     make_settings,
+    same_database,
 )
 
 ME = "/api/v1/auth/me"
@@ -98,7 +95,7 @@ def test_development_and_test_cookies_are_unchanged(environment):
 
 
 def test_the_mode_is_read_from_the_environment(monkeypatch, tmp_path):
-    for key, value in {"CG_ENVIRONMENT": "production", "CG_MONGO_URI": PRODUCTION_LIKE_URI,
+    for key, value in {"CG_ENVIRONMENT": "production",
                        "CG_PHOTO_DIR": str(tmp_path), "CG_DEPLOYMENT_MODE": "http-lan"}.items():
         monkeypatch.setenv(key, value)
     assert Settings(_env_file=None).secure_cookies is False
@@ -107,7 +104,7 @@ def test_the_mode_is_read_from_the_environment(monkeypatch, tmp_path):
 # ---------------------------------------------------------------- the production server (python -m app.serve)
 @pytest.fixture
 def production_env(monkeypatch, tmp_path):
-    for key, value in {"CG_ENVIRONMENT": "production", "CG_MONGO_URI": PRODUCTION_LIKE_URI,
+    for key, value in {"CG_ENVIRONMENT": "production",
                        "CG_PHOTO_DIR": str(tmp_path)}.items():
         monkeypatch.setenv(key, value)
     calls = []
@@ -187,30 +184,27 @@ async def _harness(settings: Settings, base_url: str):
     app = create_app(settings)
     try:
         async with app.router.lifespan_context(app):
-            await apply_schema(app.state.database.db)
             h = HttpHarness(app, app.state.database.db, base_url)
             yield h
             await h.close()
     finally:
-        MongoClient(TEST_MONGO_URI).drop_database(settings.mongo_db)
         shutil.rmtree(settings.photo_dir, ignore_errors=True)
 
 
-def _production(**overrides) -> Settings:
-    # A real (loopback, no-login) test database, accepted in production only with this explicit setting.
-    return make_settings(environment="production", mongo_uri=TEST_MONGO_URI, mongo_localhost_without_login=True,
-                         email_worker=False, **overrides)
+def _production(settings: Settings, **overrides) -> Settings:
+    # Production settings on the real test database (SQL Server on this PC, Windows authentication).
+    return make_settings(environment="production", email_worker=False, **same_database(settings), **overrides)
 
 
 @pytest.fixture
-async def lan():
-    async for h in _harness(_production(deployment_mode="http-lan"), "http://vms-server:6543"):
+async def lan(settings):
+    async for h in _harness(_production(settings, deployment_mode="http-lan"), "http://vms-server:6543"):
         yield h
 
 
 @pytest.fixture
-async def https_production():
-    async for h in _harness(_production(), "https://vms-server"):
+async def https_production(settings):
+    async for h in _harness(_production(settings), "https://vms-server"):
         yield h
 
 
@@ -244,7 +238,7 @@ async def test_http_lan_logout_revokes_the_session_and_clears_its_cookies(lan):
     assert r.status_code == 204
     cleared = cookie_headers(r)
     assert set(cleared) == {"cg_session", "cg_csrf"} and all("max-age=0" in h for h in cleared.values())
-    assert (await lan.db.sessions.find_one({}))["revoked_reason"] == "logout"
+    assert (await lan.store.sessions.find_one({}))["revoked_reason"] == "logout"
     replay = lan.client()
     replay.cookies.set("cg_session", token)
     assert (await replay.get(ME)).status_code == 401                              # revoked on the server
@@ -261,7 +255,7 @@ async def test_http_lan_password_change_and_admin_reset_revoke_sessions(lan):
     assert (await second.get(ME)).status_code == 401 and (await first.get(ME)).status_code == 200
 
     admin = await lan.logged_in("admin", ADMIN_PASSWORD)
-    guard = await lan.db.users.find_one({"username": "guard1"})
+    guard = await lan.store.users.find_one({"username": "guard1"})
     r = await admin.post(f"/api/v1/users/{guard['_id']}/reset-password",
                          json={"new_password": "Reset-Guard-Pass-3", "confirm_password": ADMIN_PASSWORD})
     assert r.status_code == 204, r.text

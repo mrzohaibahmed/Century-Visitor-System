@@ -1,8 +1,8 @@
 """
-Watchlist screening on SQL Server matches exactly the entries the MongoDB regex matched.
+Watchlist screening matches exactly the entries the original rule (a regex, in the MongoDB version) matched:
 
-MongoDB: identifier in the exact list, OR identifier ~ ^OTHER:<c1>[ /-]*<c2>[ /-]*...<cn>$ (case-sensitive).
-SQL Server has no regex: repositories/mssql/watchlist.find_active_match() writes the rule out. Here both
+identifier in the exact list, OR identifier ~ ^OTHER:<c1>[ /-]*<c2>[ /-]*...<cn>$ (case-sensitive).
+SQL Server has no regex: repositories/watchlist.find_active_match() writes the rule out. Here both
 are evaluated for many tricky identifiers and must agree on every one.
 """
 import re
@@ -10,11 +10,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.repositories.mssql import users as sql_users
-from app.repositories.mssql import watchlist as sql_watchlist
-from app.repositories.mssql.connection import connection
-from app.repositories.mssql.ids import new_id
-from app.repositories.mssql.tables import watchlist as watchlist_table
+from app.repositories import users as sql_users
+from app.repositories import watchlist as sql_watchlist
+from app.repositories.connection import connection
+from app.repositories.ids import new_id
+from app.repositories.tables import watchlist as watchlist_table
 
 pytestmark = pytest.mark.anyio
 NOW = datetime(2026, 11, 11, 9, 0, tzinfo=UTC)
@@ -29,7 +29,7 @@ SEARCHES = ["AB12", "AB1", "AB123", "A", "B12", "AB1 2", "ab12", "AB12\U0001F600
 
 
 def mongo_matches(identifier: str, identifiers: list[str], compact: str) -> bool:
-    """The MongoDB query of mongo/watchlist.find_active_match, evaluated in Python."""
+    """The original rule (the MongoDB version's query), evaluated in Python."""
     if identifier in identifiers:
         return True
     return bool(compact) and re.match("^OTHER:" + "[ /-]*".join(compact) + "$", identifier) is not None

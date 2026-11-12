@@ -312,14 +312,20 @@ class EmailWorker:
         self._db = db
         self._settings = settings
         self._wake = asyncio.Event()
+        self._stopping = asyncio.Event()
 
     def wake(self) -> None:
+        self._wake.set()
+
+    def stop(self) -> None:
+        """Ends the loop after the current pass (a pass is never cut off in the middle of a database call)."""
+        self._stopping.set()
         self._wake.set()
 
     async def run(self) -> None:
         # The SMTP settings are read at every pass (they can be changed by an administrator).
         log.info("E-mail sender started")
-        while True:
+        while not self._stopping.is_set():
             try:
                 await dispatch_due(self._db, self._settings)
             except asyncio.CancelledError:
@@ -331,6 +337,7 @@ class EmailWorker:
             except TimeoutError:
                 pass
             self._wake.clear()
+        log.info("E-mail sender stopped")
 
 
 class OverstayWorker:
@@ -340,10 +347,15 @@ class OverstayWorker:
         self._db = db
         self._settings = settings
         self._on_queued = on_queued          # typically EmailWorker.wake
+        self._stopping = asyncio.Event()
+
+    def stop(self) -> None:
+        """Ends the loop after the current pass (a pass is never cut off in the middle of a database call)."""
+        self._stopping.set()
 
     async def run(self) -> None:
         log.info("Overstay checker started (every %d s)", self._settings.overstay_poll_seconds)
-        while True:
+        while not self._stopping.is_set():
             try:
                 created = await queue_overstays(self._db, self._settings)
                 if created and self._on_queued is not None:
@@ -353,4 +365,8 @@ class OverstayWorker:
             except Exception:                    # noqa: BLE001 - e.g. database briefly unreachable
                 log.exception("Overstay check failed; retrying in %d seconds",
                               self._settings.overstay_poll_seconds)
-            await asyncio.sleep(self._settings.overstay_poll_seconds)
+            try:
+                await asyncio.wait_for(self._stopping.wait(), timeout=self._settings.overstay_poll_seconds)
+            except TimeoutError:
+                pass
+        log.info("Overstay checker stopped")

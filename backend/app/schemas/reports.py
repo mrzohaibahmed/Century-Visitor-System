@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 
 from app.core.identity import mask_sensitive
 from app.core.timeutil import DayRange, RangePreset
-from app.db.schema import DENIAL_SOURCES
 
 __all__ = ["CountByDepartment", "CountByHour", "CountByStatus", "DenialPage", "DenialRow", "DenialSource",
            "DepartmentPage", "DepartmentRow", "GuardPage", "GuardRow", "HostPage", "HostRow", "InsidePage",
@@ -274,7 +273,8 @@ class InsidePage(BaseModel):
 
 
 # ------------------------------------------------------------------------------------------ denials
-DenialSource = StrEnum("DenialSource", {s.upper(): s for s in DENIAL_SOURCES})     # as in the collection
+DENIAL_SOURCES = ["check_in", "lookup", "audit_backfill"]             # = ck_entry_denials_source (SQL)
+DenialSource = StrEnum("DenialSource", {s.upper(): s for s in DENIAL_SOURCES})
 
 
 class WatchlistRef(BaseModel):

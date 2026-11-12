@@ -1,6 +1,6 @@
 """
 SQL Server test database: created and migrated ONCE per test session (cgvms_test_<random>), emptied before
-each test that uses it, dropped at the end. (A database per test, as with MongoDB, would cost seconds per
+each test that uses it, dropped at the end. (A database per test would cost seconds per
 test on SQL Server.) The instance: CG_TEST_MSSQL_SERVER, default this PC's .\\SQLEXPRESS, Windows login.
 """
 import os
@@ -9,7 +9,7 @@ import uuid
 from sqlalchemy import text
 
 from app.core.config import Settings, mssql_server_is_local
-from app.db.sql.__main__ import create_database, migrate
+from app.db.sql.admin import create_database, migrate
 from app.db.sql.engine import sync_engine
 
 TEST_MSSQL_SERVER = os.environ.get("CG_TEST_MSSQL_SERVER", ".\\SQLEXPRESS")

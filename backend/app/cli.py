@@ -1,8 +1,11 @@
 """
 Operator commands (run on the server, never exposed over HTTP):
 
-    python -m app.cli migrate    create/update collections, validators and indexes
-    python -m app.cli check      same checks as GET /api/v1/health/ready
+    python -m app.cli create-database   creates CG_MSSQL_DATABASE on the SQL Server instance if it is missing
+    python -m app.cli migrate    creates/updates the tables (Alembic migrations; forward-only, repeatable)
+    python -m app.cli check      connection, schema revision and isolation settings (exit 1 if not ready)
+    python -m app.cli backup [--to D:\\Backups]   a verified full backup file of the database (.bak), written by
+                                      the SQL Server service (default: its backup folder); back up CG_PHOTO_DIR too
     python -m app.cli create-admin --username admin [--display-name "..."] [--password-stdin]
     python -m app.cli first-admin    admin / admin1234 when no account exists yet (password from
                                       CG_FIRST_ADMIN_PASSWORD if set; must be changed at the first login;
@@ -25,52 +28,32 @@ import getpass
 import json
 import sys
 
+import pyodbc
 from pydantic import ValidationError
-from pymongo.errors import OperationFailure
+from sqlalchemy.exc import DBAPIError
 
 from app.core.config import configuration_problems, get_settings
 from app.core.logging import configure_logging
-from app.db.client import Database, open_database
-from app.db.migrate import LegacyDatabaseError, apply_schema, current_schema_version
-from app.db.schema import SCHEMA_VERSION
+from app.db.client import open_database
+from app.db.sql import admin
+from app.db.sql.errors import describe_error
 
 
-async def _migrate() -> int:
-    settings = get_settings()
-    database = Database(settings)
+def _database_admin(name: str, **options) -> int:
+    """create-database, migrate, check, backup (synchronous: Alembic, DDL and BACKUP use plain pyodbc)."""
     try:
-        report = await apply_schema(database.db)
-    except LegacyDatabaseError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        return 2
-    except OperationFailure as e:
-        if e.code != 13:                                   # 13 = Unauthorized
-            raise
-        print("ERROR: this database account may not change the schema. Run migrations with an account that "
-              "may change it, not the application's account.", file=sys.stderr)
-        return 2
-    finally:
-        await database.close()
-    print(json.dumps({"database": settings.mongo_db, "schema_version": report.schema_version,
-                      "created_collections": report.created_collections,
-                      "indexes": report.indexes}, indent=2))
-    return 0
-
-
-async def _check() -> int:
-    settings = get_settings()
-    database = Database(settings)
-    try:
-        await database.db.command("ping")
-        version = await current_schema_version(database.db)
-        hello = await database.db.command("hello")
-    finally:
-        await database.close()
-    ok = version == SCHEMA_VERSION and bool(hello.get("setName"))
-    print(json.dumps({"database": settings.mongo_db, "schema_version": version,
-                      "expected_schema_version": SCHEMA_VERSION, "replica_set": bool(hello.get("setName")),
-                      "ready": ok}, indent=2))
-    return 0 if ok else 1
+        report = getattr(admin, name.replace("-", "_"))(get_settings(), **options)
+    except (DBAPIError, pyodbc.Error) as e:      # BACKUP runs on the driver's own cursor
+        # The type and SQL Server error number only: never the connection string or the driver's message.
+        hints = {"check": "",
+                 "backup": " (the folder must exist on the database server and the SQL Server service must be "
+                           "allowed to write to it)"}
+        hint = hints.get(name, " (create-database and migrate need a login that may create the database and "
+                               "alter tables; the application's own login may not)")
+        print(f"ERROR: {describe_error(e)}{hint}", file=sys.stderr)
+        return 1
+    print(json.dumps(report, indent=2))
+    return 0 if report.get("ready", True) else 1
 
 
 async def _backfill_entry_denials() -> int:
@@ -148,8 +131,11 @@ async def _create_admin(username: str, display_name: str, password: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("migrate", help="create/update collections, validators and indexes")
+    sub.add_parser("create-database", help="create CG_MSSQL_DATABASE if it does not exist")
+    sub.add_parser("migrate", help="create/update the tables (Alembic migrations)")
     sub.add_parser("check", help="readiness checks")
+    backup = sub.add_parser("backup", help="write a verified full backup file (.bak) of the database")
+    backup.add_argument("--to", dest="folder", help="folder on the database server (default: its backup folder)")
     sub.add_parser("first-admin", aliases=["dev-first-admin"],
                    help="admin / admin1234 (changed at the first login) if no account exists")
     sub.add_parser("generate-secrets-key", help="print a new random key for CG_SECRETS_KEY")
@@ -185,7 +171,11 @@ def main() -> int:
         if password is None:
             return 2
         return asyncio.run(_create_admin(args.username.strip(), args.display_name.strip(), password))
-    commands = {"migrate": _migrate, "check": _check, "first-admin": _first_admin, "dev-first-admin": _first_admin,
+    if args.command in ("create-database", "migrate", "check"):
+        return _database_admin(args.command)
+    if args.command == "backup":
+        return _database_admin("backup", folder=args.folder)
+    commands = {"first-admin": _first_admin, "dev-first-admin": _first_admin,
                 "backfill-entry-denials": _backfill_entry_denials}
     return asyncio.run(commands[args.command]())
 

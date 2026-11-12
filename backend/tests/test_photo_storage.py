@@ -5,7 +5,7 @@ import pytest
 
 from app.main import create_app
 from app.services.photos import PhotoStorageError, check_photo_dir
-from tests.conftest import make_settings, prepare_schema
+from tests.conftest import make_settings
 from tests.test_images import image_bytes
 from tests.test_visitors import new_visitor
 
@@ -44,7 +44,6 @@ async def test_the_production_app_does_not_start_without_the_folder(tmp_path):
 
 
 async def test_a_vanished_folder_is_reported_and_not_recreated(harness, settings, guard):
-    await prepare_schema(harness.app.state.database)
     visitor = await new_visitor(guard)
     shutil.rmtree(settings.photo_dir)                             # e.g. the photo drive is disconnected
     ready = await harness.client().get("/api/v1/health/ready")

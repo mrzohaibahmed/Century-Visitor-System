@@ -3,24 +3,17 @@ security decision and its audit entries; a missing record is repaired by the ide
 import asyncio
 import json
 import logging
-import uuid
 from datetime import UTC, datetime, timedelta
 
 import pyodbc
 import pytest
-from pymongo import MongoClient
-from pymongo.asynchronous.collection import AsyncCollection
-from pymongo.errors import DuplicateKeyError, WriteError
 from sqlalchemy.exc import IntegrityError
 
-from app import cli
-from app.core.config import get_settings
-from app.db.backend import BACKEND
-from app.db.migrate import apply_schema
-from app.db.schema import SCHEMA_VERSION
+from app.repositories import entry_denials as denials_repo
 from app.services import entry_denials as svc
 from app.services import reports as reports_svc
-from tests.conftest import TEST_MONGO_URI, mongo_only, mssql_only, new_record_id, raw_database_errors, record_id
+from tests.conftest import new_record_id, raw_database_errors, record_id
+from tests.test_users import run_cli
 from tests.test_visitors import CNIC, new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
 
@@ -51,27 +44,13 @@ async def lookup(client, number=CNIC, id_type="CNIC"):
 def fail_denial_inserts(monkeypatch, error: Exception | None = None, delay: float | None = None):
     """Makes every entry_denials insert fail (or hang) with a driver error that quotes a CNIC, as a real
     schema refusal can; other tables are untouched."""
-    if BACKEND == "mssql":
-        from app.repositories import entry_denials as denials_repo
-
-        async def insert(db, doc):
-            if delay:
-                await asyncio.sleep(delay)
-            raise error or IntegrityError("INSERT INTO dbo.entry_denials ...", None, pyodbc.Error(
-                "23000", "[23000] The INSERT statement conflicted with the CHECK constraint (value 35201-1234567-1). "
-                         "(547) (SQLExecDirectW)"))
-        monkeypatch.setattr(denials_repo, "insert", insert)
-        return
-    original = AsyncCollection.insert_one
-
-    async def insert_one(self, *args, **kwargs):
-        if self.name == "entry_denials":
-            if delay:
-                await asyncio.sleep(delay)
-            raise error or WriteError("Document failed validation: 35201-1234567-1", code=121)
-        return await original(self, *args, **kwargs)
-
-    monkeypatch.setattr(AsyncCollection, "insert_one", insert_one)
+    async def insert(db, doc):
+        if delay:
+            await asyncio.sleep(delay)
+        raise error or IntegrityError("INSERT INTO dbo.entry_denials ...", None, pyodbc.Error(
+            "23000", "[23000] The INSERT statement conflicted with the CHECK constraint (value 35201-1234567-1). "
+                     "(547) (SQLExecDirectW)"))
+    monkeypatch.setattr(denials_repo, "insert", insert)
 
 
 # ------------------------------------------------------------------------------------------ check-in
@@ -337,55 +316,17 @@ async def test_concurrent_backfills_create_each_document_once(harness):
     assert await harness.store.entry_denials.count_documents({}) == 20
 
 
-@pytest.fixture
-def cli_env(monkeypatch, tmp_path):
-    db_name = f"cgvms_test_{uuid.uuid4().hex[:10]}"
-    for key, value in {"CG_ENVIRONMENT": "development", "CG_MONGO_URI": TEST_MONGO_URI, "CG_MONGO_DB": db_name,
-                       "CG_PHOTO_DIR": str(tmp_path)}.items():
-        monkeypatch.setenv(key, value)
-    get_settings.cache_clear()
-    yield db_name
-    get_settings.cache_clear()
-    MongoClient(TEST_MONGO_URI).drop_database(db_name)
-
-
-@mongo_only           # the CLI "migrate" command is MongoDB-only until the cut-over (step 7)
-def test_the_backfill_command(monkeypatch, cli_env, capsys):
-    def run(command):
-        monkeypatch.setattr("sys.argv", ["app.cli", command])
-        get_settings.cache_clear()
-        return cli.main()
-
-    assert run("migrate") == 0
-    MongoClient(TEST_MONGO_URI)[cli_env].audit_logs.insert_one({
-        "timestamp": datetime.now(UTC), "action": "WATCHLIST_MATCH", "result": "SUCCESS", "actor": {},
-        "resource": {"type": "visitor", "id": new_record_id()}, "metadata": {}})
-    capsys.readouterr()
-    assert run("backfill-entry-denials") == 0
-    first = json.loads(capsys.readouterr().out)
-    assert (first["created"], first["incomplete"], first["database"]) == (1, 1, cli_env)
-    assert run("backfill-entry-denials") == 0
-    assert json.loads(capsys.readouterr().out)["created"] == 0
-    assert run("migrate") == 0                                          # migrating again changes nothing
-    assert MongoClient(TEST_MONGO_URI)[cli_env].entry_denials.count_documents({}) == 1
-
-
-# ------------------------------------------------------------------------------------------ schema
-@mongo_only           # MongoDB indexes and validator; the SQL Server counterpart follows
-async def test_the_collection_validates_and_deduplicates(harness):
-    assert SCHEMA_VERSION >= 6
-    indexes = await harness.store.entry_denials.index_information()
-    assert indexes["source_audit_id_unique"]["unique"] is True
-    assert indexes["newest_first"]["key"] == [("at", -1), ("_id", -1)]
-    assert set(indexes) == {"_id_", "source_audit_id_unique", "newest_first"}      # nothing speculative
-    base = {"at": datetime.now(UTC), "reason": "WATCHLIST", "source": "check_in", "source_audit_id": new_record_id()}
-    await harness.store.entry_denials.insert_one(dict(base))
-    with pytest.raises(DuplicateKeyError):
-        await harness.store.entry_denials.insert_one(dict(base))
-    for bad in ({"source": "guess"}, {"reason": "OTHER"}, {"source_audit_id": None}, {"reason_code": "SHOPPING"}):
-        with pytest.raises(WriteError):
-            await harness.store.entry_denials.insert_one(base | {"source_audit_id": new_record_id()} | bad)
-    await apply_schema(harness.db)                                      # repeated migration is safe
+async def test_the_backfill_command(harness, settings):
+    """python -m app.cli backfill-entry-denials, against the test database (migrate first, as an operator would)."""
+    assert run_cli(settings, "migrate").returncode == 0
+    await _audit_match(harness, metadata={})
+    first = run_cli(settings, "backfill-entry-denials")
+    assert first.returncode == 0, first.stderr
+    report = json.loads(first.stdout)
+    assert (report["created"], report["incomplete"], report["database"]) == (1, 1, settings.mssql_database)
+    again = run_cli(settings, "backfill-entry-denials")
+    assert again.returncode == 0 and json.loads(again.stdout)["created"] == 0
+    assert run_cli(settings, "migrate").returncode == 0                # migrating again changes nothing
     assert await harness.store.entry_denials.count_documents({}) == 1
 
 
@@ -408,10 +349,9 @@ def test_no_route_exposes_denials_yet():
     assert not [r.path for r in api_router.routes if "denial" in getattr(r, "path", "")]
 
 
-@mssql_only
-async def test_the_sql_table_validates_and_deduplicates(harness):
-    """The same rules as the MongoDB collection: one record per audit entry, only known reasons, sources and
-    purposes, never without its audit entry."""
+# ------------------------------------------------------------------------------------------ schema
+async def test_the_table_validates_and_deduplicates(harness):
+    """One record per audit entry, only known reasons, sources and purposes, never without its audit entry."""
     duplicate, rejected = raw_database_errors()
     base = {"at": datetime.now(UTC), "reason": "WATCHLIST", "source": "check_in", "source_audit_id": new_record_id()}
     await harness.store.entry_denials.insert_one(dict(base))

@@ -3,7 +3,7 @@ Reports: the overview (cards and chart series) and the visit report. Administrat
 (reports:view; the routers enforce it).
 
 - report_range(): the local days a report covers ("today", "this week", a custom range...), worked out
-  on the server in the organisation's time zone (Asia/Karachi) and turned into UTC bounds for MongoDB;
+  on the server in the organisation's time zone (Asia/Karachi) and turned into UTC bounds for the database;
 - report_visit_query(): the visit filter, built by the same code as the visit history
   (services/visits.visit_query), so a report and GET /visits never disagree about what a filter means;
 - visitor_identities(): the ID number and phone for one page of rows in ONE query (no N+1), with a
@@ -221,7 +221,7 @@ async def visitor_summary(db: Db, f: VisitFilter, *, sort: str, cursor: str | No
                           count: bool = True
                           ) -> tuple[list[dict], str | None, int | None, dict[RecordId, dict], set[RecordId]]:
     """Per visitor: their visits that checked in within the range and match the filters, grouped in
-    MongoDB, one page at a time (keyset on the sort value, then the visitor id). Returns (groups, next
+    the database, one page at a time (keyset on the sort value, then the visitor id). Returns (groups, next
     cursor, number of visitors, their identity/phone/name, the ids of those inside now)."""
     if f.start is None or f.end is None:
         raise ValueError("A visitor summary is always bounded by a date range.")

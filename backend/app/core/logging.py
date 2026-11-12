@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from app.core.request_context import current_request_id
 
 _REDACTIONS = [
-    # user:password@ inside any URL (MongoDB URI, SMTP URL, ...)
+    # user:password@ inside any URL (SMTP URL, ...)
     (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)[^\s/@]+@"), r"\1***@"),
     # password=..., "token": "...", secret: ...
     (re.compile(r"(?i)(\w*(?:password|passwd|pwd|secret|token))(['\"]?\s*[:=]\s*['\"]?)[^\s'\",}]+"), r"\1\2***"),
@@ -63,7 +63,7 @@ def configure_logging(level: str = "INFO") -> None:
             root.removeHandler(existing)
     root.addHandler(handler)
     root.setLevel(level)
-    # pymongo DEBUG output can contain whole documents (personal data).
-    logging.getLogger("pymongo").setLevel(logging.WARNING)
+    # Driver DEBUG output can contain whole statements and parameters (personal data).
+    logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
     # Uvicorn's own access log is replaced by the request middleware (no query strings logged).
     logging.getLogger("uvicorn.access").disabled = True

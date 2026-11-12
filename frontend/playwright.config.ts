@@ -3,9 +3,9 @@ import path from "node:path";
 
 /**
  * End-to-end tests against a real, isolated stack:
- *   Edge (installed browser) -> Next.js dev localhost:3001 -> FastAPI :8001 -> MongoDB database "cgvms_e2e"
+ *   Edge (installed browser) -> Next.js dev localhost:3001 -> FastAPI :8001 -> SQL Server database "cgvms_e2e"
  * The development database and API (:8000, century_gate_vms) are never used.
- * Needs the development MongoDB replica set running (scripts/dev_mongo.py start).
+ * Needs SQL Server on this PC (.\SQLEXPRESS, or CG_TEST_MSSQL_SERVER), reached with the Windows login.
  */
 const API_DIR = path.resolve(__dirname, "../backend");
 const PYTHON = path.join(API_DIR, ".venv", "Scripts", "python.exe");
@@ -14,8 +14,12 @@ export const E2E_ADMIN_PASSWORD = "E2e-Gatekeeper-Pass-1";
 
 const apiEnv = {
   CG_ENVIRONMENT: "test",
-  CG_MONGO_URI: process.env.CG_TEST_MONGO_URI ?? "mongodb://127.0.0.1:27018/?replicaSet=cgvms-dev",
-  CG_MONGO_DB: "cgvms_e2e",
+  CG_MSSQL_SERVER: process.env.CG_TEST_MSSQL_SERVER ?? ".\\SQLEXPRESS",
+  CG_MSSQL_DATABASE: "cgvms_e2e",
+  // Windows login, whatever backend/.env says; a local instance has a self-signed certificate.
+  CG_MSSQL_USERNAME: "",
+  CG_MSSQL_PASSWORD: "",
+  CG_MSSQL_TRUST_SERVER_CERTIFICATE: process.env.CG_TEST_MSSQL_SERVER ? "false" : "true",
   E2E_ADMIN_PASSWORD,
 };
 

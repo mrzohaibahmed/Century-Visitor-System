@@ -9,7 +9,7 @@ import pytest
 from app.services import entry_denials as denials_svc
 from app.services import reports as svc
 from app.services.visits import VisitFilter
-from tests.conftest import insert_seed, make_settings, mongo_only, new_record_id, record_id, store_of
+from tests.conftest import insert_seed, make_settings, new_record_id, record_id, store_of
 from tests.test_entry_denials import ban, lookup
 from tests.test_visitors import CNIC, new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
@@ -59,21 +59,6 @@ async def denial(db, at, *, source="check_in", reason="WATCHLIST", **fields) -> 
     planted = await insert_seed(store_of(db), "entry_denials", doc, unchecked_values=reason != "WATCHLIST")
     doc["_id"] = planted.inserted_id
     return doc
-
-
-def _plan_indexes(plan) -> set[str]:
-    found, stack = set(), [plan]
-    while stack:
-        p = stack.pop()
-        if isinstance(p, dict):
-            if p.get("indexName"):
-                found.add(p["indexName"])
-            if p.get("stage") == "COLLSCAN":
-                found.add("COLLSCAN")
-            stack.extend(p.values())
-        elif isinstance(p, list):
-            stack.extend(p)
-    return found
 
 
 # ------------------------------------------------------------------------------------------ access
@@ -381,22 +366,3 @@ async def test_denials_page_newest_first(harness):
         if not cursor:
             break
     assert len(seen) == len(set(seen)) == 5 == total
-
-
-# ------------------------------------------------------------------------------------------ indexes
-@mongo_only           # MongoDB query plans (explain); not a SQL Server check
-async def test_the_report_queries_use_indexes(harness):
-    db = harness.db
-    for i in range(300):
-        await visit(db, kar(2026, 8, 1) + timedelta(hours=7 * i), minutes=5 if i % 5 else None)
-        await denial(db, kar(2026, 8, 1) + timedelta(hours=7 * i))
-    window = {"$gte": kar(2026, 9, 1), "$lt": kar(2026, 9, 3)}
-    shapes = {
-        "range (summary, hosts, departments, check-ins)": (db.visits, {"check_in_at": window}, {"check_in"}),
-        "inside now": (db.visits, {"status": "CHECKED_IN"}, {"status_check_in"}),
-        "check-outs by time": (db.visits, {"check_out_at": {"$type": "date"} | window}, {"check_out"}),
-        "denials": (db.entry_denials, {"at": window}, {"newest_first"}),
-    }
-    for name, (collection, query, expected) in shapes.items():
-        plan = (await collection.find(query).explain())["queryPlanner"]["winningPlan"]
-        assert _plan_indexes(plan) == expected, name

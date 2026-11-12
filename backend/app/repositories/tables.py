@@ -8,7 +8,7 @@ migrated database, so the two cannot drift apart unnoticed.
 from sqlalchemy import CHAR, Boolean, Column, Computed, Date, Integer, MetaData, String, Table, Unicode, UnicodeText
 from sqlalchemy.dialects.mssql import TINYINT, UNIQUEIDENTIFIER, VARBINARY
 
-from app.repositories.mssql.types import UtcDateTime
+from app.repositories.types import UtcDateTime
 
 BIN2 = "Latin1_General_100_BIN2"
 metadata = MetaData(schema="dbo")

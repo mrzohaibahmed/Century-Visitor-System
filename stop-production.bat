@@ -1,7 +1,8 @@
 @echo off
 rem ============================================================================
 rem  Century Gate VMS - stop the production application on this PC:
-rem  web, API, then MongoDB (clean shutdown).
+rem  web, then API. SQL Server keeps running (a Windows service shared with
+rem  other databases).
 rem  Start again with start-production.bat.
 rem ============================================================================
 setlocal

@@ -1,11 +1,8 @@
 """
-SQL Server foundation (step 4a of the move from MongoDB), against a real SQL Server test database
-(skipped when none is reachable): record IDs, UTC times, duplicate-key translation, transactions,
-health, the table definitions, and the loader that picks each repository's backend.
+SQL Server foundation, against a real SQL Server test database: record IDs, UTC times, duplicate-key
+translation, transactions, health, the table definitions and the clean-up of expired rows.
 """
 import re
-import sys
-import types
 import uuid
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -21,10 +18,9 @@ from app.db.errors import DuplicateKey
 from app.db.sql import transactions as sql_transactions
 from app.db.sql.engine import sync_engine
 from app.db.sql.errors import is_deadlock, is_duplicate_key, native_errors
-from app.repositories import _backend
-from app.repositories.mssql import ids, tables
-from app.repositories.mssql.connection import connection
-from app.repositories.mssql.errors import DATABASE_ERRORS, duplicates_as_domain_error
+from app.repositories import ids, tables
+from app.repositories.connection import connection
+from app.repositories.errors import DATABASE_ERRORS, duplicates_as_domain_error
 from tests.mssql_support import EMPTY_ALL_TABLES
 
 pytestmark = pytest.mark.anyio
@@ -244,41 +240,29 @@ async def test_the_sql_server_database_reports_its_health(sql_database):
     assert await sql_database.schema_status() == "ok"
 
 
-# ------------------------------------------------------------------------------------------ backend loader
-def _fake_module(name: str, source: str) -> types.ModuleType:
-    module = types.ModuleType(name)
-    exec(source, module.__dict__)                  # noqa: S102 - fixed test source
-    return module
+# ------------------------------------------------------------------------------------------ expired rows
+async def test_only_rows_past_their_expiry_are_cleaned_up(sql_database):
+    """What MongoDB's TTL indexes removed, and nothing else (a revoked but unexpired session stays)."""
+    from datetime import timedelta
 
-
-def test_the_loader_takes_each_function_from_the_configured_backend(monkeypatch):
-    mongo = _fake_module("app.repositories.mongo.example", (
-        "LIMIT = 5\n"
-        "class Shape:\n    pass\n"
-        "async def find(db, x):\n    'Finds x.'\n    return 'mongo'\n"
-        "def build(x):\n    return 'mongo'\n"))
-    sql = _fake_module("app.repositories.mssql.example", "async def find(db, x):\n    return 'mssql'\n")
-    monkeypatch.setitem(sys.modules, "app.repositories.mongo.example", mongo)
-    monkeypatch.setitem(sys.modules, "app.repositories.mssql.example", sql)
-
-    monkeypatch.setattr(_backend, "BACKEND", "mongo")
-    assert _backend.load("app.repositories.example") == {"LIMIT": 5, "Shape": mongo.Shape, "find": mongo.find,
-                                                         "build": mongo.build}
-
-    monkeypatch.setattr(_backend, "BACKEND", "mssql")
-    loaded = _backend.load("app.repositories.example")
-    assert loaded["find"] is sql.find                                  # written for SQL Server: used
-    assert loaded["LIMIT"] == 5 and loaded["Shape"] is mongo.Shape     # constants and classes: shared until then
-    with pytest.raises(_backend.NotPortedYet, match=r"repositories\.example\.build has no SQL Server version"):
-        loaded["build"]("x")                                           # not written yet: a clear error, not Mongo
-    assert loaded["build"].__name__ == "build"
-
-
-def test_an_area_without_any_sql_server_module_still_loads(monkeypatch):
-    mongo = _fake_module("app.repositories.mongo.later", "async def find(db):\n    'Finds.'\n    return 1\n")
-    monkeypatch.setitem(sys.modules, "app.repositories.mongo.later", mongo)
-    monkeypatch.setattr(_backend, "BACKEND", "mssql")
-    loaded = _backend.load("app.repositories.later")
-    assert loaded["find"].__doc__ == "Finds."
-    with pytest.raises(_backend.NotPortedYet):
-        loaded["find"](None)
+    from app.db.sql.cleanup import delete_expired
+    db = sql_database.db
+    user = ids.new_id()
+    async with connection(db) as conn:
+        await conn.execute(insert(tables.users), {
+            "id": user, "username": "guard1", "password_hash": "x", "role": "GUARD", "is_active": True,
+            "must_change_password": False, "failed_login_count": 0, "created_at": NOW, "updated_at": NOW})
+        for name, expires, revoked in (("a", NOW - timedelta(seconds=1), None), ("b", NOW + timedelta(hours=1), NOW),
+                                       ("c", NOW + timedelta(hours=1), None)):
+            await conn.execute(insert(tables.sessions), {
+                "id": ids.new_id(), "token_hash": name * 64, "csrf_token_hash": name * 64, "user_id": user,
+                "created_at": NOW, "last_seen_at": NOW, "expires_at": expires, "revoked_at": revoked})
+        await conn.execute(insert(tables.rate_limits), [
+            {"window_key": "old", "count": 3, "expires_at": NOW - timedelta(minutes=1)},
+            {"window_key": "current", "count": 1, "expires_at": NOW + timedelta(minutes=10)}])
+    assert await delete_expired(db, NOW) == {"sessions": 1, "rate_limits": 1}
+    async with connection(db) as conn:
+        left = (await conn.execute(select(tables.sessions.c.token_hash))).scalars().all()
+        windows = (await conn.execute(select(tables.rate_limits.c.window_key))).scalars().all()
+    assert sorted(h[0] for h in left) == ["b", "c"] and windows == ["current"]
+    assert await delete_expired(db, NOW) == {"sessions": 0, "rate_limits": 0}

@@ -5,7 +5,7 @@ import pytest
 
 from app.services import entry_denials as denials_svc
 from app.services import reports as svc
-from tests.conftest import insert_seed, make_settings, mongo_only, new_record_id, store_of
+from tests.conftest import insert_seed, make_settings, new_record_id, store_of
 from tests.test_entry_denials import ban, lookup
 from tests.test_visitors import new_visitor
 from tests.test_visits import check_in, directory  # noqa: F401 - fixture
@@ -192,35 +192,3 @@ async def test_the_overview_reports_the_new_counts_for_any_range(harness):
                              now=kar(2026, 9, 30))
     assert (out["totals"]["denied_entries"], out["totals"]["watchlist_matches"]) == (2, 2)
     assert out["totals"]["visits"] == 0                                 # the rest of the overview is unchanged
-
-
-# ------------------------------------------------------------------------------------------ index
-def _stages(plan) -> list[dict]:
-    found, stack = [], [plan]
-    while stack:
-        p = stack.pop()
-        if isinstance(p, dict):
-            if "stage" in p:
-                found.append(p)
-            stack.extend(p.values())
-        elif isinstance(p, list):
-            stack.extend(p)
-    return found
-
-
-@mongo_only           # MongoDB query plans (explain); not a SQL Server check
-async def test_the_counts_use_the_at_index(harness):
-    for i in range(200):
-        await seed(harness.db, kar(2026, 9, 1) + timedelta(hours=i))
-    window = {"at": {"$gte": kar(2026, 9, 3), "$lt": kar(2026, 9, 4)}}
-    plans = {}
-    for name, query in (("denied", window), ("matches", window | {"reason": "WATCHLIST"})):
-        e = await harness.db.command("explain", {"count": "entry_denials", "query": query}, verbosity="executionStats")
-        plans[name] = e
-        stages = _stages(e["queryPlanner"]["winningPlan"])
-        assert {s.get("indexName") for s in stages if s.get("indexName")} == {"newest_first"}, name
-        assert not any(s["stage"] == "COLLSCAN" for s in stages), name
-        assert e["executionStats"]["totalKeysExamined"] <= 25, name        # one day of the 200 hours
-    # All refusals: answered from the index alone; WATCHLIST ones: the index, then the day's documents.
-    assert plans["denied"]["executionStats"]["totalDocsExamined"] == 0
-    assert plans["matches"]["executionStats"]["totalDocsExamined"] == 24

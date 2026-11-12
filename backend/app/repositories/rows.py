@@ -1,7 +1,7 @@
 """Rows <-> the documents the services already expect (as the MongoDB repositories returned them)."""
 from sqlalchemy import Row, Table
 
-from app.repositories.mssql import ids
+from app.repositories import ids
 
 
 def as_doc(row: Row | None) -> dict | None:

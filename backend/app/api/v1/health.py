@@ -2,10 +2,10 @@
 Health checks (public; used by the reverse proxy, monitoring and the UI status dot).
 
 - /health/live  : the API process is up.
-- /health/ready : the API can serve requests: database reachable, schema
-                  migrated to the expected version, transactions available
-                  (replica set), photo folder available. Answers 503
-                  otherwise. Never reveals hosts, URIs, paths or error text.
+- /health/ready : the API can serve requests: SQL Server reachable, schema
+                  migrated to the expected revision, transactions available,
+                  photo folder available. Answers 503 otherwise. Never
+                  reveals hosts, connection strings, paths or error text.
 """
 import asyncio
 import logging

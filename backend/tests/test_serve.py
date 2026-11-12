@@ -2,7 +2,6 @@
 import pytest
 
 from app import serve
-from tests.conftest import PRODUCTION_LIKE_URI
 
 
 @pytest.fixture
@@ -13,7 +12,8 @@ def ran(monkeypatch):
 
 
 def production_env(monkeypatch, tmp_path, **extra):
-    env = {"CG_ENVIRONMENT": "production", "CG_MONGO_URI": PRODUCTION_LIKE_URI, "CG_PHOTO_DIR": str(tmp_path)}
+    # SQL Server on this PC with Windows authentication: a valid production database setting.
+    env = {"CG_ENVIRONMENT": "production", "CG_MSSQL_SERVER": ".\\SQLEXPRESS", "CG_PHOTO_DIR": str(tmp_path)}
     for key, value in {**env, **extra}.items():
         monkeypatch.setenv(key, value)
 
@@ -34,10 +34,11 @@ def test_refuses_to_run_with_development_settings(monkeypatch, tmp_path, ran, ca
 
 
 def test_an_invalid_configuration_stops_the_start_without_showing_secrets(monkeypatch, tmp_path, ran, capsys):
-    production_env(monkeypatch, tmp_path, CG_MONGO_URI="mongodb://cgvms_app:Leak-Me-1@localhost:27018/?tls=false")
+    production_env(monkeypatch, tmp_path, CG_MSSQL_SERVER="db.example.com", CG_MSSQL_TRUST_SERVER_CERTIFICATE="true",
+                   CG_MSSQL_USERNAME="cgvms_app", CG_MSSQL_PASSWORD="Leak-Me-1")
     assert serve.main([]) == 2 and ran == []
     err = capsys.readouterr().err
-    assert "must use TLS" in err and "Leak-Me-1" not in err
+    assert "only allowed for a SQL Server instance on this PC" in err and "Leak-Me-1" not in err
 
 
 def test_insecure_cookies_are_refused_in_production(monkeypatch, tmp_path, ran, capsys):
@@ -48,7 +49,8 @@ def test_insecure_cookies_are_refused_in_production(monkeypatch, tmp_path, ran, 
 def test_the_cli_reports_configuration_problems_without_secrets(monkeypatch, tmp_path, capsys):
     from app import cli
     from app.core.config import get_settings
-    production_env(monkeypatch, tmp_path, CG_MONGO_URI="mongodb://cgvms_app:Leak-Me-2@localhost:27018/?tls=false")
+    production_env(monkeypatch, tmp_path, CG_MSSQL_SERVER="db.example.com", CG_MSSQL_TRUST_SERVER_CERTIFICATE="true",
+                   CG_MSSQL_USERNAME="cgvms_app", CG_MSSQL_PASSWORD="Leak-Me-2")
     monkeypatch.setattr("sys.argv", ["app.cli", "check"])
     get_settings.cache_clear()
     try:
@@ -56,4 +58,5 @@ def test_the_cli_reports_configuration_problems_without_secrets(monkeypatch, tmp
     finally:
         get_settings.cache_clear()
     err = capsys.readouterr().err
-    assert "must use TLS" in err and "Leak-Me-2" not in err and "Traceback" not in err
+    assert "only allowed for a SQL Server instance on this PC" in err and "Leak-Me-2" not in err
+    assert "Traceback" not in err

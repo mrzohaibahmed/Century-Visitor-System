@@ -4,8 +4,7 @@ starlette==1.7.0
 uvicorn[standard]==0.54.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
-pymongo==4.18.2         # current database; removed after the SQL Server cut-over
-# SQL Server (the move from MongoDB): SQLAlchemy Core (no ORM) over aioodbc / pyodbc and
+# SQL Server: SQLAlchemy Core (no ORM) over aioodbc / pyodbc and
 # Microsoft "ODBC Driver 18 for SQL Server" (installed on the PC, not by pip); Alembic migrations.
 sqlalchemy[asyncio]==2.1.8
 greenlet==3.5.6         # (SQLAlchemy asyncio dependency, pinned like the others)
