@@ -2,7 +2,7 @@
 Free-form values (audit changes / metadata, notification data) stored as JSON in SQL Server.
 
 IDs and times inside keep their type through a small tag ({"$id": ...}, {"$date": ...}), so a reader gets
-back exactly what was written, as from MongoDB. Times are cut to milliseconds, as MongoDB stored them.
+back exactly what was written. Times are cut to milliseconds, like every stored time (repositories/types.py).
 """
 import json
 import uuid

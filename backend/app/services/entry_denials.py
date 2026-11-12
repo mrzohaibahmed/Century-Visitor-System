@@ -2,7 +2,7 @@
 Refused entries (entry_denials), for reporting. One document per refused attempt, keyed by the
 WATCHLIST_MATCH audit entry that recorded it (source_audit_id, unique).
 
-The security decision never depends on this collection:
+The security decision never depends on this table:
 - the watchlist check and its audit entries run first, exactly as before;
 - the denial document is written afterwards, best effort, with a time limit: if it fails or times out,
   the failure is logged (only the audit id and the error type, never personal data) and the refusal
@@ -135,7 +135,7 @@ class BackfillReport:
         return asdict(self)
 
 
-def _oid(value) -> RecordId | None:
+def _record_id(value) -> RecordId | None:
     return value if is_id(value) else None
 
 
@@ -158,10 +158,10 @@ def from_audit(entry: dict) -> tuple[dict | None, bool]:
     actor = entry.get("actor") if isinstance(entry.get("actor"), dict) else {}
     doc = {
         "at": entry["timestamp"], "reason": WATCHLIST, "source": "audit_backfill",
-        "visitor_id": _oid(resource.get("id")), "visitor_name": None,
-        "identifier_masked": _remask(meta.get("identifier")), "watchlist_id": _oid(meta.get("watchlist_id")),
-        "gate_id": _oid(meta.get("gate_id")), "gate_name": None,
-        "operator_id": _oid(actor.get("user_id")),
+        "visitor_id": _record_id(resource.get("id")), "visitor_name": None,
+        "identifier_masked": _remask(meta.get("identifier")), "watchlist_id": _record_id(meta.get("watchlist_id")),
+        "gate_id": _record_id(meta.get("gate_id")), "gate_name": None,
+        "operator_id": _record_id(actor.get("user_id")),
         "operator_username": actor.get("username") if isinstance(actor.get("username"), str) else None,
         "operator_name": None, "reason_code": None,
     }
@@ -174,8 +174,8 @@ def from_audit(entry: dict) -> tuple[dict | None, bool]:
 
 async def backfill_from_audit(db: Db) -> BackfillReport:
     """Creates the missing denial documents from WATCHLIST_MATCH audit entries. Idempotent and safe to run
-    concurrently: the unique source_audit_id means at most one document per audit entry, $setOnInsert
-    never changes an existing document, and a document written at runtime is simply found present."""
+    concurrently: the unique source_audit_id means at most one record per audit entry, an existing
+    record is never changed, and a document written at runtime is simply found present."""
     report = BackfillReport()
     async for entry in audit_repo.iter_by_action(db, str(AuditAction.WATCHLIST_MATCH)):
         report.scanned += 1

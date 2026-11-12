@@ -37,7 +37,7 @@ def test_the_local_production_start_keeps_api_and_database_on_loopback():
 def test_the_local_production_start_never_stops_or_reconfigures_sql_server():
     """SQL Server is a Windows service shared with other databases: started and stopped outside the VMS."""
     code = _code(_production_script())
-    for gone in ("Stop-Service", "net stop", "net start", "Restart-Service", "sqlcmd", "MSSQL$", "dev_mongo"):
+    for gone in ("Stop-Service", "net stop", "net start", "Restart-Service", "sqlcmd", "MSSQL$"):
         assert gone not in code, gone
     sql = code.index("& $python -m app.cli create-database")
     assert sql < code.index("& $python -m app.cli migrate") < code.index("& $python -m app.cli first-admin")
@@ -69,7 +69,6 @@ def test_local_operational_data_uses_one_cgvms_folder():
     config = (REPO / "backend" / "app" / "core" / "config.py").read_text(encoding="utf-8")
     assert "Join-Path $app '.cgvms'" in common
     assert 'API_DIR.parent / ".cgvms" / "data" / "photos"' in config
-    assert "mongo" not in (common + _production_script()).lower()
     assert ".prod" not in common + _production_script()
 
 

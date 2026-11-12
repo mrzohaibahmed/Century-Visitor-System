@@ -181,9 +181,9 @@ async def test_report_rows_mask_the_id_and_phone_and_look_them_up_in_one_query(h
     # Count the lookups (each is one query).
     original_lookup = reports_repo.fields_by_id
 
-    async def counting_lookup(db, collection, ids, fields):
-        calls.append((collection, fields))
-        return await original_lookup(db, collection, ids, fields)
+    async def counting_lookup(db, table_name, ids, fields):
+        calls.append((table_name, fields))
+        return await original_lookup(db, table_name, ids, fields)
     monkeypatch.setattr(reports_repo, "fields_by_id", counting_lookup)
     expected = [("visitors", ("identity", "phone"))]
     people = await reports_svc.visitor_identities(harness.db, [doc["visitor_id"], doc["visitor_id"]])

@@ -1,5 +1,5 @@
 """
-Watchlist screening matches exactly the entries the original rule (a regex, in the MongoDB version) matched:
+Watchlist screening matches exactly the entries the rule, written as a regular expression, matches:
 
 identifier in the exact list, OR identifier ~ ^OTHER:<c1>[ /-]*<c2>[ /-]*...<cn>$ (case-sensitive).
 SQL Server has no regex: repositories/watchlist.find_active_match() writes the rule out. Here both
@@ -28,8 +28,8 @@ STORED = [
 SEARCHES = ["AB12", "AB1", "AB123", "A", "B12", "AB1 2", "ab12", "AB12\U0001F600"]
 
 
-def mongo_matches(identifier: str, identifiers: list[str], compact: str) -> bool:
-    """The original rule (the MongoDB version's query), evaluated in Python."""
+def rule_matches(identifier: str, identifiers: list[str], compact: str) -> bool:
+    """The rule as a regular expression, evaluated in Python."""
     if identifier in identifiers:
         return True
     return bool(compact) and re.match("^OTHER:" + "[ /-]*".join(compact) + "$", identifier) is not None
@@ -44,7 +44,7 @@ async def add_entries(db, creator) -> None:
                 "is_active": False, "created_by": creator, "created_at": NOW})
 
 
-async def test_other_numbers_match_exactly_as_the_mongodb_regex(sql_database):
+async def test_other_numbers_match_exactly_as_the_regex_rule(sql_database):
     db = sql_database.db
     creator = await sql_users.insert(db, {"username": "admin", "password_hash": "x", "role": "ADMIN",
                                           "is_active": True, "must_change_password": False, "failed_login_count": 0,
@@ -61,9 +61,9 @@ async def test_other_numbers_match_exactly_as_the_mongodb_regex(sql_database):
             compact = re.sub(r"[^0-9A-Za-z]", "", search)       # (lower case only to prove the match is exact)
             exact = [f"OTHER:{search}", f"CNIC:{search}"]
             found = await sql_watchlist.find_active_match(db, exact, compact or None, NOW)
-            expected = mongo_matches(identifier, exact, compact)
+            expected = rule_matches(identifier, exact, compact)
             if (found is not None) != expected:
-                disagreements.append((identifier, search, "sql" if found else "mongo"))
+                disagreements.append((identifier, search, "sql" if found else "regex"))
     assert disagreements == []
 
 

@@ -4,7 +4,7 @@ Notifications come back as documents ("email" as a
 sub-dictionary from the email_* columns, "data" from its JSON column).
 
 The e-mail queue is claimed with UPDLOCK + READPAST: several API processes never claim the same e-mail,
-and none waits for another's claim (MongoDB's find_one_and_update gave the same guarantee).
+and none waits for another's claim.
 """
 from datetime import datetime
 from uuid import UUID

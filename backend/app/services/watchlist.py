@@ -33,11 +33,11 @@ PAGE_SIZE = 25
 NOT_FOUND = AppError(404, "not_found", "Watchlist entry not found.")
 
 
-def _oid(value: str) -> RecordId:
-    oid = parse_id(value)
-    if oid is None:
+def _record_id(value: str) -> RecordId:
+    record_id = parse_id(value)
+    if record_id is None:
         raise NOT_FOUND
-    return oid
+    return record_id
 
 
 def _masked(doc_or_identity: dict) -> str:
@@ -68,7 +68,7 @@ async def list_entries(db: Db, *, q: str | None, status: WatchlistStatus | None,
 
 
 async def get(db: Db, entry_id: str) -> dict:
-    doc = await watchlist_repo.find_by_id(db, _oid(entry_id))
+    doc = await watchlist_repo.find_by_id(db, _record_id(entry_id))
     if doc is None:
         raise NOT_FOUND
     return doc

@@ -1,4 +1,4 @@
-"""Column types that make SQL Server values behave like the MongoDB ones the services already expect."""
+"""Column types: how SQL Server values become the Python values the services expect."""
 from datetime import UTC, datetime
 
 from sqlalchemy.dialects.mssql import DATETIME2
@@ -9,8 +9,8 @@ class UtcDateTime(TypeDecorator):
     """DATETIME2(3) holding UTC. Python side: timezone-aware datetimes only.
 
     - writing (and comparing): the value is converted to UTC and cut to whole milliseconds, exactly as
-      MongoDB stores a datetime (so stored values, cursors and comparisons behave as before);
-    - reading: the value comes back as an aware UTC datetime (MongoDB's tz_aware=True).
+      DATETIME2(3) holds it (so stored values, page cursors and comparisons always agree);
+    - reading: the value comes back as an aware UTC datetime.
     A naive datetime is refused: it would be ambiguous (local time or UTC?).
     """
 

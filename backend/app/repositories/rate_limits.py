@@ -1,5 +1,5 @@
 """Fixed-window counters in SQL Server (shared by all API workers).
-Expired windows are left behind (MongoDB's TTL index removed them); a periodic clean-up deletes them."""
+Expired windows are left behind; a periodic clean-up deletes them (app/db/sql/cleanup.py)."""
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import insert as sql_insert

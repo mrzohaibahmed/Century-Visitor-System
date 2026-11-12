@@ -4,7 +4,7 @@ Entries come back as documents (actor and resource as
 sub-dictionaries, changes and metadata only when recorded).
 
 changes / metadata are stored as JSON (json_values.py: IDs and times inside keep their type), so a reader
-(e.g. backfill-entry-denials) gets back exactly what was recorded, as from MongoDB.
+(e.g. backfill-entry-denials) gets back exactly what was recorded.
 """
 from collections.abc import AsyncIterator
 
@@ -30,7 +30,7 @@ def _resource_id(text: str | None):
 
 
 def entry_doc(row) -> dict:
-    """A row as the entry audit.record() wrote (the MongoDB document shape)."""
+    """A row as the entry audit.record() wrote (a dictionary, as services use it)."""
     entry = {
         "_id": row.id, "timestamp": row.timestamp, "action": row.action, "result": row.result,
         "actor": {"user_id": row.actor_user_id, "username": row.actor_username, "role": row.actor_role},

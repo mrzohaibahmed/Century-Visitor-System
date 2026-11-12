@@ -1,4 +1,4 @@
-"""Rows <-> the documents the services already expect (as the MongoDB repositories returned them)."""
+"""Rows <-> the dictionaries ("documents") the services work with: "_id" is the record ID."""
 from sqlalchemy import Row, Table
 
 from app.repositories import ids
@@ -16,7 +16,7 @@ def as_doc(row: Row | None) -> dict | None:
 
 def new_row(table: Table, doc: dict, columns: dict | None = None) -> dict:
     """The row to insert for `doc`, with its ID written to doc["_id"]: a new one, or the one the document
-    already has (MongoDB's insert_one did the same). `columns`: the document already flattened into columns
+    already has. `columns`: the document already flattened into columns
     (default: the document itself). A key that is not a column of the table is a mistake, so it is refused,
     not dropped."""
     doc["_id"] = doc.get("_id") or ids.new_id()

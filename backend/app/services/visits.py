@@ -41,14 +41,14 @@ NOT_FOUND = AppError(404, "not_found", "Visit not found.")
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
 
-def _oid(value: str) -> RecordId:
-    oid = parse_id(value)
-    if oid is None:
+def _record_id(value: str) -> RecordId:
+    record_id = parse_id(value)
+    if record_id is None:
         raise NOT_FOUND
-    return oid
+    return record_id
 
 
-object_id = _oid
+parse_record_id = _record_id
 
 
 def _operator_name(user: dict) -> str:
@@ -147,7 +147,7 @@ async def check_in(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMe
 async def check_out(db: Db, ctx: AuthContext, meta: RequestMeta, visit_id: RecordId | str,
                     method: str = "MANUAL") -> tuple[dict, bool]:
     """Returns (visit, already_checked_out). Repeating a check-out changes nothing."""
-    oid = _oid(visit_id)
+    record_id = _record_id(visit_id)
     gate, _ = await session_gate(db, ctx.session)
     now = datetime.now(UTC)
     gate_id = gate["_id"] if gate else None
@@ -156,11 +156,11 @@ async def check_out(db: Db, ctx: AuthContext, meta: RequestMeta, visit_id: Recor
     async def work(s: DbSession):
         # The status condition makes this atomic: only one request can move CHECKED_IN -> CHECKED_OUT.
         doc = await visits_repo.check_out_if_active(
-            db, oid, now=now, user_id=ctx.user["_id"], user_name=_operator_name(ctx.user), gate_id=gate_id,
+            db, record_id, now=now, user_id=ctx.user["_id"], user_name=_operator_name(ctx.user), gate_id=gate_id,
             gate_name=gate["name"] if gate else None, method=method, session=s)
         if doc is not None:
             await audit.record(db, AuditAction.VISIT_CHECKED_OUT, actor=actor_from_user(ctx.user), ip=meta.ip,
-                               resource_type="visit", resource_id=oid,
+                               resource_type="visit", resource_id=record_id,
                                metadata={"visit_number": doc["visit_number"], "method": method,
                                          "gate_id": gate_id}, session=s)
         result["doc"] = doc
@@ -168,7 +168,7 @@ async def check_out(db: Db, ctx: AuthContext, meta: RequestMeta, visit_id: Recor
     await run_in_transaction(db, work)
     if result["doc"] is not None:
         return result["doc"], False
-    existing = await visits_repo.find_by_id(db, oid)
+    existing = await visits_repo.find_by_id(db, record_id)
     if existing is None:
         raise NOT_FOUND
     if existing["status"] == "CHECKED_OUT":
@@ -193,7 +193,7 @@ async def resolve_and_check_out(db: Db, ctx: AuthContext, meta: RequestMeta, *,
 
 
 async def get_visit(db: Db, visit_id: str) -> dict:
-    doc = await visits_repo.find_by_id(db, _oid(visit_id), hide_pass_secrets=True)
+    doc = await visits_repo.find_by_id(db, _record_id(visit_id), hide_pass_secrets=True)
     if doc is None:
         raise NOT_FOUND
     return doc
@@ -202,19 +202,19 @@ async def get_visit(db: Db, visit_id: str) -> dict:
 async def update_belongings(db: Db, ctx: AuthContext, meta: RequestMeta,
                             visit_id: str, body: UpdateBelongingsRequest) -> dict:
     """Replace belongings (and optional vehicle) on a visit that is still checked in."""
-    oid = _oid(visit_id)
+    record_id = _record_id(visit_id)
     now = datetime.now(UTC)
     set_material = "personal_material" in body.model_fields_set
     material = body.personal_material.model_dump(mode="json") if set_material and body.personal_material else None
 
     async def work(s: DbSession):
         doc = await visits_repo.update_belongings_if_active(
-            db, oid, belongings=list(body.belongings), vehicle_registration=body.vehicle_registration,
+            db, record_id, belongings=list(body.belongings), vehicle_registration=body.vehicle_registration,
             set_personal_material=set_material, personal_material=material, now=now, session=s)
         if doc is None:
             return
         await audit.record(db, AuditAction.VISIT_BELONGINGS_UPDATED, actor=actor_from_user(ctx.user),
-                           ip=meta.ip, resource_type="visit", resource_id=oid,
+                           ip=meta.ip, resource_type="visit", resource_id=record_id,
                            metadata={"visit_number": doc["visit_number"],
                                      "belongings_count": len(body.belongings),
                                      "has_vehicle": body.vehicle_registration is not None}, session=s)
@@ -223,7 +223,7 @@ async def update_belongings(db: Db, ctx: AuthContext, meta: RequestMeta,
     updated = await run_in_transaction(db, work)
     if updated is not None:
         return updated
-    existing = await visits_repo.find_by_id(db, oid, hide_pass_secrets=True)
+    existing = await visits_repo.find_by_id(db, record_id, hide_pass_secrets=True)
     if existing is None:
         raise NOT_FOUND
     raise AppError(409, "not_checked_in",
@@ -272,9 +272,10 @@ async def list_visits(db: Db, settings: Settings, *, status: str | None, day_fro
     start, end = day_bounds_utc(day_from, day_to, settings.timezone)
     # A malformed id is "not found" here (unchanged); the report endpoints validate ids before this point.
     query = await visit_query(db, VisitFilter(
-        start=start, end=end, status=status, host_id=_oid(host_id) if host_id else None,
-        department_id=_oid(department_id) if department_id else None, gate_id=_oid(gate_id) if gate_id else None,
-        visitor_id=_oid(visitor_id) if visitor_id else None, q=q))
+        start=start, end=end, status=status, host_id=_record_id(host_id) if host_id else None,
+        department_id=_record_id(department_id) if department_id else None,
+        gate_id=_record_id(gate_id) if gate_id else None,
+        visitor_id=_record_id(visitor_id) if visitor_id else None, q=q))
 
     docs = await visits_repo.list_page(db, query, after=decode_cursor(cursor) if cursor else None, limit=limit + 1)
     next_cursor = None

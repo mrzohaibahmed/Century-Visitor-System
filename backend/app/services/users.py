@@ -36,8 +36,8 @@ def _check_password(password: str, username: str) -> None:
 
 
 async def get_user(db: Db, user_id: str) -> dict:
-    oid = users_repo.parse_id(user_id)
-    user = await users_repo.find_by_id(db, oid) if oid else None
+    record_id = users_repo.parse_id(user_id)
+    user = await users_repo.find_by_id(db, record_id) if record_id else None
     if user is None:
         raise NOT_FOUND
     return user

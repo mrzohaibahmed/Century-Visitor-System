@@ -7,7 +7,7 @@ password, sender address and name, optional Reply-To. There is no provider-speci
 the provider, only these values decide how mail is sent (services/email.py).
 
 Which settings are used, decided at every send (no restart, no cache):
-  1. settings saved by an administrator (the `settings` collection, _id "email_smtp"), even when
+  1. settings saved by an administrator (dbo.email_settings, key "email_smtp"), even when
      switched off: then no e-mail is sent;
   2. otherwise the server environment (CG_SMTP_*), as before;
   3. otherwise e-mail is off.

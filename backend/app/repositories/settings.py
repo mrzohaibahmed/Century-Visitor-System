@@ -4,7 +4,7 @@ SQL Server access for the settings stored under a fixed key:
     "email_smtp"            -> dbo.email_settings (a single row)
     "gate_camera:<gate id>" -> dbo.gate_cameras (one row per gate)
 
-Documents come back in the MongoDB shape: "_id" is the key, the sealed password (core/secrets) is
+Documents come back as dictionaries: "_id" is the key, the sealed password (core/secrets) is
 "password": {"v", "kid", "nonce", "ct"} (absent when none is saved), a camera's last connection test is
 "last_test" (absent when there is none) and a camera document carries "type": "gate_camera".
 """

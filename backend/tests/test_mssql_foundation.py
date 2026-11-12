@@ -116,7 +116,7 @@ def test_ids_have_one_text_form():
 
 
 # ------------------------------------------------------------------------------------------ UTC times
-async def test_times_round_trip_as_utc_cut_to_milliseconds_like_mongodb(sql_database):
+async def test_times_round_trip_as_utc_cut_to_milliseconds(sql_database):
     db = sql_database.db
     karachi = NOW.astimezone(ZoneInfo("Asia/Karachi"))                  # any aware time is stored as UTC
     async with connection(db) as conn:
@@ -125,7 +125,7 @@ async def test_times_round_trip_as_utc_cut_to_milliseconds_like_mongodb(sql_data
     async with connection(db) as conn:
         stored = (await conn.execute(select(rate_limits.c.expires_at))).scalar_one()
         assert stored == NOW.replace(microsecond=123000) and stored.tzinfo is UTC
-        # Both sides are cut to milliseconds, as MongoDB does: 15.123 vs 15.123999 compare as equal.
+        # Both sides are cut to milliseconds: 15.123 vs 15.123999 compare as equal.
         later_same_ms = NOW.replace(microsecond=123999)
         before = select(func.count()).select_from(rate_limits).where(rate_limits.c.expires_at < later_same_ms)
         at_or_after = select(func.count()).select_from(rate_limits).where(rate_limits.c.expires_at >= later_same_ms)
@@ -242,7 +242,7 @@ async def test_the_sql_server_database_reports_its_health(sql_database):
 
 # ------------------------------------------------------------------------------------------ expired rows
 async def test_only_rows_past_their_expiry_are_cleaned_up(sql_database):
-    """What MongoDB's TTL indexes removed, and nothing else (a revoked but unexpired session stays)."""
+    """Expired rows only, and nothing else (a revoked but unexpired session stays)."""
     from datetime import timedelta
 
     from app.db.sql.cleanup import delete_expired

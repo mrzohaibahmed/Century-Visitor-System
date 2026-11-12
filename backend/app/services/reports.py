@@ -9,7 +9,7 @@ Reports: the overview (cards and chart series) and the visit report. Administrat
 - visitor_identities(): the ID number and phone for one page of rows in ONE query (no N+1), with a
   projection that never reads photos or anything else;
 - security_counts(): denied entries and watchlist matches, the ONLY place that reads them, from the
-  entry_denials collection (one document per refused attempt; see services/entry_denials).
+  entry_denials table (one record per refused attempt; see services/entry_denials).
 
 Every query is bounded by the report's date range (at most 366 days) on check_in_at, which is indexed.
 All aggregation happens in the database (repositories/reports.py); the browser receives totals and short,
@@ -335,12 +335,12 @@ def _denial_row(d: dict, bans: dict, visitors: dict, gates: dict, users: dict) -
     current: list[str] = []
 
     def ref(kind: str, id_field: str, recorded: str | None, lookup: dict, current_name) -> dict:
-        oid = d.get(id_field)
+        record_id = d.get(id_field)
         name = recorded
-        if not name and oid in lookup:          # not recorded (older rebuilt record): the current name, flagged
-            name = current_name(lookup[oid])
+        if not name and record_id in lookup:          # not recorded (older rebuilt record): the current name, flagged
+            name = current_name(lookup[record_id])
             current.append(kind)
-        return {"id": str(oid) if oid else None, "name": name}
+        return {"id": str(record_id) if record_id else None, "name": name}
 
     return {
         "id": str(d["_id"]), "at": d["at"], "reason": d["reason"], "reason_code": d.get("reason_code"),
@@ -380,7 +380,7 @@ async def denial_report(db: Db, r: DayRange, *, source: str | None, operator_id:
         docs = docs[:limit]
         next_cursor = encode_sort_cursor(DENIALS_SORT, docs[-1]["at"], docs[-1]["_id"])
 
-    # One query per referenced collection for the page (no N+1); only the fields shown.
+    # One query per referenced table for the page (no N+1); only the fields shown.
     by_id = reports_repo.fields_by_id
     bans = await by_id(db, "watchlist", [d.get("watchlist_id") for d in docs], ("reason",))
     visitors = await by_id(db, "visitors", [d.get("visitor_id") for d in docs if not d.get("visitor_name")],

@@ -73,7 +73,7 @@ def _is_expired(visit_pass: dict, now: datetime) -> bool:
 async def issue(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
                 visit_id: str) -> IssuedPass:
     """Issues the visit's pass, or a replacement: the previous QR stops working immediately."""
-    oid = visits_svc.object_id(visit_id)
+    record_id = visits_svc.parse_record_id(visit_id)
     token = secrets.token_hex(32).upper()
     now = datetime.now(UTC)
     expires_at = pass_expires_at(settings.timezone, hour=settings.pass_day_end_hour,
@@ -81,7 +81,7 @@ async def issue(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
     result: dict = {}
 
     async def work(s: DbSession):
-        visit = await visits_repo.find_by_id(db, oid, session=s)
+        visit = await visits_repo.find_by_id(db, record_id, session=s)
         if visit is None:
             raise visits_svc.NOT_FOUND
         if visit["status"] != "CHECKED_IN":
@@ -92,10 +92,10 @@ async def issue(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
                     "issued_by": ctx.user["_id"], "revoked_at": None, "revoked_by": None,
                     "revoked_token_hashes": revoked}
         if settings.secrets_key_bytes:
-            new_pass["qr_sealed"] = encrypt(settings.secrets_key_bytes, QR_PREFIX + token, _seal_context(oid))
-        await visits_repo.set_pass_if_active(db, oid, new_pass, now, session=s)
+            new_pass["qr_sealed"] = encrypt(settings.secrets_key_bytes, QR_PREFIX + token, _seal_context(record_id))
+        await visits_repo.set_pass_if_active(db, record_id, new_pass, now, session=s)
         await audit.record(db, AuditAction.PASS_ISSUED, actor=actor_from_user(ctx.user), ip=meta.ip,
-                           resource_type="visit", resource_id=oid,
+                           resource_type="visit", resource_id=record_id,
                            metadata={"visit_number": visit["visit_number"], "replaces_previous": bool(old),
                                      "expires_at": expires_at}, session=s)
         result["visit"] = visit
@@ -106,8 +106,8 @@ async def issue(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
 
 async def printable(db: Db, settings: Settings, visit_id: str) -> IssuedPass:
     """Return the current badge's exact QR without issuing or cancelling a pass."""
-    oid = visits_svc.object_id(visit_id)
-    visit = await visits_repo.find_by_id(db, oid)
+    record_id = visits_svc.parse_record_id(visit_id)
+    visit = await visits_repo.find_by_id(db, record_id)
     if visit is None:
         raise visits_svc.NOT_FOUND
     current = visit.get("pass") or {}
@@ -121,7 +121,7 @@ async def printable(db: Db, settings: Settings, visit_id: str) -> IssuedPass:
         raise AppError(503, "secrets_key_missing",
                        "The badge encryption key is not configured. Scan the current badge.")
     try:
-        qr_text = decrypt(key, current["qr_sealed"], _seal_context(oid))
+        qr_text = decrypt(key, current["qr_sealed"], _seal_context(record_id))
     except SecretUnreadable:
         raise AppError(503, "pass_unreadable", "The current badge QR cannot be read. Scan the current badge.") from None
     token = parse_qr(qr_text)
@@ -132,8 +132,8 @@ async def printable(db: Db, settings: Settings, visit_id: str) -> IssuedPass:
 
 async def verify_for_print(db: Db, visit_id: str, qr_text: str) -> IssuedPass:
     """Accept a scan of an older physical badge without reissuing it."""
-    oid = visits_svc.object_id(visit_id)
-    visit = await visits_repo.find_by_id(db, oid)
+    record_id = visits_svc.parse_record_id(visit_id)
+    visit = await visits_repo.find_by_id(db, record_id)
     if visit is None:
         raise visits_svc.NOT_FOUND
     current = visit.get("pass") or {}
@@ -146,19 +146,19 @@ async def verify_for_print(db: Db, visit_id: str, qr_text: str) -> IssuedPass:
 
 async def revoke(db: Db, ctx: AuthContext, meta: RequestMeta, visit_id: str) -> dict:
     """The current pass stops working (e.g. badge lost). Idempotent."""
-    oid = visits_svc.object_id(visit_id)
+    record_id = visits_svc.parse_record_id(visit_id)
     now = datetime.now(UTC)
 
     async def work(s: DbSession):
-        visit = await visits_repo.find_by_id(db, oid, session=s)
+        visit = await visits_repo.find_by_id(db, record_id, session=s)
         if visit is None:
             raise visits_svc.NOT_FOUND
         current = visit.get("pass")
         if not current or current.get("revoked_at"):
             return visit
-        await visits_repo.revoke_pass(db, oid, user_id=ctx.user["_id"], now=now, session=s)
+        await visits_repo.revoke_pass(db, record_id, user_id=ctx.user["_id"], now=now, session=s)
         await audit.record(db, AuditAction.PASS_REVOKED, actor=actor_from_user(ctx.user), ip=meta.ip,
-                           resource_type="visit", resource_id=oid,
+                           resource_type="visit", resource_id=record_id,
                            metadata={"visit_number": visit["visit_number"]}, session=s)
         return visit
 

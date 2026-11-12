@@ -2,7 +2,7 @@
 Visitor photos.
 
 Storage: a private folder on the API server (settings.photo_dir), outside the
-web application. Each file gets a random 128-bit name; the `photos` collection
+web application. Each file gets a random 128-bit name; the photos table
 holds that name and the metadata. The file name, the folder and the path are
 never returned by the API: photos are only reachable through GET /photos/{id},
 which checks the caller's permission on every request.
@@ -81,16 +81,16 @@ def photo_storage_available(settings: Settings) -> bool:
     return root.is_dir() and os.access(root, os.W_OK)
 
 
-def _oid(value: str | RecordId) -> RecordId:
-    oid = parse_id(value)
-    if oid is None:
+def _record_id(value: str | RecordId) -> RecordId:
+    record_id = parse_id(value)
+    if record_id is None:
         raise NOT_FOUND
-    return oid
+    return record_id
 
 
 def _path(settings: Settings, storage_key: str) -> Path:
     # Two-character sub-folders keep any one folder small. storage_key is 32 hex characters
-    # generated here (validated by the collection schema), so it cannot escape photo_dir.
+    # generated here (checked by the table's constraint), so it cannot escape photo_dir.
     return settings.photo_dir / storage_key[:2] / f"{storage_key}.jpg"
 
 
@@ -150,10 +150,10 @@ async def capture(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMet
 
 async def for_check_in(db: Db, visitor: dict, photo_id: str) -> RecordId:
     """The photo a check-in refers to must be this visitor's current photo."""
-    oid = _oid(photo_id)
-    if visitor.get("current_photo_id") != oid:
+    record_id = _record_id(photo_id)
+    if visitor.get("current_photo_id") != record_id:
         raise AppError(422, "invalid_photo", "The photo does not belong to this visitor. Please take it again.")
-    return oid
+    return record_id
 
 
 async def _guard_may_view(db: Db, photo: dict) -> bool:
@@ -164,7 +164,7 @@ async def _guard_may_view(db: Db, photo: dict) -> bool:
 
 async def read(db: Db, settings: Settings, ctx: AuthContext, meta: RequestMeta,
                photo_id: str) -> tuple[bytes, str]:
-    photo = await photos_repo.find_by_id(db, _oid(photo_id))
+    photo = await photos_repo.find_by_id(db, _record_id(photo_id))
     if photo is None:
         raise NOT_FOUND
     if not has_permission(ctx.user.get("role"), Permission.PHOTO_VIEW_ALL) and not await _guard_may_view(db, photo):

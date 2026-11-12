@@ -7,8 +7,8 @@ Visits come back as documents:
     visit_personal_material + visit_material_items -> "personal_material" (or None)
     visit_replaced_passes -> "pass"["revoked_token_hashes"] (badges replaced by a reissue)
 
-Lists and responses never carry the pass's secrets: hide_pass_secrets leaves only {"expires_at"}, as the
-MongoDB projection did. The children of a page of visits are read with one query per child table.
+Lists and responses never carry the pass's secrets: hide_pass_secrets leaves only {"expires_at"}.
+The children of a page of visits are read with one query per child table.
 """
 from datetime import date, datetime
 from uuid import UUID
@@ -243,7 +243,7 @@ async def next_daily_number(db: SqlDb, day: date, session: AsyncConnection) -> i
 
 async def insert(db: SqlDb, visit: dict, session: AsyncConnection | None = None) -> UUID:
     """Raises DuplicateKey if the visitor already has a CHECKED_IN visit (or the number is taken).
-    Sets visit["_id"] (a new ID, or the one the document already has, as MongoDB did); the belongings and the
+    Sets visit["_id"] (a new ID, or the one the document already has); the belongings and the
     Personal Material slip are written with it."""
     visit["_id"] = visit.get("_id") or ids.new_id()
     row = _visit_columns(visit)

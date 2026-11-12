@@ -37,10 +37,10 @@ NOT_FOUND = AppError(404, "not_found", "Visitor not found.")
 
 
 async def get(db: Db, visitor_id: str | RecordId, session: DbSession | None = None) -> dict:
-    oid = parse_id(visitor_id)
-    if oid is None:
+    record_id = parse_id(visitor_id)
+    if record_id is None:
         raise NOT_FOUND
-    doc = await visitors_repo.find_by_id(db, oid, session=session)
+    doc = await visitors_repo.find_by_id(db, record_id, session=session)
     if doc is None:
         raise NOT_FOUND
     return doc

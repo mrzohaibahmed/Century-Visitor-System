@@ -13,7 +13,7 @@ from app.repositories.errors import duplicates_as_domain_error
 from app.repositories.rows import as_doc, new_row
 
 users = tables.users
-BINARY_ORDER = "Latin1_General_100_BIN2"      # exact (case-sensitive) order, as MongoDB sorted strings
+BINARY_ORDER = "Latin1_General_100_BIN2"      # exact (case-sensitive) order, character by character
 ADMIN_GUARD_TIMEOUT_MS = 10_000
 
 

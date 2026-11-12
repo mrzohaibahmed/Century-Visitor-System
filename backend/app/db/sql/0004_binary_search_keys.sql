@@ -2,8 +2,8 @@
    Schema version 4: the name search keys compare exactly (binary collation).
 
    name_search (visitors, hosts, watchlist) is a machine-made key: the name in lower case with single
-   spaces (identity.search_key). Searches are "starts with" (LIKE 'key%') and lists sort by it. MongoDB
-   compared it byte for byte; with a binary collation SQL Server does the same AND can still use the
+   spaces (identity.search_key). Searches are "starts with" (LIKE 'key%') and lists sort by it. It must
+   compare byte for byte; with a binary collation SQL Server does that AND can still use the
    index (a COLLATE in the query would force a scan). The columns' indexes are dropped and recreated.
    ===================================================================================================== */
 SET ANSI_NULLS ON;

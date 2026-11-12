@@ -23,7 +23,7 @@ from app.services.auth import AuthContext, RequestMeta
 
 @dataclass(frozen=True)
 class Kind:
-    collection: str
+    table_name: str
     label: str
     created: AuditAction
     updated: AuditAction
@@ -37,13 +37,13 @@ HOST = Kind("hosts", "Host", AuditAction.HOST_CREATED, AuditAction.HOST_UPDATED,
 MAX_LIST = 500
 
 
-_oid = parse_id
+_record_id = parse_id
 
 
 async def get(db: Db, kind: Kind, item_id: str | RecordId, session: DbSession | None = None
               ) -> dict:
-    oid = _oid(item_id)
-    doc = await directory_repo.find_by_id(db, kind.collection, oid, session=session) if oid else None
+    record_id = _record_id(item_id)
+    doc = await directory_repo.find_by_id(db, kind.table_name, record_id, session=session) if record_id else None
     if doc is None:
         raise AppError(404, "not_found", f"{kind.label} not found.")
     return doc
@@ -64,12 +64,12 @@ async def list_items(db: Db, kind: Kind, *, include_inactive: bool = False, q: s
     by_department = bool(is_host and department_id)
     # An invalid department_id is passed on as None (hosts without a department), as before.
     return await directory_repo.list_items(
-        db, kind.collection, include_inactive=include_inactive, limit=MAX_LIST, name_search_prefix=prefix,
-        by_department=by_department, department_id=_oid(department_id) if by_department else None)
+        db, kind.table_name, include_inactive=include_inactive, limit=MAX_LIST, name_search_prefix=prefix,
+        by_department=by_department, department_id=_record_id(department_id) if by_department else None)
 
 
 async def department_names(db: Db, ids: set[RecordId]) -> dict[RecordId, str]:
-    return await directory_repo.names_by_id(db, DEPARTMENT.collection, ids)
+    return await directory_repo.names_by_id(db, DEPARTMENT.table_name, ids)
 
 
 async def _validate_department(db: Db, fields: dict, s: DbSession) -> None:
@@ -80,8 +80,8 @@ async def _validate_department(db: Db, fields: dict, s: DbSession) -> None:
 async def _validate_linked_user(db: Db, fields: dict, s: DbSession) -> None:
     """A host's "Linked app account" must be an existing, active Admin/Guard user."""
     if fields.get("linked_user_id") is not None:
-        oid = _oid(fields["linked_user_id"])
-        user_id = await users_repo.find_active_id(db, oid, session=s) if oid else None
+        record_id = _record_id(fields["linked_user_id"])
+        user_id = await users_repo.find_active_id(db, record_id, session=s) if record_id else None
         if user_id is None:
             raise AppError(422, "invalid_linked_user", "Choose an active app account to link to this host.")
         fields["linked_user_id"] = user_id
@@ -102,9 +102,9 @@ async def create(db: Db, kind: Kind, ctx: AuthContext, meta: RequestMeta, data: 
         if kind is HOST:
             await _validate_department(db, doc, s)
             await _validate_linked_user(db, doc, s)
-        doc["_id"] = await directory_repo.insert(db, kind.collection, doc, session=s)
+        doc["_id"] = await directory_repo.insert(db, kind.table_name, doc, session=s)
         await audit.record(db, kind.created, actor=actor_from_user(ctx.user), ip=meta.ip,
-                           resource_type=kind.collection, resource_id=doc["_id"],
+                           resource_type=kind.table_name, resource_id=doc["_id"],
                            changes={k: _plain(v) for k, v in data.items() if v is not None}, session=s)
 
     try:
@@ -120,7 +120,7 @@ async def update(db: Db, kind: Kind, ctx: AuthContext, meta: RequestMeta, item_i
     clear_linked_user = changes.pop("clear_linked_user", None)
     fields = {k: v for k, v in changes.items() if v is not None and v != current.get(k)}
     for key in ("department_id", "linked_user_id"):
-        if changes.get(key) is not None and _oid(changes[key]) != current.get(key):
+        if changes.get(key) is not None and _record_id(changes[key]) != current.get(key):
             fields[key] = changes[key]
         elif changes.get(key) is not None:
             fields.pop(key, None)                      # unchanged
@@ -135,10 +135,10 @@ async def update(db: Db, kind: Kind, ctx: AuthContext, meta: RequestMeta, item_i
         if kind is HOST:
             await _validate_department(db, fields, s)
             await _validate_linked_user(db, fields, s)
-        await directory_repo.update_fields(db, kind.collection, current["_id"], fields, session=s)
+        await directory_repo.update_fields(db, kind.table_name, current["_id"], fields, session=s)
         diff = {k: {"from": _plain(current.get(k)), "to": _plain(v)} for k, v in fields.items() if k != "name_search"}
         await audit.record(db, kind.updated, actor=actor_from_user(ctx.user), ip=meta.ip,
-                           resource_type=kind.collection, resource_id=current["_id"], changes=diff, session=s)
+                           resource_type=kind.table_name, resource_id=current["_id"], changes=diff, session=s)
 
     try:
         await run_in_transaction(db, work)

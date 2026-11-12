@@ -1,8 +1,8 @@
 """
 `harness.store`: direct access to the stored records for tests that inspect or prepare them.
 
-SqlStore below offers a few MongoDB-style collection calls on the SQL tables (the tests were written
-that way first): find_one, find(...).sort().to_list() / async for, count_documents, insert_one, update_one /
+SqlStore below offers a few simple calls on the SQL tables, by table name: find_one,
+find(...).sort().to_list() / async for, count_documents, insert_one, update_one /
 update_many with $set. It returns records in the shape the repositories return them.
 Filters: equality (None = no value), and $in / $ne / $gt / $gte / $lt / $lte; field names as in the
 documents ("_id", "actor.username", "identity.number", and fields inside the audit's JSON such as
@@ -214,7 +214,7 @@ class SqlCollection:
             return (await conn.execute(statement)).scalar_one()
 
     async def insert_one(self, doc: dict, *, pause_constraints: str | None = None):
-        """Inserts `doc` as the repositories would (doc["_id"] is set); returns .inserted_id like MongoDB.
+        """Inserts `doc` as the repositories would (doc["_id"] is set); returns an object with .inserted_id.
         pause_constraints ("foreign_keys" or "all", see conftest.insert_seed): this one insert runs with the
         table's foreign keys (and CHECKs) switched off, in its own transaction; unique indexes still apply."""
         table = self._spec.table

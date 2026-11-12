@@ -2,7 +2,7 @@
 Login, session validation, logout and changing one's own password.
 
 The backend alone decides who the user is: the role and permissions come from
-the users collection on every request, never from anything the browser sends.
+the users table on every request, never from anything the browser sends.
 """
 import asyncio
 import logging

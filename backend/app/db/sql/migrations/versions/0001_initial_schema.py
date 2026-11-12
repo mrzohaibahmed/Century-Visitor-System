@@ -1,4 +1,4 @@
-"""Initial schema: the port of MongoDB schema v10 (app/db/sql/0001_initial_schema.sql, reviewed as SQL).
+"""Initial schema: the tables, indexes and constraints (app/db/sql/0001_initial_schema.sql, reviewed as SQL).
 
 Revision ID: 0001
 Revises:

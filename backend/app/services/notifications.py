@@ -20,7 +20,7 @@ Flow
   does: never for a check-in that failed, never lost if the API stops right after the check-in.
 - One notification per visit and kind: event_key "HOST_VISITOR_ARRIVAL:<visit id>" (and the department /
   overstay variants) is unique in the database.
-- The check-in never waits for e-mail. The `notifications` collection is the e-mail queue:
+- The check-in never waits for e-mail. The notifications table is the e-mail queue:
   PENDING -> SENDING (claimed atomically, so several API processes never send the same e-mail)
   -> SENT, or back to PENDING for a retry (after 1, 5, 15 and 60 minutes), or FAILED after
   MAX_ATTEMPTS or a permanent refusal. NONE: no address, or e-mail switched off.
@@ -236,11 +236,11 @@ async def list_for_user(db: Db, ctx: AuthContext, *, unread_only: bool,
 
 async def mark_read(db: Db, ctx: AuthContext, notification_id: str) -> dict:
     """Idempotent. Someone else's notification is simply "not found"."""
-    oid = parse_id(notification_id)
-    if oid is None:
+    record_id = parse_id(notification_id)
+    if record_id is None:
         raise NOT_FOUND
-    await notifications_repo.mark_read(db, _own(ctx), oid, datetime.now(UTC))
-    doc = await notifications_repo.find_for_recipient(db, _own(ctx), oid)
+    await notifications_repo.mark_read(db, _own(ctx), record_id, datetime.now(UTC))
+    doc = await notifications_repo.find_for_recipient(db, _own(ctx), record_id)
     if doc is None:
         raise NOT_FOUND
     return doc

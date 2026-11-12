@@ -2,10 +2,10 @@
 SQL Server access for the watchlist (queries only; identity normalisation and rules live in services).
 Entries come back as documents (the document under "identity").
 
-"OTHER" numbers were matched with a MongoDB regex that ignores spaces, / and - (^OTHER:A[ /-]*B[ /-]*C$).
-SQL Server has no regex, so the same rule is written out: the stored identifier without those separators
+"OTHER" numbers match while ignoring spaces, / and - (as the pattern ^OTHER:A[ /-]*B[ /-]*C$ would).
+SQL Server has no regular expressions, so the rule is written out: the stored identifier without those separators
 (identifier_compact, a computed and indexed column) equals "OTHER:" + the number's letters and digits, and
-the number starts and ends with a letter or digit (the regex allowed no separator before the first or
+the number starts and ends with a letter or digit (the pattern allows no separator before the first or
 after the last character).
 """
 from datetime import datetime
@@ -62,7 +62,7 @@ async def find_active_match(db: SqlDb, identifiers: list[str], other_compact: st
                             now: datetime) -> dict | None:
     """The active, unexpired entry whose identifier is one of `identifiers`, or (with `other_compact`) an
     "OTHER:" identifier equal to `other_compact` when spaces, / and - are ignored."""
-    # Each condition twice: as the column compares (uses the index) and exactly as MongoDB compared:
+    # Each condition twice: as the column compares (uses the index) and exactly (the rule's own terms):
     # case-sensitive (binary collation), [0-9A-Z] as plain characters (not linguistic ranges), and trailing
     # spaces significant (SQL Server's = and LIKE ignore them; byte lengths and character codes do not).
     clauses = [and_(watchlist.c.identifier.in_(identifiers), _exactly_one_of(identifiers))]

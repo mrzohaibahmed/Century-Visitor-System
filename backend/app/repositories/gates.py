@@ -9,7 +9,7 @@ from app.repositories.connection import connection
 from app.repositories.rows import as_doc
 
 gates = tables.gates
-BINARY_ORDER = "Latin1_General_100_BIN2"      # exact (case-sensitive) order, as MongoDB sorted strings
+BINARY_ORDER = "Latin1_General_100_BIN2"      # exact (case-sensitive) order, character by character
 _ACTIVE = gates.c.is_active == true()
 
 

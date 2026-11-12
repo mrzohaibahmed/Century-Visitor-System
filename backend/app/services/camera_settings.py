@@ -1,7 +1,7 @@
 """
 Gate camera settings (administrators): one Hikvision camera per gate, and its connection tests.
 
-Stored in the `settings` collection, one document per gate: _id "gate_camera:<gate id>". The gate
+Stored in dbo.gate_cameras, one row per gate (key "gate_camera:<gate id>"). The gate
 itself is not changed. The camera password is encrypted (core/secrets.py, AES-256-GCM, key in
 CG_SECRETS_KEY) with the document id as associated data; it is never returned, logged or audited.
 The API only says whether a password is saved.

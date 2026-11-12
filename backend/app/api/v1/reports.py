@@ -43,7 +43,7 @@ from app.services import report_exports as exports
 from app.services import reports as svc
 from app.services.audit import AuditAction, actor_from_user
 from app.services.auth import AuthContext
-from app.services.visits import VisitFilter, object_id
+from app.services.visits import VisitFilter, parse_record_id
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 view = require(Permission.REPORTS_VIEW)
@@ -56,8 +56,8 @@ class ExportFormat(StrEnum):
     PDF = "pdf"
 
 
-def _oid(value: str | None):
-    return object_id(value) if value else None          # already validated by IdStr
+def _record_id(value: str | None):
+    return parse_record_id(value) if value else None          # already validated by IdStr
 
 
 # ------------------------------------------------------------------------------------------ shared parameters
@@ -80,9 +80,9 @@ def visit_params(r: DayRange = Depends(report_range), q: str | None = Query(defa
                  host_id: IdStr | None = None, department_id: IdStr | None = None, gate_id: IdStr | None = None,
                  guard_id: IdStr | None = None, reason_code: VisitReason | None = None,
                  sort: VisitReportSort = VisitReportSort.CHECK_IN_DESC) -> VisitParams:
-    return VisitParams(r, VisitFilter(start=r.start, end=r.end, status=status, host_id=_oid(host_id),
-                                      department_id=_oid(department_id), gate_id=_oid(gate_id),
-                                      guard_id=_oid(guard_id), reason_code=reason_code, q=q), sort)
+    return VisitParams(r, VisitFilter(start=r.start, end=r.end, status=status, host_id=_record_id(host_id),
+                                      department_id=_record_id(department_id), gate_id=_record_id(gate_id),
+                                      guard_id=_record_id(guard_id), reason_code=reason_code, q=q), sort)
 
 
 @dataclass(frozen=True)
@@ -95,8 +95,9 @@ class VisitorParams:
 def visitor_params(r: DayRange = Depends(report_range), q: str | None = Query(default=None, max_length=100),
                    host_id: IdStr | None = None, department_id: IdStr | None = None, gate_id: IdStr | None = None,
                    sort: VisitorSummarySort = VisitorSummarySort.LAST_VISIT_DESC) -> VisitorParams:
-    return VisitorParams(r, VisitFilter(start=r.start, end=r.end, host_id=_oid(host_id),
-                                        department_id=_oid(department_id), gate_id=_oid(gate_id), q=q), sort)
+    return VisitorParams(r, VisitFilter(start=r.start, end=r.end, host_id=_record_id(host_id),
+                                        department_id=_record_id(department_id), gate_id=_record_id(gate_id),
+                                        q=q), sort)
 
 
 @dataclass(frozen=True)
@@ -109,8 +110,9 @@ def inside_params(q: str | None = Query(default=None, max_length=100),
                   host_id: IdStr | None = None, department_id: IdStr | None = None, gate_id: IdStr | None = None,
                   sort: InsideSort = InsideSort.CHECK_IN_ASC) -> InsideParams:
     """No date range: the current state."""
-    return InsideParams(VisitFilter(status="CHECKED_IN", host_id=_oid(host_id), department_id=_oid(department_id),
-                                    gate_id=_oid(gate_id), q=q), VisitReportSort(str(sort)))
+    return InsideParams(VisitFilter(status="CHECKED_IN", host_id=_record_id(host_id),
+                                    department_id=_record_id(department_id),
+                                    gate_id=_record_id(gate_id), q=q), VisitReportSort(str(sort)))
 
 
 @dataclass(frozen=True)
@@ -126,7 +128,7 @@ class DenialParams:
 
 def denial_params(r: DayRange = Depends(report_range), source: DenialSource | None = None,
                   guard_id: IdStr | None = None, gate_id: IdStr | None = None) -> DenialParams:
-    return DenialParams(r, str(source) if source else None, _oid(guard_id), _oid(gate_id))
+    return DenialParams(r, str(source) if source else None, _record_id(guard_id), _record_id(gate_id))
 
 
 @dataclass(frozen=True)
@@ -136,7 +138,7 @@ class HostParams:
 
 
 def host_params(r: DayRange = Depends(report_range), department_id: IdStr | None = None) -> HostParams:
-    return HostParams(r, _oid(department_id))
+    return HostParams(r, _record_id(department_id))
 
 
 # ------------------------------------------------------------------------------------------ JSON reports

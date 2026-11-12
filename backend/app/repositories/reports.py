@@ -2,13 +2,13 @@
 SQL Server access for the reports: the aggregations, returned as plain grouped rows;
 merging, naming, sorting and limits stay in services/reports.py.
 
-Two things MongoDB did that SQL Server does differently:
-- Local hours and days (Asia/Karachi, or CG_TIMEZONE). MongoDB took an IANA time zone in $hour/$dateTrunc;
-  SQL Server only knows Windows zone names. Here the zone's UTC offsets for the report's range come from
+Two things need care in SQL Server:
+- Local hours and days (Asia/Karachi, or CG_TIMEZONE). SQL Server only knows Windows zone names, not the
+  IANA names the app uses. Here the zone's UTC offsets for the report's range come from
   Python's zoneinfo and are applied in SQL (a CASE over the offset changes, if any); local bucket starts go
   back to UTC in Python. Exact for every zone, daylight saving included.
-- Text. MongoDB grouped and took maximums byte for byte; SQL Server's columns ignore case. Names are
-  grouped and compared with a binary collation, so "Sara" and "sara" stay apart as before.
+- Text. The columns ignore case, but reports group and take maximums exactly: names are grouped and
+  compared with a binary collation, so "Sara" and "sara" stay apart.
 """
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -42,7 +42,7 @@ _INSIDE = visits.c.status == "CHECKED_IN"
 
 
 def _exact_max(column):
-    """MAX compared byte for byte (MongoDB's $max on strings)."""
+    """MAX compared character by character (binary collation), not ignoring case."""
     return func.max(column.collate(BINARY))
 
 
@@ -81,11 +81,11 @@ def after(field: str, direction: int, value, last_id: UUID, nullable: bool) -> K
     return Keyset(field, direction, value, last_id, nullable)
 
 
-async def fields_by_id(db: SqlDb, collection: str, ids, fields: tuple[str, ...]) -> dict[UUID, dict]:
+async def fields_by_id(db: SqlDb, table_name: str, ids, fields: tuple[str, ...]) -> dict[UUID, dict]:
     """{id: document with only `fields`} for these ids (others, e.g. None, are ignored), in one query."""
-    if collection not in LOOKUP_TABLES:
-        raise ValueError(f"not a report lookup collection: {collection}")
-    table = LOOKUP_TABLES[collection]
+    if table_name not in LOOKUP_TABLES:
+        raise ValueError(f"not a report lookup table: {table_name}")
+    table = LOOKUP_TABLES[table_name]
     ids = [i for i in dict.fromkeys(ids) if isinstance(i, UUID)]
     if not ids:
         return {}
@@ -149,7 +149,7 @@ async def overview_counts(db: SqlDb, start: datetime, end: datetime, *, unit: st
                     func.avg(case((_COMPLETED, cast(_STAY_MS, Float)), else_=None)),
                     func.count(visits.c.visitor_id.distinct())).where(within)
     by_status = select(visits.c.status, func.count()).where(within).group_by(visits.c.status)
-    # Each department's name as recorded on its most recent visit in the range (MongoDB: $sort + $first).
+    # Each department's name as recorded on its most recent visit in the range.
     ranked = select(visits.c.department_id, visits.c.snap_department_name.label("name"),
                     func.row_number().over(partition_by=visits.c.department_id,
                                            order_by=(visits.c.check_in_at.desc(), visits.c.id.desc())).label("n"),

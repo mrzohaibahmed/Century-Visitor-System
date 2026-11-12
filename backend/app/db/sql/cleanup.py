@@ -1,8 +1,8 @@
 """
 Deletes expired sessions and login rate-limit windows.
 
-MongoDB removed them itself (TTL indexes on expires_at); SQL Server has no TTL, so the API does it in the
-background. Only rows whose expires_at has passed go, exactly what the TTL indexes removed: a session is
+SQL Server has no automatic expiry (TTL), so the API does it in the background. Only rows whose expires_at
+has passed go: a session is
 never deleted before its absolute expiry, whatever happened to it, so audit and "session expired" answers
 are unchanged. The first pass waits a full interval after start-up.
 """

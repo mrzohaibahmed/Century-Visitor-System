@@ -113,7 +113,7 @@ class MeResponse(BaseModel):
 
 
 class GateSelectRequest(StrictModel):
-    gate_id: IdStr                 # a record ID of the backend in use (was a 24-hex ObjectId pattern)
+    gate_id: IdStr                 # a record ID (GUID text)
 
 
 class UserListResponse(BaseModel):
