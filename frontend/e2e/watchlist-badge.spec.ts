@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { chromium, expect, type Page, test } from "@playwright/test";
 
 import { E2E_ADMIN_PASSWORD } from "../playwright.config";
+import { addBelongings } from "./belongings";
 import { decodeQr, writeQrVideo } from "./fake-camera";
 
 /**
@@ -125,7 +126,7 @@ test("guard checks a visitor in with a photo, a pass and a printed badge", async
   await page.getByLabel("Host (person being visited)").fill("sar");
   await page.getByRole("button", { name: /Sara Ahmed/ }).click();
   await page.getByLabel("Reason for visit").selectOption("OFFICIAL_MEETING");
-  await page.getByLabel("Belongings (optional)").fill("laptop");
+  await addBelongings(page, ["laptop"]);
   await page.getByRole("button", { name: "Review" }).click();
 
   // Photo: Edge's fake camera → capture → preview → upload (validated and re-encoded by the API).
@@ -141,7 +142,7 @@ test("guard checks a visitor in with a photo, a pass and a printed badge", async
 
   await page.getByRole("button", { name: "Confirm check-in" }).click();
   visitNumber = (await page.getByTestId("visit-number").textContent()) ?? "";
-  expect(visitNumber).toMatch(/^V-\d{4}-\d{6}$/);
+  expect(visitNumber).toMatch(/^V-\d{2}-[A-Z]{3}-\d{2}-\d{3,}$/);
 
   // Pass and badge: gate information and a QR code; no ID number anywhere on it.
   const badge = page.getByTestId("badge-card");
@@ -194,7 +195,7 @@ test("guard checks the visitor out by scanning the badge with the camera", async
     const confirm = page.getByTestId("scan-confirm");
     await expect(confirm).toContainText(VISITOR.name, { timeout: 20_000 });
     await expect(confirm).toContainText(visitNumber);
-    await expect(confirm).toContainText("Belongings recorded at entry: laptop");
+    await expect(confirm).toContainText("Belongings recorded at entry: LAPTOP");
     await expect(confirm.getByTestId("visitor-photo")).toBeVisible();          // the photo taken at check-in
     // Scanning alone changed nothing: the visitor is still listed inside.
     await expect(page.getByTestId("active-visit").filter({ hasText: visitNumber })).toHaveCount(1);

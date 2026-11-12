@@ -1,6 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 
 import { E2E_ADMIN_PASSWORD } from "../playwright.config";
+import { addBelongings } from "./belongings";
 
 const CNIC = "35202-7654321-3";
 const VISITOR = "Hamza Tariq";
@@ -71,14 +72,14 @@ test("a new visitor is registered and checked in", async ({ page }) => {
   await page.getByRole("button", { name: /Sara Ahmed/ }).click();
   await expect(page.getByTestId("selected-host")).toHaveText("Sara Ahmed");
   await page.getByLabel("Reason for visit").selectOption("INTERVIEW");
-  await page.getByLabel("Belongings (optional)").fill("laptop, bag");
+  await addBelongings(page, ["laptop", "bag"]);                       // the personal material slip
   await page.getByRole("button", { name: "Review" }).click();
   await page.getByRole("button", { name: "Continue without a photo" }).click();       // photo step (Phase 4)
 
   await expect(page.getByText("Human Resources")).toBeVisible();          // department taken from the host
   await page.getByRole("button", { name: "Confirm check-in" }).click();
   const number = page.getByTestId("visit-number");
-  await expect(number).toHaveText(/^V-\d{4}-\d{6}$/);
+  await expect(number).toHaveText(/^V-\d{2}-[A-Z]{3}-\d{2}-\d{3,}$/);
   visitNumber = (await number.textContent()) ?? "";
 });
 
@@ -99,7 +100,7 @@ test("the visitor is listed inside and checked out", async ({ page }) => {
   await expect(row).toContainText(VISITOR);
   await row.getByRole("button", { name: /Check out/ }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("laptop, bag");
+  await expect(dialog).toContainText("LAPTOP, BAG");                 // the slip stores capitals
   await dialog.getByRole("button", { name: "Confirm check-out" }).click();
   await expect(page.getByText(`${VISITOR} (${visitNumber}) checked out.`)).toBeVisible();
   await expect(page.getByText("Nobody is checked in.")).toBeVisible();
